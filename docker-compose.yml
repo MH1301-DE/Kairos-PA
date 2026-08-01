@@ -1,0 +1,188 @@
+# =====================================================================
+# Kairos — Deployment-Skizze
+#
+# Status: Entwurf. Zeigt Topologie, Netzwerktrennung und Abhängigkeiten.
+# Secrets kommen aus einer .env-Datei außerhalb des Repos (chmod 600).
+# Images sind in Produktion auf Digests zu pinnen, nicht auf Tags.
+# =====================================================================
+
+x-app-base: &app-base
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile
+  image: kairos-app:${GIT_SHA:-dev}
+  restart: unless-stopped
+  env_file: [.env]
+  environment:
+    DATABASE_URL: postgresql+asyncpg://kairos:${POSTGRES_PASSWORD}@postgres:5432/kairos
+    REDIS_URL: redis://redis:6379/0
+    KAIROS_KEK: ${KAIROS_KEK}          # Master Key — NIE in der DB, NIE im Repo
+  depends_on:
+    postgres: {condition: service_healthy}
+    redis:    {condition: service_started}
+  networks: [internal]
+  security_opt: ["no-new-privileges:true"]
+
+services:
+
+  # ---------------------------------------------------------------- Edge
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [internal, edge]
+    depends_on: [api, web, authentik]
+
+  # ------------------------------------------------------------ Frontend
+  web:
+    build: {context: ../web}
+    image: kairos-web:${GIT_SHA:-dev}
+    restart: unless-stopped
+    environment:
+      PUBLIC_API_URL: https://${DOMAIN}/api
+      PUBLIC_OIDC_ISSUER: https://${DOMAIN}/auth
+    networks: [internal]
+
+  # ------------------------------------------------------- API & Worker
+  api:
+    <<: *app-base
+    command: uvicorn kairos.api:app --host 0.0.0.0 --port 8000
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      migrate:  {condition: service_completed_successfully}
+      postgres: {condition: service_healthy}
+      redis:    {condition: service_started}
+
+  worker:
+    <<: *app-base
+    command: arq kairos.jobs.WorkerSettings
+    deploy: {replicas: 1}
+
+  scheduler:
+    <<: *app-base
+    command: python -m kairos.scheduler
+
+  # Migrationen laufen als One-Shot VOR dem App-Start, nie beim Applikationsstart
+  migrate:
+    <<: *app-base
+    command: alembic upgrade heads
+    restart: "no"
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  # ------------------------------------------------------- MCP-Connectors
+  # Eigene Prozesse: instabilste Komponente, konfliktäre Abhängigkeitsbäume,
+  # Absturzisolation. Siehe ADR-0003.
+  mcp-garmin:
+    build: {context: ../mcp/garmin}
+    image: kairos-mcp-garmin:${GIT_SHA:-dev}
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      MCP_TRANSPORT: http
+      MCP_PORT: 9101
+      DATABASE_URL: postgresql+asyncpg://kairos:${POSTGRES_PASSWORD}@postgres:5432/kairos
+    networks: [internal]
+
+  mcp-google:
+    build: {context: ../mcp/google}
+    image: kairos-mcp-google:${GIT_SHA:-dev}
+    restart: unless-stopped
+    env_file: [.env]
+    environment: {MCP_TRANSPORT: http, MCP_PORT: 9102}
+    networks: [internal]
+
+  mcp-caldav:
+    build: {context: ../mcp/caldav}
+    image: kairos-mcp-caldav:${GIT_SHA:-dev}
+    restart: unless-stopped
+    env_file: [.env]
+    environment: {MCP_TRANSPORT: http, MCP_PORT: 9103}
+    networks: [internal]
+
+  # ------------------------------------------------------------- Storage
+  postgres:
+    image: timescale/timescaledb-ha:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: kairos
+      POSTGRES_USER: kairos
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/home/postgres/pgdata
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kairos -d kairos"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [internal]
+    # BEWUSST kein ports:-Mapping — nur intern erreichbar.
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --save 60 1 --appendonly no
+    volumes: [redisdata:/data]
+    networks: [internal]
+
+  # Optional. Alternative: Bind-Mount für FIT-/Raw-Objekte.
+  minio:
+    image: minio/minio
+    restart: unless-stopped
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: ${MINIO_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD}
+    volumes: [miniodata:/data]
+    networks: [internal]
+
+  # ---------------------------------------------------------------- Auth
+  authentik:
+    image: ghcr.io/goauthentik/server:latest
+    restart: unless-stopped
+    command: server
+    env_file: [.env]
+    environment:
+      AUTHENTIK_POSTGRESQL__HOST: postgres
+      AUTHENTIK_REDIS__HOST: redis
+    networks: [internal]
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  # -------------------------------------------------------- Backup / Ops
+  backup:
+    build: {context: ./backup}
+    restart: unless-stopped
+    env_file: [.env]
+    volumes:
+      - miniodata:/srv/minio:ro
+    networks: [internal]
+    # Läuft täglich 02:00: pg_dump + restic, verschlüsselt an zweiten Ort.
+    # WICHTIG: Der KAIROS_KEK gehört NICHT in dieses Backup.
+
+  uptime:
+    image: louislam/uptime-kuma:1
+    restart: unless-stopped
+    volumes: [uptimedata:/app/data]
+    networks: [internal]
+
+networks:
+  edge:
+  internal:
+    internal: false   # Ausgehend nötig (Garmin, Google, LLM-API)
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:
+  caddy_data:
+  caddy_config:
+  uptimedata:
