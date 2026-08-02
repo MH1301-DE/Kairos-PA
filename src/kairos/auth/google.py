@@ -23,7 +23,7 @@ SCOPES = "openid email profile https://www.googleapis.com/auth/calendar"
 @router.get("/login")
 async def login() -> RedirectResponse:
     state = secrets.token_urlsafe(32)
-    await get_redis().setex(f"oauth_state:{state}", 600, "1")
+    await get_redis().set(f"oauth_state:{state}", "1", ex=600)
     params = {
         "client_id": settings.google_client_id,
         "redirect_uri": f"https://{settings.domain}/auth/callback",

@@ -18,10 +18,10 @@ def get_redis() -> Redis:
 
 async def create_session(user_id: uuid.UUID, email: str) -> str:
     session_id = secrets.token_urlsafe(32)
-    await get_redis().setex(
+    await get_redis().set(
         f"session:{session_id}",
-        86400 * 30,
         json.dumps({"user_id": str(user_id), "email": email}),
+        ex=86400 * 30,
     )
     return session_id
 
