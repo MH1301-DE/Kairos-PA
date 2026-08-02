@@ -17,7 +17,9 @@ jobs:
         ports: ["6379:6379"]
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
       - run: uv sync --all-extras
       - run: uv run ruff check src tests
       - run: uv run mypy src
