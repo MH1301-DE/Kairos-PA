@@ -8,9 +8,9 @@ Diese fünf Prinzipien entscheiden im Zweifel jede Detailfrage:
    Das LLM interpretiert Ergebnisse, es erzeugt sie nicht.
 2. **Eine Datenbank.** Postgres deckt Relationen, Zeitreihen (TimescaleDB), Volltext
    und Vektoren (`pgvector`) ab. Kein zweites Datensystem ohne zwingenden Grund.
-3. **Die Integrationsgrenze ist ein Prozess, nicht eine Funktion.** Jede externe
-   Anbindung ist ein eigener MCP-Server. Das erzwingt saubere Schnitte und macht
-   Austausch/Ausfall beherrschbar.
+3. **Die Integrationsgrenze ist ein Modul, nicht eine Funktion.** Jede externe
+   Anbindung implementiert ein einheitliches `Connector`-Protocol und lebt in einem
+   eigenen Package. Der Import-Linter erzwingt die Grenze; kein externer Prozess nötig.
 4. **Der Kontext ist die knappste Ressource.** Jede Komponente, die etwas in den
    Agentenkontext schreibt, hat ein Token-Budget und hält es ein.
 5. **Rohdaten sind unantastbar.** Was importiert wurde, wird nie überschrieben.
@@ -48,8 +48,8 @@ die als potenzielle Prompt-Injection behandelt werden ([06](06-sicherheit-und-da
 │  └─────┬─────┘                                                      │
 │        │                                                            │
 │  ┌─────▼──────────┐        ┌──────────────────┐                     │
-│  │  Web (PWA)     │        │  Auth (OIDC)     │                     │
-│  │  React/Svelte  │◀──────▶│  Authentik       │                     │
+│  │  Web (PWA)     │        │  Auth            │                     │
+│  │  React/Svelte  │◀──────▶│  Google OIDC     │                     │
 │  └─────┬──────────┘        └──────────────────┘                     │
 │        │ REST / SSE                                                 │
 │  ┌─────▼──────────────────────────────────────────┐                 │
@@ -59,13 +59,14 @@ die als potenzielle Prompt-Injection behandelt werden ([06](06-sicherheit-und-da
 │  │  ├──────────┼──────────┼──────────┼─────────┤  │                 │
 │  │  │ metrics  │  agent   │ registry │ modules │  │                 │
 │  │  └──────────┴──────────┴──────────┴─────────┘  │                 │
-│  └───┬───────────────────────┬─────────────┬──────┘                 │
-│      │                       │             │                        │
-│      │  MCP (stdio/HTTP)     │             │                        │
-│  ┌───▼────┬────────┬─────────▼──┐    ┌─────▼──────┐                 │
-│  │ mcp-   │ mcp-   │  mcp-      │    │  Worker    │  arq / Celery   │
-│  │ garmin │ google │  caldav    │    │  Scheduler │                 │
-│  └────────┴────────┴────────────┘    └─────┬──────┘                 │
+│  └───┬───────────────────────────────────────────────┬──────┘         │
+│      │  (Connector-Protocol, Import-Linter-Grenze)  │               │
+│  ┌───▼──────────────────────────────────────┐  ┌────▼───────┐       │
+│  │  kairos/connectors/                      │  │  Worker    │       │
+│  │  ┌──────────┬───────────┬─────────────┐  │  │  Scheduler │  arq  │
+│  │  │  garmin  │  google   │   caldav    │  │  └────┬───────┘       │
+│  │  └──────────┴───────────┴─────────────┘  │       │               │
+│  └──────────────────────────────────────────┘       │               │
 │                                            │                        │
 │  ┌──────────────────────┐  ┌───────────────▼─────┐  ┌────────────┐  │
 │  │ Postgres 16          │  │ Redis               │  │ Object     │  │
@@ -84,9 +85,10 @@ Service-Interfaces, Import-Linter in CI). Ein Modul lässt sich später
 herausschneiden, wenn es je nötig wird. Siehe
 [ADR-0001](adr/ADR-0001-modularer-monolith.md).
 
-**Ausnahme:** Connectors laufen als eigene Prozesse (MCP-Server). Das ist bewusst,
-weil sie die instabilste, am häufigsten geänderte und sicherheitskritischste
-Komponente sind. Siehe [ADR-0003](adr/ADR-0003-mcp-als-integrationsgrenze.md).
+**Connectors** sind in-process Python-Module (`kairos/connectors/`), die das
+`Connector`-Protocol implementieren. Keine eigenen Prozesse, kein Netzwerk-Hop.
+Die Grenze wird durch den Import-Linter erzwungen, nicht durch eine Prozessgrenze.
+Begründung und Upgrade-Pfad: [ADR-0003](adr/ADR-0003-connector-architektur.md).
 
 ## 4. Schichten
 
@@ -191,7 +193,7 @@ nur eine Liste von `module_id` mit Position.
 
 ```
 03:15  Scheduler emittiert SyncJob je Nutzer
-       └─ mcp-garmin: Login via gespeicherte Tokens (garth)
+       └─ connectors.garmin: Login via gespeicherte Tokens (garth)
           └─ fetch dailies, sleep, hrv, stress, bb, spo2, respiration
           └─ fetch activity list seit Watermark
              └─ je neue Aktivität: Summary + FIT-Download
@@ -235,10 +237,10 @@ passieren wird).
 | Queue | Redis + `arq` | Deutlich schlanker als Celery bei gleichem Nutzen hier |
 | Migrationen | Alembic | Standard, plugin-fähig via Branch-Labels |
 | Frontend | SvelteKit **oder** Next.js | PWA, Web Push; Entscheidung offen ([08](08-roadmap.md)) |
-| Charts | uPlot (Zeitreihen) + ECharts | uPlot skaliert auf 100k Punkte im Browser |
-| Auth | Authentik (OIDC) | Self-hosted, MFA, 5 Nutzer trivial verwaltbar |
+| Charts | ECharts | Einheitliche Bibliothek für Zeitreihen, Gauges, Scatter + Event-Overlays; deklarative JSON-Konfiguration; siehe [ADR-0005](adr/ADR-0005-echarts.md) |
+| Auth | Google OIDC | Self-hosted IdP entfällt; 0 MB Overhead; MFA Google-seitig; siehe [ADR-0006](adr/ADR-0006-google-oidc.md) |
 | Reverse Proxy | Caddy | Automatisches TLS, minimale Konfiguration |
-| Agent-Tools | MCP | Standardisierte Grenze, prozessisoliert, austauschbar |
+| Agent-Tools | Python-Funktionen hinter `Connector`-Protocol | Import-Linter-Grenze, kein externer Prozess nötig bei einem Agent |
 | Tests | pytest + testcontainers | Echte Postgres-Instanz in Tests statt SQLite-Lüge |
 
 ## 7. Was bewusst *nicht* gebaut wird
@@ -246,7 +248,7 @@ passieren wird).
 - **Kein eigenes Vektor-DB-Deployment.** `pgvector` reicht für < 100k Embeddings um
   Größenordnungen.
 - **Kein Kafka / Event-Bus.** Postgres-Tabelle + Redis-Queue decken das Volumen ab.
-- **Kein eigenes Auth-System.** Authentik übernimmt; die App kennt nur JWTs.
+- **Kein eigenes Auth-System.** Google OIDC übernimmt; die App kennt nur JWTs.
 - **Kein GraphQL.** Der Hauptkonsument ist der Agent, und der bekommt Tools, keine
   Query-Sprache.
 - **Kein Feature-Flag-Service.** Konfiguration in der DB, pro Nutzer.

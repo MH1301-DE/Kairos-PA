@@ -4,11 +4,12 @@ import re
 
 import pytest
 import pytest_asyncio
-from alembic import command
 from alembic.config import Config
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from testcontainers.community.postgres import PostgresContainer
+
+from alembic import command
 
 # Ryuk reaper fails on macOS/Colima — disable it
 os.environ.setdefault("TESTCONTAINERS_RYUK_DISABLED", "true")

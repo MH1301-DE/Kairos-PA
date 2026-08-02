@@ -11,9 +11,12 @@ Drei Regeln folgen daraus:
 
 1. **Zahlen kommen aus Tools, nie aus dem Modell.** Wenn der Agent eine Zahl nennt,
    die nicht in einem Tool-Ergebnis dieses Turns steht, ist das ein Bug.
-2. **Rohdaten erreichen den Kontext nie.** Tools liefern Aggregate, Kennzahlen und
-   Antworten — keine Zeitreihen. Eine HR-Kurve wird als Chart-Spezifikation
-   zurückgegeben, nicht als 3.300 Zahlen.
+2. **Zeitreihen fließen nie als roher Zahlenstrom in den Kontext.** Für Analysen
+   über Zeitfenster ruft der Agent ein `analyze_records`-Tool auf — der Server
+   rechnet serverseitig und gibt ein strukturiertes, bounded Ergebnis zurück
+   (Kennzahlen, Statistiken, Auffälligkeiten). Rohe Listen von 3.300 Werten landen
+   nie im Kontext; Visualisierungen gehen über `render` und liefern nur eine
+   Referenz-ID. Der Zugang zu Zeitreihendaten ist tool-vermittelt, nicht gesperrt.
 3. **Kontext ist ein Budget, kein Fass.** Jede Komponente hat ein Limit und hält es.
 
 ## 2. Kontextbudget
@@ -23,7 +26,7 @@ Zielwert: **Median-Input < 15.000 Tokens pro Turn**, Hardcap 40.000.
 | Block | Budget | Herkunft | Cachebar |
 |---|---:|---|---|
 | System-Prompt (Persona, Policies, Rechenverbot) | 1.500 | statisch | ✅ |
-| Core-Tools (7 Stück, immer geladen) | 1.400 | statisch | ✅ |
+| Core-Tools (8 Stück, immer geladen) | 1.600 | statisch | ✅ |
 | Nutzerprofil (Ziele, Verletzungen, Präferenzen) | 400 | DB, ändert sich selten | ✅ |
 | **Situation Brief** | 700 | DB, pro Turn generiert | ❌ |
 | Abgerufene Memories | 400 | pgvector | ❌ |
@@ -32,7 +35,7 @@ Zielwert: **Median-Input < 15.000 Tokens pro Turn**, Hardcap 40.000.
 | Tool-Ergebnisse dieses Turns | 3.000–5.000 | Tools | ❌ |
 | **Summe (typisch)** | **≈ 12.000–15.000** | | ~25 % cachebar |
 
-Die ersten drei Blöcke (≈ 3.300 Tokens) sind über eine Session hinweg identisch und
+Die ersten drei Blöcke (≈ 3.500 Tokens) sind über eine Session hinweg identisch und
 werden über **Prompt-Caching** abgewickelt. Das ist der wirksamste einzelne
 Kostenhebel ([07 — Kosten](07-deployment-und-betrieb.md#kosten)).
 
@@ -76,30 +79,36 @@ gekürzt und umgekehrt. Die Auswahl trifft ein billiger Intent-Klassifikator
 
 ### 4.1 Das Problem
 
-Realistisch entstehen 60–90 Tools (Garmin ~20, Kalender ~15, Mail ~8, Planung ~12,
-Analyse ~15, Memory/Admin ~10, plus je Erweiterung mehr). Vollständig geladen sind
+Realistisch entstehen 60–90 Tools (Garmin ~20, Kalender ~15, Planung ~12,
+Analyse ~15, Memory/Admin ~10, Mail ~8 optional, plus je Erweiterung mehr). Vollständig geladen sind
 das **8.000–12.000 Tokens pro Turn** — dauerhaft, für alle Anfragen, egal ob
 relevant. Zusätzlich sinkt die Auswahlgenauigkeit des Modells messbar, je mehr
 ähnliche Tools nebeneinander stehen.
 
 ### 4.2 Die Lösung: zweistufige Tool-Ladung
 
-**Stufe 1 — Core-Tools (immer im Kontext, 7 Stück, ~1.400 Tokens):**
+**Stufe 1 — Core-Tools (immer im Kontext, 8 Stück, ~1.600 Tokens):**
 
 | Tool | Zweck |
 |---|---|
 | `search_tools` | Findet Tools nach Aufgabenbeschreibung |
 | `load_tools` | Lädt vollständige Schemas in den Kontext |
-| `query_health` | Universelle Abfrage der Derived-Zone (Metrik, Zeitraum, Aggregat) |
+| `query_health` | Abfrage der Derived-Zone (Metrik, Zeitraum, Aggregat) |
+| `analyze_records` | Serverseitige Analyse über Canonical-Zeitreihen (Aktivitäts- oder Wellness-Window); gibt Statistiken + Auffälligkeiten zurück, keine Rohliste |
 | `query_calendar` | Termine/freie Blöcke in einem Zeitraum |
 | `recall` | Semantische Suche im Nutzergedächtnis |
 | `remember` | Fakt ins Nutzergedächtnis schreiben |
 | `render` | Chart/Tabelle/Karte im UI erzeugen (gibt Spec zurück, keine Daten) |
 
-Diese sieben decken erfahrungsgemäß den Großteil der Alltagsanfragen vollständig ab.
-`query_health` und `query_calendar` sind bewusst **breit parametrisiert**, statt in
-20 Spezialtools zerlegt zu werden — das ist der billigste Weg, die Tool-Anzahl zu
-senken.
+Diese acht decken erfahrungsgemäß den Großteil der Alltagsanfragen ab.
+`query_health`, `analyze_records` und `query_calendar` sind bewusst **breit
+parametrisiert**, statt in 20 Spezialtools zerlegt zu werden — das ist der
+billigste Weg, die Tool-Anzahl zu senken.
+
+`analyze_records` ist der kontrollierte Zugang zu Zeitreihendaten: Der Agent
+spezifiziert Fenster, Metriken und gewünschte Statistiken; der Server führt die
+Analyse aus und gibt ein bounded Ergebnis zurück (Hard-Cap: 2.000 Tokens).
+Das verhindert rohe Zahlenlisten im Kontext, ohne Zeitreihenanalyse zu verbieten.
 
 **Stufe 2 — Registry (nicht im Kontext):**
 
@@ -112,7 +121,7 @@ tool_registry(
   embedding vector,   -- über one_liner + when_to_use
   risk_class,         -- read | write | destructive
   requires_confirmation bool,
-  mcp_server, enabled
+  enabled
 )
 ```
 

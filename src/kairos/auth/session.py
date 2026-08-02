@@ -1,6 +1,7 @@
 import json
 import secrets
 import uuid
+from typing import Any
 
 from redis.asyncio import Redis
 
@@ -26,7 +27,7 @@ async def create_session(user_id: uuid.UUID, email: str) -> str:
     return session_id
 
 
-async def get_session(session_id: str) -> dict | None:
+async def get_session(session_id: str) -> dict[str, Any] | None:
     data = await get_redis().get(f"session:{session_id}")
     return json.loads(data) if data else None
 

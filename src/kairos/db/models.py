@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import (
     CheckConstraint,
@@ -49,8 +50,10 @@ class Connection(Base):
     external_account: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(Text, nullable=False, default="active")
     credentials_enc: Mapped[bytes | None] = mapped_column(LargeBinary)
-    config: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
-    connected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    config: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    connected_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
     last_ok_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(Text)
 
@@ -91,7 +94,10 @@ class SyncState(Base):
     __tablename__ = "sync_state"
 
     user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("app_user.id", ondelete="CASCADE"), nullable=False, primary_key=True
+        UUID(as_uuid=True),
+        ForeignKey("app_user.id", ondelete="CASCADE"),
+        nullable=False,
+        primary_key=True,
     )
     connector: Mapped[str] = mapped_column(Text, nullable=False, primary_key=True)
     kind: Mapped[str] = mapped_column(Text, nullable=False, primary_key=True)

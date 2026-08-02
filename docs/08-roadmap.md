@@ -21,7 +21,8 @@ Nutzer über zwei Wochen stabil läuft, kommen weitere dazu.
 - [ ] Kernschema: `app_user`, `connection`, `raw_payload`, `sync_state`, RLS
 - [ ] RLS-CI-Test (keine Tabelle ohne Policy)
 - [ ] Envelope-Verschlüsselung für Credentials
-- [ ] Authentik, Caddy, Domain, TLS auf der VM
+- [ ] Google OAuth-App einrichten (Cloud Console, Test-Nutzer eintragen, Client-ID/Secret)
+- [ ] Caddy, Domain, TLS auf der VM
 - [ ] Backup-Job + erster Restore-Test
 
 **Abnahme:** Ein Nutzer kann sich anmelden. Backup und Restore funktionieren
@@ -34,7 +35,7 @@ nachweislich.
 **Ziel:** Vollständige, korrekte Gesundheitsdaten in der Datenbank.
 
 - [ ] Connector-Contract + gemeinsame Infrastruktur (Retry, Rate-Limit, Watermark)
-- [ ] `mcp-garmin`: Auth via `garth`, MFA-Pfad, Reauth-UI
+- [ ] `connectors.garmin`: Auth via `garth`, MFA-Pfad, Reauth-UI
 - [ ] Fetch aller Datentypen aus [04](04-integrationen.md#23-abzurufende-datentypen)
 - [ ] Raw-Store mit `content_hash`-Deduplizierung
 - [ ] Normalisierung → `wellness_sample`, `sleep_session`, `activity`, `daily_summary`
@@ -71,8 +72,8 @@ erklärt, nicht wegdefiniert.
 
 ## Phase 3 — Kalender (≈ 1,5 Wochen)
 
-- [ ] `mcp-google`: OAuth, Sync per `syncToken`, Watch-Channels, Fallback-Poll
-- [ ] `mcp-caldav`: iCloud, ctag/etag-Poll
+- [ ] `connectors.google`: OAuth + Login (kombinierter Flow), Sync per `syncToken`, Watch-Channels, Fallback-Poll
+- [ ] `connectors.caldav`: iCloud, ctag/etag-Poll
 - [ ] Kanonisches `calendar_event`, Deduplizierung gespiegelter Termine
 - [ ] Freizeitberechnung (freie Blöcke ≥ X min unter Berücksichtigung von
       Präferenzen und Puffern)
@@ -88,7 +89,7 @@ erscheint korrekt in beiden Kalendern; keine Sync-Schleife.
 
 - [ ] Orchestrator, Streaming, Konversationspersistenz
 - [ ] Situation-Brief-Builder (adaptiv)
-- [ ] Core-Tools (7)
+- [ ] Core-Tools (8): `search_tools`, `load_tools`, `query_health`, `analyze_records`, `query_calendar`, `recall`, `remember`, `render`
 - [ ] `tool_registry` mit Embeddings, `search_tools`, `load_tools`
 - [ ] Sticky Loading, Pack-Prewarming, Nutzungsstatistik
 - [ ] Tool-Ausgabekontrakt inkl. Token-Cap
@@ -120,8 +121,8 @@ beantwortet und in den Kalender geschrieben.
 
 ## Phase 6 — Multi-User-Rollout & Erweiterbarkeit (≈ 1,5 Wochen)
 
-- [ ] Onboarding-Flow inkl. Einwilligung und Datenschutzinformation
-- [ ] Datenexport (Art. 15/20) und Löschung (Art. 17)
+- [ ] Onboarding-Flow für neue Nutzer
+- [ ] Nutzerverwaltung + Löschung (Account + alle Daten kaskadierend)
 - [ ] Plugin-Loader, Manifest-Validierung, Admin-Ansicht
 - [ ] **Referenz-Plugin Wetter** (Nachweis: < 150 Zeilen)
 - [ ] **Plugin Manuelle Einträge** (Stimmung, Alkohol, Schmerz)
@@ -200,9 +201,3 @@ gebaut wird:
 11. **Welche Trainingsphilosophie liegt der Beratung zugrunde?** Polarisiert,
     pyramidal, schwellenorientiert? Das ist eine inhaltliche, keine technische
     Entscheidung — und sie prägt jede Empfehlung, die der Agent gibt.
-
-### Grundsätzlich
-
-12. **Einwilligung der anderen vier Nutzer** zur Verarbeitung ihrer
-    Gesundheitsdaten inkl. Übermittlung von Aggregaten an einen LLM-Anbieter. Das
-    sollte vor Baubeginn geklärt sein, nicht danach.

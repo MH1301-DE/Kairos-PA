@@ -7,7 +7,8 @@ from kairos.api import app
 
 @pytest.fixture(autouse=True)
 async def fresh_redis() -> None:
-    """Reset the module-level Redis singleton so each test gets a fresh connection on its own loop."""
+    """Reset the module-level Redis singleton so each test gets a fresh
+    connection on its own loop."""
     if _sess._redis is not None:
         await _sess._redis.aclose()
         _sess._redis = None

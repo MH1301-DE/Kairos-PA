@@ -1,0 +1,25 @@
+# Starts only infrastructure services — API runs locally via uvicorn
+services:
+  postgres:
+    image: timescale/timescaledb-ha:pg16
+    platform: linux/amd64
+    environment:
+      POSTGRES_DB: kairos
+      POSTGRES_USER: kairos
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devpassword}
+    ports: ["5432:5432"]
+    volumes: [pgdata_dev:/home/postgres/pgdata]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kairos -d kairos"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --requirepass ${REDIS_PASSWORD:-devredispass}
+    ports: ["6379:6379"]
+    volumes: [redisdata_dev:/data]
+
+volumes:
+  pgdata_dev:
+  redisdata_dev:

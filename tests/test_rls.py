@@ -16,7 +16,8 @@ async def test_rls_isolates_users(session: AsyncSession, app_session: AsyncSessi
     # Insert two users via the superuser session (superuser bypasses RLS → no WITH CHECK blocks)
     await session.execute(
         text(
-            "INSERT INTO app_user (id, email, display_name, google_sub, home_timezone, role) VALUES "
+            "INSERT INTO app_user "
+            "(id, email, display_name, google_sub, home_timezone, role) VALUES "
             "(:id1, :e1, :n1, :s1, 'UTC', 'user'), (:id2, :e2, :n2, :s2, 'UTC', 'user')"
         ),
         {

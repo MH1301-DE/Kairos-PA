@@ -35,7 +35,7 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     networks: [internal, edge]
-    depends_on: [api, web, authentik]
+    depends_on: [api, web]
 
   # ------------------------------------------------------------ Frontend
   web:
@@ -44,7 +44,7 @@ services:
     restart: unless-stopped
     environment:
       PUBLIC_API_URL: https://${DOMAIN}/api
-      PUBLIC_OIDC_ISSUER: https://${DOMAIN}/auth
+      PUBLIC_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
     networks: [internal]
 
   # ------------------------------------------------------- API & Worker
@@ -78,36 +78,6 @@ services:
     depends_on:
       postgres: {condition: service_healthy}
 
-  # ------------------------------------------------------- MCP-Connectors
-  # Eigene Prozesse: instabilste Komponente, konfliktäre Abhängigkeitsbäume,
-  # Absturzisolation. Siehe ADR-0003.
-  mcp-garmin:
-    build: {context: ../mcp/garmin}
-    image: kairos-mcp-garmin:${GIT_SHA:-dev}
-    restart: unless-stopped
-    env_file: [.env]
-    environment:
-      MCP_TRANSPORT: http
-      MCP_PORT: 9101
-      DATABASE_URL: postgresql+asyncpg://kairos:${POSTGRES_PASSWORD}@postgres:5432/kairos
-    networks: [internal]
-
-  mcp-google:
-    build: {context: ../mcp/google}
-    image: kairos-mcp-google:${GIT_SHA:-dev}
-    restart: unless-stopped
-    env_file: [.env]
-    environment: {MCP_TRANSPORT: http, MCP_PORT: 9102}
-    networks: [internal]
-
-  mcp-caldav:
-    build: {context: ../mcp/caldav}
-    image: kairos-mcp-caldav:${GIT_SHA:-dev}
-    restart: unless-stopped
-    env_file: [.env]
-    environment: {MCP_TRANSPORT: http, MCP_PORT: 9103}
-    networks: [internal]
-
   # ------------------------------------------------------------- Storage
   postgres:
     image: timescale/timescaledb-ha:pg16
@@ -129,7 +99,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: redis-server --save 60 1 --appendonly no
+    command: redis-server --save 60 1 --appendonly no --requirepass ${REDIS_PASSWORD}
     volumes: [redisdata:/data]
     networks: [internal]
 
@@ -143,19 +113,6 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD}
     volumes: [miniodata:/data]
     networks: [internal]
-
-  # ---------------------------------------------------------------- Auth
-  authentik:
-    image: ghcr.io/goauthentik/server:latest
-    restart: unless-stopped
-    command: server
-    env_file: [.env]
-    environment:
-      AUTHENTIK_POSTGRESQL__HOST: postgres
-      AUTHENTIK_REDIS__HOST: redis
-    networks: [internal]
-    depends_on:
-      postgres: {condition: service_healthy}
 
   # -------------------------------------------------------- Backup / Ops
   backup:

@@ -21,10 +21,10 @@ konfigurierbaren Modulen**.
 | [03 – Agent-Design](docs/03-agent-design.md) | Kontextbudget, Tool-Registry, Tool-Search, Memory |
 | [04 – Integrationen](docs/04-integrationen.md) | Garmin, Google Calendar/Gmail, Apple/CalDAV |
 | [05 – Erweiterbarkeit](docs/05-erweiterbarkeit.md) | Plugin-Contract, Manifest, Migrationen |
-| [06 – Sicherheit & Datenschutz](docs/06-sicherheit-und-datenschutz.md) | Mandantenfähigkeit, RLS, Secrets, DSGVO |
+| [06 – Sicherheit](docs/06-sicherheit-und-datenschutz.md) | Secrets, RLS, Auth, Netzwerk, Prompt Injection, Audit |
 | [07 – Deployment & Betrieb](docs/07-deployment-und-betrieb.md) | VM-Sizing, Compose, Backup, Monitoring, Kosten |
 | [08 – Roadmap](docs/08-roadmap.md) | Phasen, Meilensteine, Risiken, offene Punkte |
-| [ADRs](docs/adr/) | Architekturentscheidungen mit Begründung |
+| [ADRs](docs/adr/) | ADR-0001 Monolith · ADR-0002 Eine DB · ADR-0003 Connector-Architektur · ADR-0004 Garmin · ADR-0005 ECharts · ADR-0006 Google OIDC |
 | [db/schema.sql](db/schema.sql) | Ausführbarer Schema-Entwurf (Postgres + TimescaleDB) |
 | [deploy/docker-compose.yml](deploy/docker-compose.yml) | Deployment-Skizze |
 
@@ -50,8 +50,9 @@ Rechenweg in [02 – Datenmodell & Volumen](docs/02-datenmodell-und-volumen.md).
 
 Ein **modularer Monolith in Python (FastAPI)** hält API, Domänenlogik und
 Metrikberechnung; **Postgres mit TimescaleDB** ist die einzige Datenbank
-(Zeitreihen, Relationen, Vektoren via `pgvector`); **Integrationen und Agent-Tools
-sind als MCP-Server ausgelagert** und damit unabhängig vom Kern austauschbar.
+(Zeitreihen, Relationen, Vektoren via `pgvector`); **Integrationen sind als
+in-process Module** (`kairos/connectors/`) hinter einem gemeinsamen Protocol
+implementiert — saubere Grenze ohne Prozess-Overhead.
 
 Der Agent bekommt **nie Rohdaten** in den Kontext, sondern nur deterministisch
 berechnete Kennzahlen und beschränkte Tool-Ergebnisse. Tools werden nicht statisch

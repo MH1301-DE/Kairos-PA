@@ -451,8 +451,6 @@ CREATE TABLE tool_registry (
     embedding   vector(1024),
     risk_class  text NOT NULL DEFAULT 'read'
                 CHECK (risk_class IN ('read','write','destructive')),
-    mcp_server  text,
-    is_core     boolean NOT NULL DEFAULT false,
     enabled     boolean NOT NULL DEFAULT true
 );
 CREATE INDEX ON tool_registry USING hnsw (embedding vector_cosine_ops);

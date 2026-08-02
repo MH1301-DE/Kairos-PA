@@ -18,4 +18,4 @@ class Settings(BaseSettings):
         return self.env == "development"
 
 
-settings = Settings()
+settings = Settings()  # type: ignore[call-arg]
