@@ -1,0 +1,11 @@
+.env
+*.env
+.env.*
+!.env.example
+__pycache__/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+dist/
+*.egg-info/
+.venv/
