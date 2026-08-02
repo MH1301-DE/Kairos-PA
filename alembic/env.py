@@ -4,7 +4,6 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from kairos.config import settings
 from kairos.db.models import Base
 
 config = context.config
@@ -14,9 +13,18 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
+def _get_url() -> str:
+    # Prefer the URL explicitly set in the config (e.g. overridden from conftest)
+    url = config.get_main_option("sqlalchemy.url")
+    if url:
+        return url
+    from kairos.config import settings  # lazy import keeps env.py testable
+    return settings.database_url
+
+
 def run_migrations_offline() -> None:
     context.configure(
-        url=settings.database_url,
+        url=_get_url(),
         target_metadata=target_metadata,
         literal_binds=True,
     )
@@ -31,7 +39,7 @@ def _do_run_migrations(connection):
 
 
 async def run_migrations_online() -> None:
-    engine = create_async_engine(settings.database_url)
+    engine = create_async_engine(_get_url())
     async with engine.connect() as conn:
         await conn.run_sync(_do_run_migrations)
     await engine.dispose()
