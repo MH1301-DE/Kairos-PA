@@ -161,7 +161,7 @@ Agenten als solche markiert übergeben.
 
 ### 2.5 Backfill-Strategie
 
-Der Erstimport (Standard: 12 Monate) läuft als eigener Jobtyp:
+Der Erstimport (gesamte verfügbare Historie, max. 15 Monate) läuft als eigener Jobtyp:
 
 ```
 BackfillJob(user_id, connector='garmin', from_date, to_date)
@@ -172,9 +172,9 @@ BackfillJob(user_id, connector='garmin', from_date, to_date)
     └─ Fortschrittsanzeige im Dashboard (% erledigt, geschätzte Restzeit)
 ```
 
-**Volumenabschätzung Backfill 12 Monate, 5 Nutzer:**
-12 Monate × 30 Tage × 10 Endpunkte × 5 Nutzer ≈ **18.000 API-Requests**.
-Bei 1 Request / 3 s = 54.000 s ≈ **15 Stunden Laufzeit** (verteilt über ~3 Nächte).
+**Volumenabschätzung Backfill 15 Monate, 4 Garmin-Nutzer** (Apple Watch gesondert):
+15 Monate × 30 Tage × 10 Endpunkte × 4 Nutzer ≈ **18.000 API-Requests**.
+Bei 1 Request / 3 s = 54.000 s ≈ **15 Stunden Laufzeit** (verteilt über ~4 Nächte).
 
 ---
 

@@ -184,8 +184,9 @@ gebaut wird:
 5. **Apple Watch (1 Nutzer): kein Garmin-Connector möglich.** Dieser Nutzer braucht
    einen `connectors.apple_health`-Connector (Phase 6+). In Phase 1–5 hat er nur
    Kalender-Funktionalität. Entscheidung: akzeptiert, Nutzer informieren.
-6. **MFA auf den Garmin-Konten aktiv?** Beeinflusst den Auth-Flow spürbar.
-7. **Wie weit zurück soll der Backfill reichen?** 12 Monate ist die Annahme.
+6. **MFA auf Garmin-Konten:** Dynamisch behandelt via `garth` NeedsMFAToken-Exception;
+   Onboarding-UI zeigt OTP-Eingabefeld bei Bedarf. Kein architektonischer Overhead.
+7. **Backfill: gesamte Historie (max. 15 Monate)** — bestätigt. ~4 Nächte Laufzeit.
 
 ### Vor Phase 3
 
