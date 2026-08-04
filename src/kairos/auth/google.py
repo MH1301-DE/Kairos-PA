@@ -26,7 +26,7 @@ async def login() -> RedirectResponse:
     await get_redis().set(f"oauth_state:{state}", "1", ex=600)
     params = {
         "client_id": settings.google_client_id,
-        "redirect_uri": f"https://{settings.domain}/auth/callback",
+        "redirect_uri": settings.redirect_uri,
         "scope": SCOPES,
         "response_type": "code",
         "state": state,
@@ -37,7 +37,15 @@ async def login() -> RedirectResponse:
 
 
 @router.get("/callback")
-async def callback(code: str, state: str) -> JSONResponse:
+async def callback(
+    state: str,
+    code: str | None = None,
+    error: str | None = None,
+) -> JSONResponse:
+    if error:
+        raise HTTPException(status_code=400, detail=f"google_error:{error}")
+    if not code:
+        raise HTTPException(status_code=400, detail="missing_code")
     valid = await get_redis().getdel(f"oauth_state:{state}")
     if not valid:
         raise HTTPException(status_code=400, detail="invalid_state")
@@ -49,7 +57,7 @@ async def callback(code: str, state: str) -> JSONResponse:
                 "code": code,
                 "client_id": settings.google_client_id,
                 "client_secret": settings.google_client_secret,
-                "redirect_uri": f"https://{settings.domain}/auth/callback",
+                "redirect_uri": settings.redirect_uri,
                 "grant_type": "authorization_code",
             },
         )

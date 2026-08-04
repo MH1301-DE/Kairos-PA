@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     google_client_secret: str
     session_secret: str
     domain: str = "localhost"
+    redirect_uri: str = "http://localhost:8000/auth/callback"
     env: str = "development"
 
     @property
