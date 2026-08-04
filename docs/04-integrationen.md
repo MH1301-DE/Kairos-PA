@@ -116,15 +116,15 @@ Call pro Tag und Nutzer ausgeführt.
 | `fit_file` | `download-service/files/activity/{id}` | `activity_record` + Object Store | ✅ |
 | `body_composition` | `weight-service/weight/dateRange` | `body_composition` | — |
 
-**Geräteabhängige Typen** (nur auf neueren Geräten verfügbar — prüfen per
-`device_info` beim Onboarding):
+**Geräte der Nutzergruppe** (bestätigt):
 
-| Kind | Geräte-Voraussetzung |
-|---|---|
-| `body_battery` | Forerunner 7xx+, Fenix 6+, Venu 2+ |
-| `hrv` | Forerunner 955+, Fenix 7+, Epix 2+, Venu 3 |
-| `spo2` | Forerunner 745+, Fenix 6+, Venu |
-| `training_readiness` | Forerunner 955+, Fenix 7+ |
+| Gerät | Nutzer | body_battery | hrv | spo2 | training_readiness |
+|---|---|---|---|---|---|
+| Forerunner 265S | 2× | ✅ | ✅ | ✅ | ✅ |
+| VivoActive 5 | 2× | ✅ | ✅ | ✅ | ✅ |
+| **Apple Watch** | **1×** | **❌** | **❌** | **❌** | **❌** |
+
+**Apple Watch:** Nutzt nicht Garmin Connect, sondern Apple HealthKit. Der Garmin-Connector ist für diese Person nicht anwendbar. Gesundheitsdaten erfordern einen separaten `connectors.apple_health`-Connector — geplant für Phase 6+. Bis dahin hat dieser Nutzer nur Kalender-Funktionalität.
 
 Fehlt ein Typ auf einem Gerät, wird der Endpunkt nicht abgerufen und
 `metric_def.available = false` für diesen Nutzer gesetzt.

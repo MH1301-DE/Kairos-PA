@@ -179,12 +179,13 @@ gebaut wird:
 
 ### Vor Phase 1
 
-4. **Garmin-Gerätemodelle der 5 Nutzer.** Davon hängt ab, welche Datentypen
-   überhaupt existieren (HRV-Status, Body Battery und Training Readiness gibt es
-   nicht auf jedem Gerät). Beeinflusst die Volumenrechnung und die verfügbaren Module.
-5. **MFA auf den Garmin-Konten aktiv?** Beeinflusst den Auth-Flow spürbar.
-6. **Wie weit zurück soll der Backfill reichen?** 12 Monate ist die Annahme.
-   Mehr ist speichertechnisch problemlos, kostet aber Backfill-Zeit.
+4. **Garmin-Geräte bestätigt:** Forerunner 265S (2×), VivoActive 5 (2×) — alle
+   Datentypen inkl. HRV, Body Battery, Training Readiness, SpO₂ verfügbar. ✅
+5. **Apple Watch (1 Nutzer): kein Garmin-Connector möglich.** Dieser Nutzer braucht
+   einen `connectors.apple_health`-Connector (Phase 6+). In Phase 1–5 hat er nur
+   Kalender-Funktionalität. Entscheidung: akzeptiert, Nutzer informieren.
+6. **MFA auf den Garmin-Konten aktiv?** Beeinflusst den Auth-Flow spürbar.
+7. **Wie weit zurück soll der Backfill reichen?** 12 Monate ist die Annahme.
 
 ### Vor Phase 3
 
