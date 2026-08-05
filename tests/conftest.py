@@ -2,6 +2,7 @@ import asyncio
 import os
 import re
 
+import docker
 import pytest
 import pytest_asyncio
 from alembic.config import Config
@@ -19,6 +20,12 @@ POSTGRES_IMAGE = "postgres:16"
 
 @pytest.fixture(scope="session")
 def pg_container():
+    try:
+        client = docker.from_env()
+        client.ping()
+    except Exception as exc:  # pragma: no cover - environment-dependent
+        pytest.skip(f"Docker unavailable for integration tests: {exc}")
+
     with PostgresContainer(
         image=POSTGRES_IMAGE,
         username="kairos",
@@ -34,7 +41,7 @@ def db_url(pg_container):
     return re.sub(r"postgresql(\+\w+)?://", "postgresql+asyncpg://", raw)
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session")
 def run_migrations(pg_container, db_url):
     cfg = Config("alembic.ini")
     cfg.set_main_option("sqlalchemy.url", db_url)
@@ -64,8 +71,9 @@ def app_db_url(pg_container):
 
 
 @pytest_asyncio.fixture
-async def session(db_url) -> AsyncSession:
+async def session(db_url, run_migrations) -> AsyncSession:
     """Superuser session — used for bypassing RLS during test setup (INSERT)."""
+    del run_migrations
     engine = create_async_engine(db_url)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     async with factory() as s:
@@ -74,8 +82,9 @@ async def session(db_url) -> AsyncSession:
 
 
 @pytest_asyncio.fixture
-async def app_session(app_db_url) -> AsyncSession:
+async def app_session(app_db_url, run_migrations) -> AsyncSession:
     """Non-superuser session — RLS is enforced here."""
+    del run_migrations
     engine = create_async_engine(app_db_url)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     async with factory() as s:
