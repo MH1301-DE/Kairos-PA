@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -135,6 +136,7 @@ class SyncService:
         from_date: datetime,
         to_date: datetime,
         step: timedelta = timedelta(days=1),
+        throttle_seconds: float = 0.0,
         throttle: Callable[[], None] | None = None,
         should_stop: Callable[[], bool] | None = None,
     ) -> BackfillResult:
@@ -157,6 +159,8 @@ class SyncService:
             window_start = max(from_date, cursor - step)
             window = Window(start=window_start, end=cursor)
 
+            if throttle_seconds > 0:
+                await asyncio.sleep(throttle_seconds)
             if throttle is not None:
                 throttle()
 
@@ -201,7 +205,10 @@ class SyncService:
         window: Window,
     ) -> SyncRunResult:
         try:
-            envelope = connector.fetch(user_id=user_id, kind=kind, window=window)
+            # run synchronous connector.fetch in a thread to avoid blocking the event loop
+            envelope = await asyncio.to_thread(
+                connector.fetch, user_id=user_id, kind=kind, window=window
+            )
             content_hash = self._hash_payload(envelope.payload)
 
             raw_payload_id = await self._raw_repo.upsert(
