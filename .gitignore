@@ -9,3 +9,4 @@ __pycache__/
 dist/
 *.egg-info/
 .venv/
+garmin_tokens*.json
