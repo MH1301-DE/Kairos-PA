@@ -1004,7 +1004,7 @@ async def login() -> RedirectResponse:
     await get_redis().setex(f"oauth_state:{state}", 600, "1")
     params = {
         "client_id": settings.google_client_id,
-        "redirect_uri": f"https://{settings.domain}/auth/callback",
+        "redirect_uri": settings.redirect_uri,
         "scope": SCOPES,
         "response_type": "code",
         "state": state,
@@ -1027,7 +1027,7 @@ async def callback(code: str, state: str) -> JSONResponse:
             "code": code,
             "client_id": settings.google_client_id,
             "client_secret": settings.google_client_secret,
-            "redirect_uri": f"https://{settings.domain}/auth/callback",
+            "redirect_uri": settings.redirect_uri,
             "grant_type": "authorization_code",
         })
     token_resp.raise_for_status()
