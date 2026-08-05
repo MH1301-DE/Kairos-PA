@@ -60,6 +60,10 @@ class Connection(Base):
     )
     last_ok_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(Text)
+    # set after every successful token refresh; used to detect stale refresh tokens proactively
+    token_refreshed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # set when status first becomes reauth_required; cleared on successful re-login
+    reauth_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
         CheckConstraint(
@@ -218,9 +222,19 @@ class Activity(Base):
         UUID(as_uuid=True), ForeignKey("app_user.id", ondelete="CASCADE"), nullable=False
     )
     external_id: Mapped[str] = mapped_column(Text, nullable=False)
+    name: Mapped[str | None] = mapped_column(Text)
+    sport: Mapped[str | None] = mapped_column(Text)
     activity_type: Mapped[str | None] = mapped_column(Text)
     start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    distance_m: Mapped[float | None] = mapped_column(Float)
+    duration_s: Mapped[float | None] = mapped_column(Float)
+    avg_hr: Mapped[int | None] = mapped_column(SmallInteger)
+    max_hr: Mapped[int | None] = mapped_column(SmallInteger)
+    elevation_gain_m: Mapped[float | None] = mapped_column(Float)
+    calories: Mapped[int | None] = mapped_column(Integer)
+    # future: path to raw FIT bytes in object store
+    fit_object_key: Mapped[str | None] = mapped_column(Text)
     data_source_id: Mapped[int | None] = mapped_column(
         ForeignKey("data_source.id", ondelete="SET NULL")
     )

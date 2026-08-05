@@ -213,7 +213,7 @@ class SyncService:
                 content_hash=content_hash,
             )
 
-            records = connector.normalize(envelope.payload)
+            records = connector.normalize(kind, envelope.payload)
             records_written = await self._canonical_repo.upsert_many(
                 user_id=user_id,
                 connector_id=connector.connector_id,

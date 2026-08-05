@@ -49,7 +49,7 @@ class StubGarminConnector:
         assert kind == self._kind
         return RawPayloadEnvelope(window=window, payload=self._payload)
 
-    def normalize(self, payload: object) -> list[CanonicalRecord]:
+    def normalize(self, kind: str, payload: object) -> list[CanonicalRecord]:
         del payload
         if self._kind == "hr_intraday":
             return [
@@ -57,7 +57,7 @@ class StubGarminConnector:
                     record_type="wellness_sample",
                     external_id="hr:2026-08-04T09:00:00+00:00",
                     occurred_at=datetime(2026, 8, 4, 9, 0, tzinfo=UTC),
-                    data={"metric": "heart_rate", "value": 62.0},
+                    data={"metric": "hr", "value": 62.0},
                 )
             ]
         return [

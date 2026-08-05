@@ -25,7 +25,7 @@ class SpyConnector:
         payload = {"steps": 1200, "nested": {"a": 1, "b": 2}}
         return RawPayloadEnvelope(window=window, payload=payload)
 
-    def normalize(self, payload: object) -> list[CanonicalRecord]:
+    def normalize(self, kind: str, payload: object) -> list[CanonicalRecord]:
         self.events.append("normalize")
         self.normalize_args = payload
         return [CanonicalRecord(record_type="activity", external_id="a1", data={"steps": 1200})]

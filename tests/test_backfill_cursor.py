@@ -21,8 +21,8 @@ class StubConnector:
         self.windows.append(window)
         return RawPayloadEnvelope(window=window, payload={"ok": True})
 
-    def normalize(self, payload: object) -> list[CanonicalRecord]:
-        del payload
+    def normalize(self, kind: str, payload: object) -> list[CanonicalRecord]:
+        del kind
         return [
             CanonicalRecord(
                 record_type="daily_summary",

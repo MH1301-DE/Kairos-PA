@@ -19,7 +19,7 @@ class Connector(Protocol):
     def fetch(self, user_id: UUID, kind: str, window: Window) -> RawPayloadEnvelope:
         ...
 
-    def normalize(self, payload: JSONValue) -> list[CanonicalRecord]:
+    def normalize(self, kind: str, payload: JSONValue) -> list[CanonicalRecord]:
         ...
 
     def write_back(

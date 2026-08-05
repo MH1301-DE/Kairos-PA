@@ -19,8 +19,8 @@ class DummyConnector:
         del user_id, kind
         return RawPayloadEnvelope(window=window, payload={"ok": True})
 
-    def normalize(self, payload: object) -> list[CanonicalRecord]:
-        del payload
+    def normalize(self, kind: str, payload: object) -> list[CanonicalRecord]:
+        del kind, payload
         return [CanonicalRecord(record_type="activity", external_id="1", data={"distance": 12.3})]
 
     def write_back(self, user_id: UUID, kind: str, records: list[CanonicalRecord]) -> WriteResult:
@@ -38,7 +38,7 @@ def _window() -> Window:
 def test_dummy_connector_matches_protocol() -> None:
     connector: Connector = DummyConnector()
     envelope = connector.fetch(uuid4(), "activities", _window())
-    rows = connector.normalize(envelope.payload)
+    rows = connector.normalize("activities", envelope.payload)
 
     assert connector.connector_id == "dummy"
     assert envelope.window.start < envelope.window.end
