@@ -2,19 +2,20 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the deterministic, testable metrics layer for Phase 2 — a code-level registry of pluggable training-load formulas (Edwards-TRIMP, Banister-TRIMP), the two raw-data Continuous Aggregates they read from, and the derived metrics (CTL/ATL/TSB, ACWR, Foster Monotony/Strain, HR-Zonen-Zeitverteilung, HRV-Baseline, Schlafschuld, Ruhepuls-Trend) exposed via a `/api/metrics` router.
+**Goal:** Build the deterministic, testable metrics layer for Phase 2 — a code-level registry of pluggable training-load formulas (Edwards-TRIMP, Banister-TRIMP), the two raw-data building-block tables they read from, and the derived metrics (CTL/ATL/TSB, ACWR, Foster Monotony/Strain, HR-Zonen-Zeitverteilung, HRV-Baseline, Schlafschuld, Ruhepuls-Trend) exposed via a `/api/metrics` router.
 
-**Architecture:** Two TimescaleDB Continuous Aggregates materialize threshold-independent raw daily building blocks (`hr_bucket_seconds_daily`, `wellness_daily_stats`). All formulas — including HR-zone bucketing itself — run as pure Python functions at query time against those building blocks, so a user can switch training-load formula variants without re-migrating data. A `MetricRegistry` (same register/get pattern as the existing `ConnectorRegistry`) maps `(metric_id, variant_id)` to an async `MetricVariant.compute()`. Every result carries `confidence` + `coverage_days`, per the data-model doc's requirement that low-coverage numbers are flagged, not silently returned.
+**Architecture:** Two plain (non-hypertable) Postgres tables hold threshold-independent raw daily building blocks (`hr_bucket_seconds_daily`, `wellness_daily_stats`), kept fresh by an explicit Python recompute function rather than a TimescaleDB Continuous Aggregate — see the Global Constraints entry below for why. All formulas — including HR-zone bucketing itself — run as pure Python functions at query time against those building blocks, so a user can switch training-load formula variants without re-migrating data. A `MetricRegistry` (same register/get pattern as the existing `ConnectorRegistry`) maps `(metric_id, variant_id)` to an async `MetricVariant.compute()`. Every result carries `confidence` + `coverage_days`, per the data-model doc's requirement that low-coverage numbers are flagged, not silently returned.
 
-**Tech Stack:** Python 3.13, SQLAlchemy 2.0 async, TimescaleDB Continuous Aggregates, pytest (stdlib `statistics` for mean/stdev — no new dependency).
+**Tech Stack:** Python 3.13, SQLAlchemy 2.0 async, plain Postgres tables (RLS-enabled), pytest (stdlib `statistics` for mean/stdev — no new dependency).
 
 ## Global Constraints
 
 - No new third-party dependencies. `statistics.mean`/`statistics.pstdev` from stdlib cover every formula below.
 - Every `MetricVariant.compute()` returns a `MetricResult` with `confidence` ∈ `{"high", "medium", "low", "insufficient_data"}` and `coverage_days` — never raises for missing data, never silently substitutes zero.
 - **Canonical training load is always Edwards-TRIMP.** CTL/ATL/TSB, ACWR, and Foster Monotony/Strain read the Edwards-TRIMP daily series regardless of which TRIMP variant is currently displayed on a dashboard tile. This is a deliberate decision (confirmed with the user 2026-08-10) to keep the long-run training-load curve free of discontinuities when a user toggles the displayed formula.
-- **`metric_daily` is not a persisted table in this plan.** `02-datenmodell-und-volumen.md` describes it as a derived, fully-rebuildable cache; per that same doc the entire 5-user/5-year dataset is ~9,000 rows, so on-demand computation from the two Continuous Aggregates has no realistic performance cost. Every derived-metric function recomputes from `hr_bucket_seconds_daily`/`wellness_daily_stats` on each call. A cache table can be added later without touching any formula function — none of them assume persistence.
-- Day boundaries in the two Continuous Aggregates are bucketed in **UTC**, not per-user local time. `02-datenmodell-und-volumen.md` §2.7 calls for local-timezone day boundaries; this plan takes the UTC approximation for V1 and documents it here as a known simplification (affects users only around midnight local time, not close to launch-critical for the single current user in `Europe/Berlin`, a 1–2h offset from UTC).
+- **Plain tables + explicit recompute, not TimescaleDB Continuous Aggregates.** Originally planned as CAggs; ruled out after implementation because TimescaleDB cannot create a Continuous Aggregate on a hypertable with row-level security enabled — a permanent, documented limitation (timescale/timescaledb#5787), not a version bug, and confirmed independently for the sibling compression/RLS restriction (timescale/timescaledb#6827) that forced the same call in the preceding hypertables migration. RLS is non-negotiable per `CLAUDE.md`. Decided with the user 2026-08-10: `hr_bucket_seconds_daily` and `wellness_daily_stats` are plain RLS-enabled Postgres tables, populated by an explicit `recompute_*` function (Task 2) instead of an automatic Timescale refresh policy. Wiring that function into a periodic scheduler is out of scope for this plan (no scheduler infrastructure exists yet in this codebase) — tests call it directly with an explicit date range, exactly as a future scheduler call would.
+- **`metric_daily` is not a persisted table in this plan.** `02-datenmodell-und-volumen.md` describes it as a derived, fully-rebuildable cache; per that same doc the entire 5-user/5-year dataset is ~9,000 rows, so on-demand computation from the two raw-building-block tables has no realistic performance cost. Every derived-metric function recomputes from `hr_bucket_seconds_daily`/`wellness_daily_stats` on each call. A cache table can be added later without touching any formula function — none of them assume persistence.
+- Day boundaries in the two raw-building-block tables are bucketed in **UTC**, not per-user local time, using the `(col AT TIME ZONE 'UTC')::date` idiom (deterministic regardless of session `TimeZone` setting — a bare `::date` cast on a `timestamptz` is not). `02-datenmodell-und-volumen.md` §2.7 calls for local-timezone day boundaries; this plan takes the UTC approximation for V1 and documents it here as a known simplification (affects users only around midnight local time, not close to launch-critical for the single current user in `Europe/Berlin`, a 1–2h offset from UTC).
 - Every DB-touching test in this plan uses the existing `tests/conftest.py` `session`/`app_session` fixtures (testcontainers, skipped without Docker). Every pure-formula test is a plain, no-fixture `pytest` function — the majority of this plan's tasks need **no Docker at all** to develop and verify.
 - `mypy --strict` and `ruff check` (line-length 100) must pass on every file this plan touches, per `CLAUDE.md`.
 - Migrations chain off the current head `6bf30be597a0` (hypertables migration).
@@ -26,7 +27,7 @@
 ```
 alembic/versions/
   f67b0560a2ad_user_setting.py                  new table
-  339358b313ef_metrics_continuous_aggregates.py  two raw-building-block CAggs
+  339358b313ef_metrics_raw_tables.py             two raw-building-block tables (plain, RLS-enabled)
 
 src/kairos/db/models.py                          + UserSetting model
 
@@ -57,6 +58,7 @@ src/kairos/metrics/
 
 src/kairos/repositories/
   user_setting.py            get_or_default(session, user_id) -> UserSettingData
+  metrics_recompute.py       recompute_hr_bucket_seconds_daily(), recompute_wellness_daily_stats()
   metrics_data.py            hr_bucket_seconds(), wellness_daily_stat(), edwards_daily_load_series(), resting_hr_for_day()
 
 src/kairos/routers/metrics.py   GET /api/metrics/{metric_id}, GET /api/metrics/{metric_id}/variants
@@ -73,6 +75,7 @@ tests/
   test_sleep_debt_formula.py
   test_resting_hr_trend_formula.py
   test_metric_registry.py
+  test_metrics_recompute_integration.py      (Docker-gated)
   test_metrics_repositories_integration.py   (Docker-gated)
   test_metrics_router.py
 ```
@@ -185,22 +188,26 @@ git commit -m "feat(phase-2): add user_setting table for metric formula inputs"
 
 ---
 
-### Task 2: Raw-building-block Continuous Aggregates
+### Task 2: Raw-building-block tables + recompute functions
 
 **Files:**
-- Create: `alembic/versions/339358b313ef_metrics_continuous_aggregates.py`
-- Test: covered by `tests/test_metrics_repositories_integration.py` in Task 3 (needs real data rows, written there)
+- Create: `alembic/versions/339358b313ef_metrics_raw_tables.py`
+- Create: `src/kairos/repositories/metrics_recompute.py`
+- Test: `tests/test_metrics_recompute_integration.py` (Docker-gated)
 
 **Interfaces:**
-- Produces two Continuous Aggregates queryable as plain tables:
-  - `hr_bucket_seconds_daily(user_id uuid, day date, bpm_bucket smallint, seconds bigint)` — one row per 5-bpm bucket per user per day, sourced from `activity_record` where `metric = 'hr'`
-  - `wellness_daily_stats(user_id uuid, day date, metric_id int, avg_value real, min_value real, max_value real, sample_count bigint)` — one row per metric per user per day, sourced from `wellness_sample`
+- Produces two plain (non-hypertable) RLS-enabled tables:
+  - `hr_bucket_seconds_daily(user_id uuid, day date, bpm_bucket smallint, seconds bigint)`, PK `(user_id, day, bpm_bucket)` — one row per 5-bpm bucket per user per day
+  - `wellness_daily_stats(user_id uuid, metric_id int, day date, avg_value real, min_value real, max_value real, sample_count bigint)`, PK `(user_id, metric_id, day)` — one row per metric per user per day
+- Produces:
+  - `async def recompute_hr_bucket_seconds_daily(session: AsyncSession, *, user_id: UUID, start: date, end: date) -> None` — recomputes from `activity_record` where `metric = 'hr'`, inclusive date range
+  - `async def recompute_wellness_daily_stats(session: AsyncSession, *, user_id: UUID, start: date, end: date) -> None` — recomputes from `wellness_sample`, inclusive date range
 
 - [ ] **Step 1: Write the migration**
 
 ```python
-# alembic/versions/339358b313ef_metrics_continuous_aggregates.py
-"""metrics_continuous_aggregates
+# alembic/versions/339358b313ef_metrics_raw_tables.py
+"""metrics_raw_tables
 
 Revision ID: 339358b313ef
 Revises: f67b0560a2ad
@@ -210,6 +217,7 @@ Create Date: 2026-08-10 00:00:00.000000
 
 from collections.abc import Sequence
 
+import sqlalchemy as sa
 from alembic import op
 
 revision: str = "339358b313ef"
@@ -217,78 +225,302 @@ down_revision: str | None = "f67b0560a2ad"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
+# Plain tables, not TimescaleDB Continuous Aggregates: Timescale cannot create
+# a Continuous Aggregate on a hypertable with row-level security enabled
+# (timescale/timescaledb#5787, a permanent limitation). Both source tables
+# (activity_record, wellness_sample) have FORCE ROW LEVEL SECURITY, which is
+# non-negotiable per CLAUDE.md. Kept fresh by an explicit recompute function
+# (src/kairos/repositories/metrics_recompute.py) instead.
+
+_TABLES = ("hr_bucket_seconds_daily", "wellness_daily_stats")
+
 
 def upgrade() -> None:
-    # bucket width matches Task-5 zone-boundary resolution (5 bpm)
-    op.execute(
-        """
-        CREATE MATERIALIZED VIEW hr_bucket_seconds_daily
-        WITH (timescaledb.continuous) AS
-        SELECT
-            user_id,
-            time_bucket('1 day', recorded_at)::date AS day,
-            (floor(value / 5) * 5)::smallint AS bpm_bucket,
-            count(*) AS seconds
-        FROM activity_record
-        WHERE metric = 'hr'
-        GROUP BY user_id, time_bucket('1 day', recorded_at), bpm_bucket
-        WITH NO DATA
-        """
+    op.create_table(
+        "hr_bucket_seconds_daily",
+        sa.Column("user_id", sa.UUID(), nullable=False),
+        sa.Column("day", sa.Date(), nullable=False),
+        sa.Column("bpm_bucket", sa.SmallInteger(), nullable=False),
+        sa.Column("seconds", sa.BigInteger(), nullable=False),
+        sa.ForeignKeyConstraint(["user_id"], ["app_user.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("user_id", "day", "bpm_bucket"),
     )
-    op.execute(
-        "SELECT add_continuous_aggregate_policy('hr_bucket_seconds_daily', "
-        "start_offset => INTERVAL '3 days', end_offset => INTERVAL '1 hour', "
-        "schedule_interval => INTERVAL '1 hour')"
-    )
-
-    op.execute(
-        """
-        CREATE MATERIALIZED VIEW wellness_daily_stats
-        WITH (timescaledb.continuous) AS
-        SELECT
-            user_id,
-            metric_id,
-            time_bucket('1 day', observed_at)::date AS day,
-            avg(value) AS avg_value,
-            min(value) AS min_value,
-            max(value) AS max_value,
-            count(*) AS sample_count
-        FROM wellness_sample
-        GROUP BY user_id, metric_id, time_bucket('1 day', observed_at)
-        WITH NO DATA
-        """
-    )
-    op.execute(
-        "SELECT add_continuous_aggregate_policy('wellness_daily_stats', "
-        "start_offset => INTERVAL '3 days', end_offset => INTERVAL '1 hour', "
-        "schedule_interval => INTERVAL '1 hour')"
+    op.create_table(
+        "wellness_daily_stats",
+        sa.Column("user_id", sa.UUID(), nullable=False),
+        sa.Column("metric_id", sa.Integer(), nullable=False),
+        sa.Column("day", sa.Date(), nullable=False),
+        sa.Column("avg_value", sa.Float(), nullable=False),
+        sa.Column("min_value", sa.Float(), nullable=False),
+        sa.Column("max_value", sa.Float(), nullable=False),
+        sa.Column("sample_count", sa.BigInteger(), nullable=False),
+        sa.ForeignKeyConstraint(["user_id"], ["app_user.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["metric_id"], ["metric_def.id"], ondelete="RESTRICT"),
+        sa.PrimaryKeyConstraint("user_id", "metric_id", "day"),
     )
 
-    # backfill immediately so freshly-migrated dev/test DBs aren't empty for 3 days
-    op.execute("CALL refresh_continuous_aggregate('hr_bucket_seconds_daily', NULL, NULL)")
-    op.execute("CALL refresh_continuous_aggregate('wellness_daily_stats', NULL, NULL)")
+    for table in _TABLES:
+        op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
+        op.execute(
+            f"CREATE POLICY tenant_isolation ON {table} "
+            f"USING (user_id = current_setting('app.current_user_id', true)::uuid)"
+        )
+        op.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
 
 
 def downgrade() -> None:
-    op.execute("DROP MATERIALIZED VIEW IF EXISTS wellness_daily_stats")
-    op.execute("DROP MATERIALIZED VIEW IF EXISTS hr_bucket_seconds_daily")
+    for table in reversed(_TABLES):
+        op.execute(f"DROP POLICY IF EXISTS tenant_isolation ON {table}")
+        op.execute(f"ALTER TABLE {table} NO FORCE ROW LEVEL SECURITY")
+        op.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")
+    op.drop_table("wellness_daily_stats")
+    op.drop_table("hr_bucket_seconds_daily")
 ```
 
-- [ ] **Step 2: Verify migration applies and views are queryable (requires Docker)**
+- [ ] **Step 2: Write the failing integration test**
 
-Run: `.venv/Scripts/python -m pytest tests/test_garmin_repositories_integration.py -q`
-Expected: PASS. If it fails with `function add_continuous_aggregate_policy does not exist`, the test-container TimescaleDB image is missing the `timescaledb-toolkit`/enterprise policy functions — cross-check the image tag against `deploy/docker-compose.dev.yml`'s `timescale/timescaledb-ha:pg16` and switch `tests/conftest.py`'s `POSTGRES_IMAGE` to the same `-ha` tag if so.
+```python
+# tests/test_metrics_recompute_integration.py
+from __future__ import annotations
 
-- [ ] **Step 3: Lint**
+from datetime import UTC, date, datetime
+from uuid import uuid4
 
-Run: `.venv/Scripts/python -m ruff check alembic/versions/339358b313ef_metrics_continuous_aggregates.py`
+import pytest
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from kairos.repositories.metrics_recompute import (
+    recompute_hr_bucket_seconds_daily,
+    recompute_wellness_daily_stats,
+)
+
+
+async def _insert_user(session: AsyncSession, user_id) -> None:
+    await session.execute(
+        text(
+            """
+            INSERT INTO app_user (id, email, display_name, google_sub, home_timezone, role)
+            VALUES (:id, :email, 'Test', :sub, 'UTC', 'user')
+            """
+        ),
+        {"id": str(user_id), "email": f"{user_id}@test.com", "sub": f"sub-{user_id}"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_recompute_hr_bucket_seconds_daily_groups_by_5bpm_bucket(
+    session: AsyncSession,
+) -> None:
+    user_id = uuid4()
+    await _insert_user(session, user_id)
+    await session.execute(
+        text(
+            "INSERT INTO activity (id, user_id, external_id, start_at) "
+            "VALUES (1, :uid, 'ext-1', :start_at)"
+        ),
+        {"uid": str(user_id), "start_at": datetime(2026, 8, 1, 9, 0, tzinfo=UTC)},
+    )
+    for i in range(3):
+        await session.execute(
+            text(
+                "INSERT INTO activity_record (user_id, activity_id, recorded_at, metric, value) "
+                "VALUES (:uid, 1, :ts, 'hr', 142.0)"
+            ),
+            {"uid": str(user_id), "ts": datetime(2026, 8, 1, 9, 0, i, tzinfo=UTC)},
+        )
+    await session.commit()
+
+    await recompute_hr_bucket_seconds_daily(
+        session, user_id=user_id, start=date(2026, 8, 1), end=date(2026, 8, 1)
+    )
+    await session.commit()
+
+    rows = (
+        await session.execute(
+            text(
+                "SELECT bpm_bucket, seconds FROM hr_bucket_seconds_daily WHERE user_id = :uid"
+            ),
+            {"uid": str(user_id)},
+        )
+    ).all()
+
+    assert rows == [(140, 3)]
+
+
+@pytest.mark.asyncio
+async def test_recompute_is_idempotent_for_the_same_range(session: AsyncSession) -> None:
+    user_id = uuid4()
+    await _insert_user(session, user_id)
+    await session.execute(
+        text(
+            "INSERT INTO activity (id, user_id, external_id, start_at) "
+            "VALUES (1, :uid, 'ext-1', :start_at)"
+        ),
+        {"uid": str(user_id), "start_at": datetime(2026, 8, 1, 9, 0, tzinfo=UTC)},
+    )
+    await session.execute(
+        text(
+            "INSERT INTO activity_record (user_id, activity_id, recorded_at, metric, value) "
+            "VALUES (:uid, 1, :ts, 'hr', 142.0)"
+        ),
+        {"uid": str(user_id), "ts": datetime(2026, 8, 1, 9, 0, 0, tzinfo=UTC)},
+    )
+    await session.commit()
+
+    await recompute_hr_bucket_seconds_daily(
+        session, user_id=user_id, start=date(2026, 8, 1), end=date(2026, 8, 1)
+    )
+    await recompute_hr_bucket_seconds_daily(
+        session, user_id=user_id, start=date(2026, 8, 1), end=date(2026, 8, 1)
+    )
+    await session.commit()
+
+    count = (
+        await session.execute(
+            text("SELECT count(*) FROM hr_bucket_seconds_daily WHERE user_id = :uid"),
+            {"uid": str(user_id)},
+        )
+    ).scalar_one()
+
+    assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_recompute_wellness_daily_stats_aggregates_per_metric_per_day(
+    session: AsyncSession,
+) -> None:
+    user_id = uuid4()
+    await _insert_user(session, user_id)
+    metric_id = (
+        await session.execute(text("SELECT id FROM metric_def WHERE code = 'hr'"))
+    ).scalar_one()
+    for value in (50.0, 60.0, 70.0):
+        await session.execute(
+            text(
+                "INSERT INTO wellness_sample (user_id, metric_id, observed_at, value) "
+                "VALUES (:uid, :mid, :ts, :val)"
+            ),
+            {
+                "uid": str(user_id), "mid": metric_id,
+                "ts": datetime(2026, 8, 1, 9, 0, 0, tzinfo=UTC), "val": value,
+            },
+        )
+    await session.commit()
+
+    await recompute_wellness_daily_stats(
+        session, user_id=user_id, start=date(2026, 8, 1), end=date(2026, 8, 1)
+    )
+    await session.commit()
+
+    row = (
+        await session.execute(
+            text(
+                "SELECT avg_value, min_value, max_value, sample_count "
+                "FROM wellness_daily_stats WHERE user_id = :uid AND metric_id = :mid"
+            ),
+            {"uid": str(user_id), "mid": metric_id},
+        )
+    ).one()
+
+    assert row == (60.0, 50.0, 70.0, 3)
+```
+
+- [ ] **Step 3: Run test to verify it fails**
+
+Run: `.venv/Scripts/python -m pytest tests/test_metrics_recompute_integration.py -v`
+Expected: FAIL with `ModuleNotFoundError: No module named 'kairos.repositories.metrics_recompute'` (or skipped if Docker unavailable — in that case, proceed to Step 4 and defer verification to when Docker is up)
+
+- [ ] **Step 4: Implement the recompute functions**
+
+```python
+# src/kairos/repositories/metrics_recompute.py
+from __future__ import annotations
+
+from datetime import date
+from uuid import UUID
+
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+
+async def recompute_hr_bucket_seconds_daily(
+    session: AsyncSession, *, user_id: UUID, start: date, end: date
+) -> None:
+    await session.execute(
+        text(
+            "DELETE FROM hr_bucket_seconds_daily "
+            "WHERE user_id = :uid AND day >= :start AND day <= :end"
+        ),
+        {"uid": str(user_id), "start": start, "end": end},
+    )
+    await session.execute(
+        text(
+            """
+            INSERT INTO hr_bucket_seconds_daily (user_id, day, bpm_bucket, seconds)
+            SELECT
+                user_id,
+                (recorded_at AT TIME ZONE 'UTC')::date AS day,
+                (floor(value / 5) * 5)::smallint AS bpm_bucket,
+                count(*) AS seconds
+            FROM activity_record
+            WHERE metric = 'hr' AND user_id = :uid
+              AND (recorded_at AT TIME ZONE 'UTC')::date >= :start
+              AND (recorded_at AT TIME ZONE 'UTC')::date <= :end
+            GROUP BY user_id, (recorded_at AT TIME ZONE 'UTC')::date,
+                     (floor(value / 5) * 5)::smallint
+            """
+        ),
+        {"uid": str(user_id), "start": start, "end": end},
+    )
+
+
+async def recompute_wellness_daily_stats(
+    session: AsyncSession, *, user_id: UUID, start: date, end: date
+) -> None:
+    await session.execute(
+        text(
+            "DELETE FROM wellness_daily_stats "
+            "WHERE user_id = :uid AND day >= :start AND day <= :end"
+        ),
+        {"uid": str(user_id), "start": start, "end": end},
+    )
+    await session.execute(
+        text(
+            """
+            INSERT INTO wellness_daily_stats
+                (user_id, metric_id, day, avg_value, min_value, max_value, sample_count)
+            SELECT
+                user_id,
+                metric_id,
+                (observed_at AT TIME ZONE 'UTC')::date AS day,
+                avg(value), min(value), max(value), count(*)
+            FROM wellness_sample
+            WHERE user_id = :uid
+              AND (observed_at AT TIME ZONE 'UTC')::date >= :start
+              AND (observed_at AT TIME ZONE 'UTC')::date <= :end
+            GROUP BY user_id, metric_id, (observed_at AT TIME ZONE 'UTC')::date
+            """
+        ),
+        {"uid": str(user_id), "start": start, "end": end},
+    )
+```
+
+- [ ] **Step 5: Run test to verify it passes (requires Docker)**
+
+Run: `.venv/Scripts/python -m pytest tests/test_metrics_recompute_integration.py -v`
+Expected: PASS
+
+- [ ] **Step 6: Lint and type-check**
+
+Run: `.venv/Scripts/python -m ruff check alembic/versions/339358b313ef_metrics_raw_tables.py src/kairos/repositories/metrics_recompute.py tests/test_metrics_recompute_integration.py && .venv/Scripts/python -m mypy --strict src/kairos/repositories/metrics_recompute.py`
 Expected: clean
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add alembic/versions/339358b313ef_metrics_continuous_aggregates.py
-git commit -m "feat(phase-2): add hr_bucket_seconds_daily and wellness_daily_stats continuous aggregates"
+git add alembic/versions/339358b313ef_metrics_raw_tables.py src/kairos/repositories/metrics_recompute.py tests/test_metrics_recompute_integration.py
+git commit -m "feat(phase-2): raw-building-block tables + recompute functions (RLS-compatible, not Timescale CAggs)"
 ```
 
 ---
@@ -301,7 +533,7 @@ git commit -m "feat(phase-2): add hr_bucket_seconds_daily and wellness_daily_sta
 - Test: `tests/test_metrics_repositories_integration.py` (Docker-gated)
 
 **Interfaces:**
-- Consumes: `hr_bucket_seconds_daily`, `wellness_daily_stats` tables from Task 2; `UserSetting` model from Task 1
+- Consumes: `hr_bucket_seconds_daily`, `wellness_daily_stats` tables and `recompute_hr_bucket_seconds_daily()` from Task 2; `UserSetting` model from Task 1
 - Produces:
   - `async def hr_bucket_seconds(session: AsyncSession, *, user_id: UUID, day: date) -> dict[int, float]` — `{bpm_bucket: seconds}`
   - `async def hr_bucket_seconds_range(session: AsyncSession, *, user_id: UUID, start: date, end: date) -> dict[date, dict[int, float]]`
@@ -330,6 +562,7 @@ from kairos.repositories.metrics_data import (
     observed_max_hr_ever,
     wellness_daily_stat,
 )
+from kairos.repositories.metrics_recompute import recompute_hr_bucket_seconds_daily
 from kairos.repositories.user_setting import get_or_default_user_setting
 
 
@@ -390,7 +623,9 @@ async def test_hr_bucket_seconds_aggregates_activity_record_by_day(
             row,
         )
     await session.commit()
-    await session.execute(text("CALL refresh_continuous_aggregate('hr_bucket_seconds_daily', NULL, NULL)"))
+    await recompute_hr_bucket_seconds_daily(
+        session, user_id=user_id, start=date(2026, 8, 1), end=date(2026, 8, 1)
+    )
     await session.commit()
 
     buckets = await hr_bucket_seconds(session, user_id=user_id, day=date(2026, 8, 1))
@@ -1802,6 +2037,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kairos.metrics.bootstrap import build_default_registry
+from kairos.repositories.metrics_recompute import recompute_hr_bucket_seconds_daily
 
 
 async def _insert_user(session: AsyncSession, user_id) -> None:
@@ -1833,7 +2069,7 @@ async def _insert_workout(session: AsyncSession, user_id, day: date) -> None:
             {"uid": str(user_id), "ts": datetime(day.year, day.month, day.day, 9, 0, i % 60, tzinfo=UTC) + __import__("datetime").timedelta(minutes=i // 60)},
         )
     await session.commit()
-    await session.execute(text("CALL refresh_continuous_aggregate('hr_bucket_seconds_daily', NULL, NULL)"))
+    await recompute_hr_bucket_seconds_daily(session, user_id=user_id, start=day, end=day)
     await session.commit()
 
 
