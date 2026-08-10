@@ -15,8 +15,13 @@ down_revision: str | None = "c4d2e3f5a6b7"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-_COMPRESS_AFTER = "30 days"
 _CHUNK_INTERVAL = "7 days"
+
+# No compression policy: TimescaleDB does not support columnstore compression
+# on tables with row-level security enabled (both wellness_sample and
+# activity_record have FORCE ROW LEVEL SECURITY from a7f9f3d1c2b4), and RLS is
+# non-negotiable per 02-datenmodell-und-volumen.md §2.6. Uncompressed 5-year,
+# 5-user volume is ~4.8 GB per the same doc — trivial without compression.
 
 
 def upgrade() -> None:
@@ -32,15 +37,6 @@ def upgrade() -> None:
         f"SELECT create_hypertable('wellness_sample', 'observed_at', "
         f"chunk_time_interval => INTERVAL '{_CHUNK_INTERVAL}', migrate_data => TRUE)"
     )
-    op.execute(
-        "ALTER TABLE wellness_sample SET ("
-        "timescaledb.compress, "
-        "timescaledb.compress_segmentby = 'user_id, metric_id', "
-        "timescaledb.compress_orderby = 'observed_at DESC')"
-    )
-    op.execute(
-        f"SELECT add_compression_policy('wellness_sample', INTERVAL '{_COMPRESS_AFTER}')"
-    )
 
     op.drop_constraint("activity_record_pkey", "activity_record", type_="primary")
     op.create_primary_key(
@@ -49,15 +45,6 @@ def upgrade() -> None:
     op.execute(
         f"SELECT create_hypertable('activity_record', 'recorded_at', "
         f"chunk_time_interval => INTERVAL '{_CHUNK_INTERVAL}', migrate_data => TRUE)"
-    )
-    op.execute(
-        "ALTER TABLE activity_record SET ("
-        "timescaledb.compress, "
-        "timescaledb.compress_segmentby = 'user_id, activity_id, metric', "
-        "timescaledb.compress_orderby = 'recorded_at DESC')"
-    )
-    op.execute(
-        f"SELECT add_compression_policy('activity_record', INTERVAL '{_COMPRESS_AFTER}')"
     )
 
 
