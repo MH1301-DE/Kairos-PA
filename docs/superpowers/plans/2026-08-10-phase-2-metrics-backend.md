@@ -1699,8 +1699,14 @@ from kairos.metrics.formulas.hrv_baseline import hrv_baseline
 
 def test_hrv_baseline_flags_today_within_normal_band() -> None:
     start = date(2026, 1, 1)
-    series = {start + timedelta(days=i): 60.0 for i in range(59)}
-    series[start + timedelta(days=59)] = 61.0  # today, close to baseline mean
+    # 59 history nights alternating 55/65 (mean 60, real stddev ~4.96 pop-wide) —
+    # a perfectly flat history makes any nonzero "today" the sole source of
+    # variance, so it is *always* >1 stddev out; real variance is required for
+    # a "normal" classification to be reachable at all.
+    series = {
+        start + timedelta(days=i): (55.0 if i % 2 == 0 else 65.0) for i in range(59)
+    }
+    series[start + timedelta(days=59)] = 60.0  # today, dead center of history spread
 
     result = hrv_baseline(series, as_of=start + timedelta(days=59))
 
@@ -1710,8 +1716,10 @@ def test_hrv_baseline_flags_today_within_normal_band() -> None:
 
 def test_hrv_baseline_flags_today_low() -> None:
     start = date(2026, 1, 1)
-    series = {start + timedelta(days=i): 60.0 for i in range(59)}
-    series[start + timedelta(days=59)] = 30.0  # sharp drop
+    series = {
+        start + timedelta(days=i): (55.0 if i % 2 == 0 else 65.0) for i in range(59)
+    }
+    series[start + timedelta(days=59)] = 20.0  # sharp drop, well below the history spread
 
     result = hrv_baseline(series, as_of=start + timedelta(days=59))
 
