@@ -43,6 +43,25 @@ class AppUser(Base):
     )
 
 
+class UserSetting(Base):
+    __tablename__ = "user_setting"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("app_user.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    birth_date: Mapped[date | None] = mapped_column(Date)
+    sex: Mapped[str | None] = mapped_column(Text)
+    resting_hr_override: Mapped[int | None] = mapped_column(SmallInteger)
+    hr_max_override: Mapped[int | None] = mapped_column(SmallInteger)
+    sleep_target_hours: Mapped[float] = mapped_column(Float, nullable=False, default=8.0)
+
+    __table_args__ = (
+        CheckConstraint("sex IN ('male', 'female')", name="user_setting_sex_check"),
+    )
+
+
 class Connection(Base):
     __tablename__ = "connection"
 
