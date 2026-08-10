@@ -178,7 +178,10 @@ class WellnessSample(Base):
     data_source_id: Mapped[int | None] = mapped_column(
         ForeignKey("data_source.id", ondelete="SET NULL")
     )
-    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # part of composite PK: Timescale needs the partitioning column in every PK/unique constraint
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, primary_key=True
+    )
     value: Mapped[float] = mapped_column(Float, nullable=False)
     raw_payload_id: Mapped[int | None] = mapped_column(
         ForeignKey("raw_payload.id", ondelete="SET NULL")
@@ -259,7 +262,10 @@ class ActivityRecord(Base):
         ForeignKey("activity.id", ondelete="CASCADE"),
         nullable=False,
     )
-    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # part of composite PK: Timescale needs the partitioning column in every PK/unique constraint
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, primary_key=True
+    )
     metric: Mapped[str] = mapped_column(Text, nullable=False)
     value: Mapped[float] = mapped_column(Float, nullable=False)
     raw_payload_id: Mapped[int | None] = mapped_column(
