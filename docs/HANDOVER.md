@@ -227,19 +227,33 @@ Throttle: 2 s Delay zwischen Fenstern beim Backfill
   └─ dd1f10a99d35  force_rls_on_tenant_tables
        └─ a7f9f3d1c2b4  phase1_garmin_tables
             └─ b3c1e2f4a5d6  connection_token_refresh_tracking
-                 └─ c4d2e3f5a6b7  activity_fields_metric_seeds  ← HEAD
+                 └─ c4d2e3f5a6b7  activity_fields_metric_seeds
+                      └─ 6bf30be597a0  hypertables_wellness_activity_record
+                           └─ f67b0560a2ad  user_setting
+                                └─ 339358b313ef  metrics_raw_tables  ← HEAD
 ```
+
+**Wichtig:** `6bf30be597a0` enthält **keine** Compression Policy mehr — TimescaleDB kann
+Columnstore-Compression nicht auf Tabellen mit Row-Level-Security aktivieren (permanente
+Timescale-Einschränkung, siehe timescale/timescaledb#6827). Aus demselben Grund sind
+`hr_bucket_seconds_daily`/`wellness_daily_stats` (Migration `339358b313ef`) **normale**
+Postgres-Tabellen, keine Timescale Continuous Aggregates (timescale/timescaledb#5787) —
+gepflegt durch `src/kairos/repositories/metrics_recompute.py`, nicht durch eine
+Timescale-Refresh-Policy.
 
 ---
 
 ## Tests
 
 ```bash
-# Alle Tests
-.venv/bin/python -m pytest -q
+# Alle Tests — Windows-venv: .venv/Scripts/python (nicht .venv/bin/)
+.venv/Scripts/python -m pytest -q
 
-# Stand: 45 passed, 6 skipped (Integration-Tests warten auf Postgres-Container)
-# Skipped = testcontainers-Tests ohne laufenden Docker
+# main-Branch-Baseline: 45 passed, 6 skipped ohne Docker; mit laufendem Docker 51 passed, 0 skipped
+# phase-2-metrics-backend-Branch (Stand nach Task 12/15): 83 passed, 0 skipped (Docker lief durchgehend)
+# Skipped = testcontainers-Tests ohne laufenden Docker (POSTGRES_IMAGE ist jetzt
+# timescale/timescaledb:latest-pg16, nicht mehr reines postgres:16 — nötig seit den
+# TimescaleDB-Migrationen)
 
 # Wichtige Test-Dateien
 tests/test_garminconnect_backend.py   # GarminConnectBackend (15 Tests)
@@ -249,6 +263,7 @@ tests/test_connector_contract.py      # Connector-Protocol-Konformität
 tests/test_sync_service.py            # SyncService (mock Repos)
 tests/test_backfill_cursor.py         # run_backfill Cursor-Logik
 tests/test_garmin_repositories_integration.py  # DB-Integration (benötigt Docker)
+tests/test_metrics_*.py                # Phase-2 Metrics-Backend (siehe unten)
 ```
 
 ### Smoke-Test (reales Garmin-Konto)
@@ -265,21 +280,43 @@ tests/test_garmin_repositories_integration.py  # DB-Integration (benötigt Docke
 | Phase | Status |
 |---|---|
 | Phase 0 — Fundament | ✅ `v0.0.1-phase0` getaggt |
-| Phase 1 — Garmin-Pipeline | ~85% — API-Endpoint ✅, Hypertables fehlen, Quality-Flag fehlt, echter Backfill-Lauf ausstehend |
-| Phase 2 — Kennzahlen & Dashboard | ❌ nicht gestartet |
+| Phase 1 — Garmin-Pipeline | ~90% — API-Endpoint ✅, Hypertables ✅ (RLS-kompatibel, ohne Compression), Quality-Flag fehlt, echter Backfill-Lauf ausstehend |
+| Phase 2 — Kennzahlen & Dashboard | 🔄 in Arbeit — Metrics-Backend-Teilplan läuft (siehe unten), Dashboard-Frontend-Teilplan noch nicht gestartet |
 | Phase 3 — Kalender | ❌ nicht gestartet |
 | Phase 4 — Agent | ❌ nicht gestartet |
 
 ### Was für Phase-1-Abnahme noch fehlt
 
-1. **Hypertables + Compression Policies** — TimescaleDB-Migration für `wellness_sample`, `activity_record`
+1. ~~Hypertables + Compression Policies~~ — ✅ erledigt (`6bf30be597a0`, Compression aus RLS-Gründen entfernt, siehe Migrationskette oben)
 2. **Quality-Flag** — Plausibilitätsprüfung im Normalizer (HR < 25 oder > 230 → `suspect`)
 3. **Echter Backfill-Lauf** — 12 Monate importieren, Stichprobenvergleich mit Garmin Connect
 
-### Was danach kommt (Phase 2 — erster Frontend-Kontakt)
+### Phase 2 — Fortschritt (Stand 2026-08-10)
 
-Das erste Frontend (Onboarding + Dashboard) kommt mit Phase 2.  
-Minimum für User-Test:
+Phase 2 wurde in zwei unabhängige Pläne aufgeteilt, um nicht auf der Frontend-Framework-
+Entscheidung zu blockieren:
+
+1. **Metrics-Backend** (`docs/superpowers/plans/2026-08-10-phase-2-metrics-backend.md`) —
+   läuft gerade, Subagent-Driven Development, 15 Tasks. **Fortschritt: 12/15 Tasks
+   abgeschlossen** (Stand dieses Commits), Rest folgt in derselben Session/Branch.
+   - Branch: `phase-2-metrics-backend`
+   - SDD-Ledger (Fortschritt, Findings, Entscheidungen): `.superpowers/sdd/2026-08-10-phase-2-metrics-backend/progress.md`
+     (git-ignored — bei Fortsetzung zuerst dort lesen, bevor Tasks neu gestartet werden)
+   - Architektur: zwei plain RLS-Tabellen (`hr_bucket_seconds_daily`, `wellness_daily_stats`)
+     statt Timescale Continuous Aggregates (RLS-inkompatibel, siehe Migrationskette),
+     befüllt durch `src/kairos/repositories/metrics_recompute.py`. Formeln laufen als reine
+     Python-Funktionen zur Abfragezeit (`src/kairos/metrics/formulas/`), registriert in einer
+     `MetricRegistry` (`src/kairos/metrics/registry.py`, Muster wie `ConnectorRegistry`).
+     Nutzer können zwischen TRIMP-Varianten (Edwards/Banister) wählen; CTL/ATL/TSB/ACWR/
+     Monotonie-Strain nutzen aber **immer** Edwards-TRIMP als kanonische Trainingslast
+     (Entscheidung vom 2026-08-10, verhindert Sprünge in der Langzeitkurve).
+   - Offen: Task 13 (Ruhepuls-Trend), Task 14 (Varianten-Verdrahtung in die Registry),
+     Task 15 (`/api/metrics`-Router), abschließendes Whole-Branch-Review.
+2. **Dashboard-Frontend** — noch nicht begonnen. Framework-Entscheidung: **SvelteKit**
+   (statt Next.js) + ECharts, entschieden am 2026-08-10 (PWA/Web-Push-Reife wichtiger als
+   React-Grid-Layout-Ökosystem für dieses Projekt).
+
+Minimum für User-Test (unverändert aus ursprünglicher Phase-2-Definition):
 1. Onboarding-Seite: Garmin-E-Mail + Passwort → `connection` anlegen
 2. Sync-Status-Seite: Fortschritt des Backfills
 3. Ein einfacher Chart (Ruhepuls letzte 30 Tage)
@@ -309,6 +346,19 @@ Minimum für User-Test:
 - **RLS + Background Tasks**: `install_rls_listener(session, user_id)` auf jeder Session aufrufen, die in RLS-geschützte Tabellen schreibt
 - **Python 3.14**: Einzige verfügbare Version auf diesem Mac; `pyproject.toml` sagt `>=3.12`
 - **hatchling**: Wird für `pip install -e ".[dev]"` benötigt — bei venv-Rebuild zuerst `pip install hatchling`
+- **Windows-venv**: Unter Windows liegt der Interpreter unter `.venv/Scripts/python`, nicht
+  `.venv/bin/python` (macOS-Konvention aus diesem Dokument). Auf einer Windows-Session mit
+  Python 3.13 statt 3.14 getestet — funktioniert, da `pyproject.toml` nur `>=3.12` verlangt.
+- **TimescaleDB + RLS sind für zwei Features inkompatibel**: (1) Columnstore-Compression
+  kann nicht auf Tabellen mit RLS aktiviert werden (timescale/timescaledb#6827); (2)
+  Continuous Aggregates können nicht auf RLS-Hypertables erstellt werden
+  (timescale/timescaledb#5787). Beides sind dauerhafte Timescale-Einschränkungen, kein
+  Versionsbug. Da RLS laut dieser Datei nicht verhandelbar ist: Compression einfach weglassen
+  (Datenvolumen ist ohnehin trivial, siehe 02-datenmodell-und-volumen.md), Continuous
+  Aggregates durch plain Tabellen + expliziten Python-Recompute ersetzen.
+- **Testcontainer-Image**: `tests/conftest.py`s `POSTGRES_IMAGE` muss
+  `timescale/timescaledb:latest-pg16` sein (nicht reines `postgres:16`), sonst schlägt
+  `CREATE EXTENSION timescaledb` in den Migrationstests fehl.
 
 ---
 
