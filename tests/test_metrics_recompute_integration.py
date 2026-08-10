@@ -31,20 +31,26 @@ async def test_recompute_hr_bucket_seconds_daily_groups_by_5bpm_bucket(
 ) -> None:
     user_id = uuid4()
     await _insert_user(session, user_id)
-    await session.execute(
-        text(
-            "INSERT INTO activity (id, user_id, external_id, start_at) "
-            "VALUES (1, :uid, 'ext-1', :start_at)"
-        ),
-        {"uid": str(user_id), "start_at": datetime(2026, 8, 1, 9, 0, tzinfo=UTC)},
-    )
+    activity_id = (
+        await session.execute(
+            text(
+                "INSERT INTO activity (user_id, external_id, start_at) "
+                "VALUES (:uid, 'ext-1', :start_at) "
+                "RETURNING id"
+            ),
+            {"uid": str(user_id), "start_at": datetime(2026, 8, 1, 9, 0, tzinfo=UTC)},
+        )
+    ).scalar_one()
     for i in range(3):
         await session.execute(
             text(
                 "INSERT INTO activity_record (user_id, activity_id, recorded_at, metric, value) "
-                "VALUES (:uid, 1, :ts, 'hr', 142.0)"
+                "VALUES (:uid, :aid, :ts, 'hr', 142.0)"
             ),
-            {"uid": str(user_id), "ts": datetime(2026, 8, 1, 9, 0, i, tzinfo=UTC)},
+            {
+                "uid": str(user_id), "aid": activity_id,
+                "ts": datetime(2026, 8, 1, 9, 0, i, tzinfo=UTC),
+            },
         )
     await session.commit()
 
@@ -69,19 +75,25 @@ async def test_recompute_hr_bucket_seconds_daily_groups_by_5bpm_bucket(
 async def test_recompute_is_idempotent_for_the_same_range(session: AsyncSession) -> None:
     user_id = uuid4()
     await _insert_user(session, user_id)
-    await session.execute(
-        text(
-            "INSERT INTO activity (id, user_id, external_id, start_at) "
-            "VALUES (2, :uid, 'ext-1', :start_at)"
-        ),
-        {"uid": str(user_id), "start_at": datetime(2026, 8, 1, 9, 0, tzinfo=UTC)},
-    )
+    activity_id = (
+        await session.execute(
+            text(
+                "INSERT INTO activity (user_id, external_id, start_at) "
+                "VALUES (:uid, 'ext-1', :start_at) "
+                "RETURNING id"
+            ),
+            {"uid": str(user_id), "start_at": datetime(2026, 8, 1, 9, 0, tzinfo=UTC)},
+        )
+    ).scalar_one()
     await session.execute(
         text(
             "INSERT INTO activity_record (user_id, activity_id, recorded_at, metric, value) "
-            "VALUES (:uid, 2, :ts, 'hr', 142.0)"
+            "VALUES (:uid, :aid, :ts, 'hr', 142.0)"
         ),
-        {"uid": str(user_id), "ts": datetime(2026, 8, 1, 9, 0, 0, tzinfo=UTC)},
+        {
+            "uid": str(user_id), "aid": activity_id,
+            "ts": datetime(2026, 8, 1, 9, 0, 0, tzinfo=UTC),
+        },
     )
     await session.commit()
 
