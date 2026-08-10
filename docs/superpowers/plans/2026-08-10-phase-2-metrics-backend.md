@@ -599,17 +599,23 @@ async def test_hr_bucket_seconds_aggregates_activity_record_by_day(
 ) -> None:
     user_id = uuid4()
     await _insert_user(session, user_id)
-    await session.execute(
-        text(
-            """
-            INSERT INTO activity (id, user_id, external_id, start_at)
-            VALUES (1, :uid, 'ext-1', :start_at)
-            """
-        ),
-        {"uid": str(user_id), "start_at": datetime(2026, 8, 1, 9, 0, tzinfo=UTC)},
-    )
+    activity_id = (
+        await session.execute(
+            text(
+                """
+                INSERT INTO activity (user_id, external_id, start_at)
+                VALUES (:uid, 'ext-1', :start_at)
+                RETURNING id
+                """
+            ),
+            {"uid": str(user_id), "start_at": datetime(2026, 8, 1, 9, 0, tzinfo=UTC)},
+        )
+    ).scalar_one()
     rows = [
-        {"uid": str(user_id), "ts": datetime(2026, 8, 1, 9, 0, i, tzinfo=UTC), "hr": 142.0}
+        {
+            "uid": str(user_id), "aid": activity_id,
+            "ts": datetime(2026, 8, 1, 9, 0, i, tzinfo=UTC), "hr": 142.0,
+        }
         for i in range(3)
     ]
     for row in rows:
@@ -617,7 +623,7 @@ async def test_hr_bucket_seconds_aggregates_activity_record_by_day(
             text(
                 """
                 INSERT INTO activity_record (user_id, activity_id, recorded_at, metric, value)
-                VALUES (:uid, 1, :ts, 'hr', :hr)
+                VALUES (:uid, :aid, :ts, 'hr', :hr)
                 """
             ),
             row,
@@ -632,6 +638,8 @@ async def test_hr_bucket_seconds_aggregates_activity_record_by_day(
 
     assert buckets == {140: 3.0}
 ```
+
+**Note on test data:** `activity.id` is a global `BigInteger, autoincrement=True` PK, not scoped per test or per user — the `session` fixture runs against a session-scoped, shared testcontainer, so committed rows from earlier tests in the same run persist. Never hardcode an `activity.id` literal; always let Postgres assign it and capture it via `RETURNING id`, as above. (Confirmed necessary in Task 2: a hardcoded `activity.id = 1` in that task's own test collided with another test's row in the same run.)
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -2053,20 +2061,25 @@ async def _insert_user(session: AsyncSession, user_id) -> None:
 
 
 async def _insert_workout(session: AsyncSession, user_id, day: date) -> None:
-    await session.execute(
-        text(
-            "INSERT INTO activity (id, user_id, external_id, start_at) "
-            "VALUES (1, :uid, 'ext-1', :start_at)"
-        ),
-        {"uid": str(user_id), "start_at": datetime(day.year, day.month, day.day, 9, tzinfo=UTC)},
-    )
+    activity_id = (
+        await session.execute(
+            text(
+                "INSERT INTO activity (user_id, external_id, start_at) "
+                "VALUES (:uid, 'ext-1', :start_at) RETURNING id"
+            ),
+            {"uid": str(user_id), "start_at": datetime(day.year, day.month, day.day, 9, tzinfo=UTC)},
+        )
+    ).scalar_one()
     for i in range(600):  # 10 minutes at 150 bpm
         await session.execute(
             text(
                 "INSERT INTO activity_record (user_id, activity_id, recorded_at, metric, value) "
-                "VALUES (:uid, 1, :ts, 'hr', 150.0)"
+                "VALUES (:uid, :aid, :ts, 'hr', 150.0)"
             ),
-            {"uid": str(user_id), "ts": datetime(day.year, day.month, day.day, 9, 0, i % 60, tzinfo=UTC) + __import__("datetime").timedelta(minutes=i // 60)},
+            {
+                "uid": str(user_id), "aid": activity_id,
+                "ts": datetime(day.year, day.month, day.day, 9, 0, i % 60, tzinfo=UTC) + __import__("datetime").timedelta(minutes=i // 60),
+            },
         )
     await session.commit()
     await recompute_hr_bucket_seconds_daily(session, user_id=user_id, start=day, end=day)
