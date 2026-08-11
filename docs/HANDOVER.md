@@ -249,8 +249,10 @@ Timescale-Refresh-Policy.
 # Alle Tests — Windows-venv: .venv/Scripts/python (nicht .venv/bin/)
 .venv/Scripts/python -m pytest -q
 
-# main-Branch-Baseline: 45 passed, 6 skipped ohne Docker; mit laufendem Docker 51 passed, 0 skipped
-# phase-2-metrics-backend-Branch (Stand nach Task 12/15): 83 passed, 0 skipped (Docker lief durchgehend)
+# main-Branch-Baseline (Stand nach Metrics-Backend-Merge, 2026-08-11): 98 passed, 0 skipped
+# mit laufendem Docker durchgehend. Ohne Docker sind die Docker-gated Tests skipped (siehe
+# tests/test_metrics_recompute_integration.py, tests/test_metrics_repositories_integration.py,
+# tests/test_metrics_variants_integration.py, tests/test_garmin_repositories_integration.py)
 # Skipped = testcontainers-Tests ohne laufenden Docker (POSTGRES_IMAGE ist jetzt
 # timescale/timescaledb:latest-pg16, nicht mehr reines postgres:16 — nötig seit den
 # TimescaleDB-Migrationen)
@@ -281,7 +283,7 @@ tests/test_metrics_*.py                # Phase-2 Metrics-Backend (siehe unten)
 |---|---|
 | Phase 0 — Fundament | ✅ `v0.0.1-phase0` getaggt |
 | Phase 1 — Garmin-Pipeline | ~90% — API-Endpoint ✅, Hypertables ✅ (RLS-kompatibel, ohne Compression), Quality-Flag fehlt, echter Backfill-Lauf ausstehend |
-| Phase 2 — Kennzahlen & Dashboard | 🔄 in Arbeit — Metrics-Backend-Teilplan läuft (siehe unten), Dashboard-Frontend-Teilplan noch nicht gestartet |
+| Phase 2 — Kennzahlen & Dashboard | 🔄 in Arbeit — Metrics-Backend ✅ auf `main` gemergt, Dashboard-Frontend-Teilplan läuft (siehe unten) |
 | Phase 3 — Kalender | ❌ nicht gestartet |
 | Phase 4 — Agent | ❌ nicht gestartet |
 
@@ -291,17 +293,15 @@ tests/test_metrics_*.py                # Phase-2 Metrics-Backend (siehe unten)
 2. **Quality-Flag** — Plausibilitätsprüfung im Normalizer (HR < 25 oder > 230 → `suspect`)
 3. **Echter Backfill-Lauf** — 12 Monate importieren, Stichprobenvergleich mit Garmin Connect
 
-### Phase 2 — Fortschritt (Stand 2026-08-10)
+### Phase 2 — Fortschritt (Stand 2026-08-11)
 
 Phase 2 wurde in zwei unabhängige Pläne aufgeteilt, um nicht auf der Frontend-Framework-
 Entscheidung zu blockieren:
 
-1. **Metrics-Backend** (`docs/superpowers/plans/2026-08-10-phase-2-metrics-backend.md`) —
-   läuft gerade, Subagent-Driven Development, 15 Tasks. **Fortschritt: 12/15 Tasks
-   abgeschlossen** (Stand dieses Commits), Rest folgt in derselben Session/Branch.
-   - Branch: `phase-2-metrics-backend`
-   - SDD-Ledger (Fortschritt, Findings, Entscheidungen): `.superpowers/sdd/2026-08-10-phase-2-metrics-backend/progress.md`
-     (git-ignored — bei Fortsetzung zuerst dort lesen, bevor Tasks neu gestartet werden)
+1. **Metrics-Backend** — ✅ **fertig, alle 15 Tasks + finales Whole-Branch-Review +
+   Fix-Welle + Re-Review + ein Restfund gemergt nach `main`** (Commit `04d6744`, Branch
+   `phase-2-metrics-backend` nach Merge gelöscht). Plan-Dokument (als Referenz erhalten):
+   `docs/superpowers/plans/2026-08-10-phase-2-metrics-backend.md`.
    - Architektur: zwei plain RLS-Tabellen (`hr_bucket_seconds_daily`, `wellness_daily_stats`)
      statt Timescale Continuous Aggregates (RLS-inkompatibel, siehe Migrationskette),
      befüllt durch `src/kairos/repositories/metrics_recompute.py`. Formeln laufen als reine
@@ -310,11 +310,38 @@ Entscheidung zu blockieren:
      Nutzer können zwischen TRIMP-Varianten (Edwards/Banister) wählen; CTL/ATL/TSB/ACWR/
      Monotonie-Strain nutzen aber **immer** Edwards-TRIMP als kanonische Trainingslast
      (Entscheidung vom 2026-08-10, verhindert Sprünge in der Langzeitkurve).
-   - Offen: Task 13 (Ruhepuls-Trend), Task 14 (Varianten-Verdrahtung in die Registry),
-     Task 15 (`/api/metrics`-Router), abschließendes Whole-Branch-Review.
-2. **Dashboard-Frontend** — noch nicht begonnen. Framework-Entscheidung: **SvelteKit**
-   (statt Next.js) + ECharts, entschieden am 2026-08-10 (PWA/Web-Push-Reife wichtiger als
-   React-Grid-Layout-Ökosystem für dieses Projekt).
+   - **Wichtige Lektion aus dem finalen Whole-Branch-Review:** Die einzelnen Task-Reviews
+     (Diff gegen Brief) fanden keine Fehler, aber das abschließende Review auf dem
+     leistungsfähigsten Modell deckte zwei echte, durch Codeausführung bewiesene Bugs auf,
+     die genau an der **Nahtstelle zwischen zwei einzeln korrekten Tasks** lagen:
+     `edwards_daily_load_series()` lieferte eine **sparse** Tagesreihe (nur Tage mit echten
+     Trainingsdaten). Dadurch blieben CTL/ATL/TSB am letzten Trainingstag stehen (ATL sank
+     nie ab, TSB kam vorzeichenverkehrt raus), und Foster-Monotonie/-Strain lieferte für
+     jeden realistischen Trainingsplan mit Ruhetagen `None`. Fix: dichte (nullgefüllte)
+     Tagesreihe + separater Zähler für Tage mit echten Daten — ACWR musste dabei explizit
+     gegen dieses Muster abgesichert werden, sonst hätte die Umstellung dessen
+     Unzureichende-Daten-Erkennung für neue Nutzer stillschweigend kaputt gemacht. Ein
+     Nachzügler-Fund (`training_load` verlor sein `insufficient_data`-Gate für Nutzer ganz
+     ohne Trainingsdaten) kam erst im Re-Review ans Licht und wurde in einer dritten,
+     minimalen Runde geschlossen. **Lehre:** Bei mehrteiligen Plänen mit vielen kleinen,
+     einzeln reviewten Tasks das abschließende Whole-Branch-Review nicht überspringen —
+     genau dort tauchen Kompositionsfehler auf, die kein Einzel-Review sieht.
+   - Zusätzlich behoben: fehlende ORM-Modelle für die zwei neuen Tabellen (hätte beim
+     nächsten `alembic revision --autogenerate` zum Löschvorschlag geführt), ein
+     `::date`-Cast-Verstoß in `sleep_debt_variant.py` (jetzt über
+     `metrics_data.sleep_hours_range()`, UTC-determinsitisch), sowie ein Ruhepuls-Fallback
+     für Banister-TRIMP/Karvonen-Zonen (beobachtetes Tages-Minimum als Ersatz, solange es
+     keine `user_setting`-Schreib-API gibt).
+   - **Bekannte, bewusst offene Restpunkte** (nicht blockierend, für später vermerkt):
+     `WellnessSample`/`ActivityRecord`-Modelle kennen die von Timescale automatisch
+     angelegten Hypertable-Indizes nicht — nächstes `autogenerate` würde deren Löschung
+     vorschlagen (vorbestehend, nicht durch Phase-2-Arbeit verursacht); uneinheitliche
+     Confidence-Abstufung zwischen Varianten (manche hart auf `"high"`, andere abgestuft);
+     `sleep_debt_variant.py` u.ä. sind nur teilweise End-to-End getestet.
+2. **Dashboard-Frontend** — läuft. Framework-Entscheidung: **SvelteKit** (statt Next.js)
+   + ECharts, entschieden am 2026-08-10 (PWA/Web-Push-Reife wichtiger als
+   React-Grid-Layout-Ökosystem für dieses Projekt). Details zum Fortschritt: siehe unten
+   bzw. nächster Handover-Checkpoint.
 
 Minimum für User-Test (unverändert aus ursprünglicher Phase-2-Definition):
 1. Onboarding-Seite: Garmin-E-Mail + Passwort → `connection` anlegen
