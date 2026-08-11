@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 async def recompute_hr_bucket_seconds_daily(
     session: AsyncSession, *, user_id: UUID, start: date, end: date
 ) -> None:
+    # needs install_rls_listener(session, user_id) first, else the RLS SELECT returns 0 rows
     await session.execute(
         text(
             "DELETE FROM hr_bucket_seconds_daily "
@@ -41,6 +42,7 @@ async def recompute_hr_bucket_seconds_daily(
 async def recompute_wellness_daily_stats(
     session: AsyncSession, *, user_id: UUID, start: date, end: date
 ) -> None:
+    # needs install_rls_listener(session, user_id) first, else the RLS SELECT returns 0 rows
     await session.execute(
         text(
             "DELETE FROM wellness_daily_stats "
