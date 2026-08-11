@@ -3,11 +3,11 @@ from __future__ import annotations
 from datetime import date, timedelta
 from uuid import UUID
 
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kairos.metrics.formulas.sleep_debt import sleep_debt
 from kairos.metrics.types import Confidence, MetricResult
+from kairos.repositories.metrics_data import sleep_hours_range
 from kairos.repositories.user_setting import get_or_default_user_setting
 
 
@@ -20,17 +20,7 @@ class SleepDebtVariant:
     ) -> MetricResult:
         setting = await get_or_default_user_setting(session, user_id=user_id)
         start = as_of - timedelta(days=6)
-        rows = (
-            await session.execute(
-                text(
-                    "SELECT start_at::date, duration_seconds FROM sleep_session "
-                    "WHERE user_id = :uid AND start_at::date >= :start AND start_at::date <= :end "
-                    "AND duration_seconds IS NOT NULL"
-                ),
-                {"uid": str(user_id), "start": start, "end": as_of},
-            )
-        ).all()
-        nightly = {day: seconds / 3600.0 for day, seconds in rows}
+        nightly = await sleep_hours_range(session, user_id=user_id, start=start, end=as_of)
 
         value = sleep_debt(nightly, as_of=as_of, target_hours=setting.sleep_target_hours)
         if value is None:

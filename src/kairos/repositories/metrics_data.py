@@ -85,6 +85,22 @@ async def wellness_daily_stat_range(
     }
 
 
+async def sleep_hours_range(
+    session: AsyncSession, *, user_id: UUID, start: date, end: date
+) -> dict[date, float]:
+    result = await session.execute(
+        text(
+            "SELECT (start_at AT TIME ZONE 'UTC')::date AS day, duration_seconds "
+            "FROM sleep_session WHERE user_id = :uid "
+            "AND (start_at AT TIME ZONE 'UTC')::date >= :start "
+            "AND (start_at AT TIME ZONE 'UTC')::date <= :end "
+            "AND duration_seconds IS NOT NULL"
+        ),
+        {"uid": str(user_id), "start": start, "end": end},
+    )
+    return {day: seconds / 3600.0 for day, seconds in result.all()}
+
+
 async def observed_max_hr_ever(session: AsyncSession, *, user_id: UUID) -> int | None:
     result = await session.execute(
         text("SELECT max(max_hr) FROM activity WHERE user_id = :uid"),
