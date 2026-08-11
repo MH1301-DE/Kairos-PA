@@ -20,4 +20,5 @@ def banister_trimp(
     delta_ratio = (weighted_bpm - resting_hr) / (hr_max - resting_hr)
     coefficient = _COEFFICIENTS[sex]
     exponent = _EXPONENTS[sex]
-    return duration_min * delta_ratio * coefficient * math.exp(exponent * delta_ratio)
+    result = duration_min * delta_ratio * coefficient * math.exp(exponent * delta_ratio)
+    return max(0.0, result)  # weighted HR below resting HR is possible with edge-case data
