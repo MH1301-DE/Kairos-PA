@@ -299,6 +299,33 @@ class ActivityRecord(Base):
     )
 
 
+class HrBucketSecondsDaily(Base):
+    __tablename__ = "hr_bucket_seconds_daily"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app_user.id", ondelete="CASCADE"), primary_key=True
+    )
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    bpm_bucket: Mapped[int] = mapped_column(SmallInteger, primary_key=True)
+    seconds: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+
+class WellnessDailyStats(Base):
+    __tablename__ = "wellness_daily_stats"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app_user.id", ondelete="CASCADE"), primary_key=True
+    )
+    metric_id: Mapped[int] = mapped_column(
+        ForeignKey("metric_def.id", ondelete="RESTRICT"), primary_key=True
+    )
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    avg_value: Mapped[float] = mapped_column(Float, nullable=False)
+    min_value: Mapped[float] = mapped_column(Float, nullable=False)
+    max_value: Mapped[float] = mapped_column(Float, nullable=False)
+    sample_count: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+
 class DailySummary(Base):
     __tablename__ = "daily_summary"
 
