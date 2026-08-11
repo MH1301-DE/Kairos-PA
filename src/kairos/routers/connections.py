@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -43,7 +44,10 @@ async def connect_garmin(
 
     client = GarminClient(GarminConnectBackend())
     try:
-        tokens = client.login(req.email, req.password, mfa_token=req.mfa_token)
+        # client.login() performs blocking HTTP calls to Garmin; keep it off the event loop
+        tokens = await asyncio.to_thread(
+            client.login, req.email, req.password, mfa_token=req.mfa_token
+        )
     except NeedsMfaToken:
         return _mfa_required_response()
     except InvalidCredentials as exc:
