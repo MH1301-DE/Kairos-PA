@@ -1,0 +1,65 @@
+from __future__ import annotations
+
+from datetime import date
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from kairos.auth.deps import current_user
+from kairos.db.rls import install_rls_listener
+from kairos.db.session import get_session
+from kairos.metrics.bootstrap import build_default_registry
+from kairos.metrics.registry import MetricRegistry
+
+router = APIRouter(prefix="/api/metrics", tags=["metrics"])
+
+_registry: MetricRegistry = build_default_registry()
+
+
+@router.get("")
+async def list_metrics(user: dict = Depends(current_user)) -> dict:
+    del user
+    return {"metric_ids": _registry.metric_ids()}
+
+
+@router.get("/{metric_id}/variants")
+async def list_variants(metric_id: str, user: dict = Depends(current_user)) -> dict:
+    del user
+    variants = _registry.variants_for(metric_id)
+    if not variants:
+        raise HTTPException(status_code=404, detail=f"Unknown metric: {metric_id}")
+    return {"variants": variants}
+
+
+@router.get("/{metric_id}")
+async def get_metric(
+    metric_id: str,
+    variant: str | None = None,
+    as_of: date | None = None,
+    user: dict = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    user_id = UUID(user["user_id"])
+    install_rls_listener(session, user_id)
+
+    variants = _registry.variants_for(metric_id)
+    if not variants:
+        raise HTTPException(status_code=404, detail=f"Unknown metric: {metric_id}")
+    chosen_variant = variant or variants[0]
+    if chosen_variant not in variants:
+        raise HTTPException(status_code=404, detail=f"Unknown variant: {chosen_variant}")
+
+    result = await _registry.get(metric_id, chosen_variant).compute(
+        session, user_id=user_id, as_of=as_of or date.today()
+    )
+    return {
+        "metric_id": metric_id,
+        "variant": chosen_variant,
+        "value": result.value,
+        "unit": result.unit,
+        "confidence": result.confidence,
+        "coverage_days": result.coverage_days,
+        "coverage_required_days": result.coverage_required_days,
+        "as_of": result.as_of,
+    }
