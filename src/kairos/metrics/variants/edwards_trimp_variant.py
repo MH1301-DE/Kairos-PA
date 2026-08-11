@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, timedelta
 from uuid import UUID
 
@@ -8,7 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from kairos.metrics.formulas.edwards_trimp import edwards_trimp
 from kairos.metrics.hr_zones import estimate_hr_max, percent_max_zones
 from kairos.metrics.types import Confidence, MetricResult
-from kairos.repositories.metrics_data import hr_bucket_seconds, observed_max_hr_ever
+from kairos.repositories.metrics_data import (
+    hr_bucket_seconds,
+    hr_bucket_seconds_range,
+    observed_max_hr_ever,
+)
 from kairos.repositories.user_setting import get_or_default_user_setting
 
 
@@ -40,9 +45,17 @@ class EdwardsTrimpVariant:
         )
 
 
+@dataclass(frozen=True)
+class LoadSeriesResult:
+    # dense: every day in [end_day - (days-1), end_day], 0.0-filled for rest days
+    series: dict[date, float]
+    # count of days within that window that had real (non-imputed) activity data
+    days_with_data: int
+
+
 async def edwards_daily_load_series(
     session: AsyncSession, *, user_id: UUID, end_day: date, days: int
-) -> dict[date, float]:
+) -> LoadSeriesResult:
     """Canonical training-load series consumed by CTL/ATL/TSB, ACWR, Monotony/Strain."""
     setting = await get_or_default_user_setting(session, user_id=user_id)
     observed_max = await observed_max_hr_ever(session, user_id=user_id)
@@ -50,11 +63,15 @@ async def edwards_daily_load_series(
         setting.birth_date, setting.hr_max_override, observed_max, as_of=end_day
     )
     if hr_max is None:
-        return {}
+        return LoadSeriesResult(series={}, days_with_data=0)
 
     zones = percent_max_zones(hr_max)
     start = end_day - timedelta(days=days - 1)
-    from kairos.repositories.metrics_data import hr_bucket_seconds_range
-
     ranged = await hr_bucket_seconds_range(session, user_id=user_id, start=start, end=end_day)
-    return {day: edwards_trimp(buckets, zones) for day, buckets in ranged.items()}
+    # dense: fill every day in the window, not just days with real data, so CTL/ATL/TSB
+    # and monotony/strain simulate rest-day decay instead of stalling at the last workout
+    dense = {
+        start + timedelta(days=i): edwards_trimp(ranged.get(start + timedelta(days=i), {}), zones)
+        for i in range(days)
+    }
+    return LoadSeriesResult(series=dense, days_with_data=len(ranged))

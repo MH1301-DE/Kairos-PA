@@ -19,16 +19,16 @@ class TrainingLoadVariant:
     async def compute(
         self, session: AsyncSession, *, user_id: UUID, as_of: date
     ) -> MetricResult:
-        series = await edwards_daily_load_series(
+        result = await edwards_daily_load_series(
             session, user_id=user_id, end_day=as_of, days=_LOOKBACK_DAYS
         )
-        coverage = sum(1 for v in series.values() if v > 0)
-        if not series:
+        coverage = result.days_with_data
+        if not result.series:
             return MetricResult(
                 value=None, unit="ctl_atl_tsb", confidence="insufficient_data",
                 coverage_days=0, coverage_required_days=_LOOKBACK_DAYS, as_of=as_of.isoformat(),
             )
-        states = training_load(series)
+        states = training_load(result.series)
         today_state = states[-1]
         confidence: Confidence = "high" if coverage >= 28 else "medium" if coverage >= 7 else "low"
         return MetricResult(

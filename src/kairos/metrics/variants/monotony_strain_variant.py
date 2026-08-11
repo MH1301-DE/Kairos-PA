@@ -17,15 +17,16 @@ class MonotonyStrainVariant:
     async def compute(
         self, session: AsyncSession, *, user_id: UUID, as_of: date
     ) -> MetricResult:
-        series = await edwards_daily_load_series(session, user_id=user_id, end_day=as_of, days=7)
-        result = monotony_strain(series, as_of=as_of)
+        load = await edwards_daily_load_series(session, user_id=user_id, end_day=as_of, days=7)
+        result = monotony_strain(load.series, as_of=as_of)
         if result is None:
             return MetricResult(
                 value=None, unit="monotony_strain", confidence="insufficient_data",
-                coverage_days=len(series), coverage_required_days=7, as_of=as_of.isoformat(),
+                coverage_days=load.days_with_data, coverage_required_days=7,
+                as_of=as_of.isoformat(),
             )
         return MetricResult(
             value={"monotony": result.monotony, "strain": result.strain},
             unit="monotony_strain", confidence="high",
-            coverage_days=len(series), coverage_required_days=7, as_of=as_of.isoformat(),
+            coverage_days=load.days_with_data, coverage_required_days=7, as_of=as_of.isoformat(),
         )
