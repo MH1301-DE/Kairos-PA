@@ -158,6 +158,38 @@ async def test_training_load_variant_reflects_rest_day_decay(session: AsyncSessi
 
 
 @pytest.mark.asyncio
+async def test_training_load_variant_insufficient_data_for_zero_training_user(
+    session: AsyncSession,
+) -> None:
+    """hr_max resolves (via activity.max_hr) but there is no activity_record data, ever.
+
+    Guards the composition bug the dense-series fix could introduce: edwards_daily_load_series()
+    always returns a dense, zero-filled series once hr_max resolves, so the old
+    `if not result.series` check is dead code for this case — the variant must gate on
+    days_with_data itself before calling training_load().
+    """
+    user_id = uuid4()
+    await _insert_user(session, user_id)
+    as_of = date(2026, 8, 10)
+    await session.execute(
+        text(
+            "INSERT INTO activity (user_id, external_id, start_at, max_hr) "
+            "VALUES (:uid, 'ext-no-records', :start_at, 185)"
+        ),
+        {"uid": str(user_id), "start_at": datetime(2026, 1, 1, 9, tzinfo=UTC)},
+    )
+    await session.commit()
+
+    registry = build_default_registry()
+    result = await registry.get("training_load", "default").compute(
+        session, user_id=user_id, as_of=as_of
+    )
+
+    assert result.confidence == "insufficient_data"
+    assert result.value is None
+
+
+@pytest.mark.asyncio
 async def test_acwr_variant_returns_ratio_for_sparse_schedule_with_enough_history(
     session: AsyncSession,
 ) -> None:

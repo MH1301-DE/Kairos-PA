@@ -23,7 +23,10 @@ class TrainingLoadVariant:
             session, user_id=user_id, end_day=as_of, days=_LOOKBACK_DAYS
         )
         coverage = result.days_with_data
-        if not result.series:
+        # not result.series still catches hr_max is None (edwards_daily_load_series short-
+        # circuits to an empty dict there); days_with_data == 0 catches the dense-but-all-
+        # zero case, where hr_max resolved but the user has no real training data, ever.
+        if not result.series or result.days_with_data == 0:
             return MetricResult(
                 value=None, unit="ctl_atl_tsb", confidence="insufficient_data",
                 coverage_days=0, coverage_required_days=_LOOKBACK_DAYS, as_of=as_of.isoformat(),
