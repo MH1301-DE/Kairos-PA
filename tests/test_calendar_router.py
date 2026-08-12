@@ -94,6 +94,21 @@ async def test_post_event_creates_via_connector_and_persists() -> None:
     mock_client = MagicMock()
     mock_client.create_event.return_value = {"id": "google-event-1"}
 
+    # upsert_kairos_event returns the persisted row now (see Task 9 review fix round 1):
+    # create_event's response must match list_events's per-event shape, which needs the
+    # local calendar_event.id -- a plain AsyncMock() default return_value is a MagicMock
+    # whose .start_at.isoformat() etc. aren't real strings, so this fakes a real row shape.
+    fake_row = MagicMock()
+    fake_row.id = uuid4()
+    fake_row.summary = "Long Run"
+    fake_row.description = None
+    fake_row.location = None
+    fake_row.start_at = datetime(2026, 3, 1, 7, 0, tzinfo=UTC)
+    fake_row.end_at = datetime(2026, 3, 1, 8, 30, tzinfo=UTC)
+    fake_row.all_day = False
+    fake_row.status = "confirmed"
+    fake_row.source = "kairos"
+
     with (
         patch(
             "kairos.routers.calendar._build_google_calendar_client",
@@ -104,7 +119,7 @@ async def test_post_event_creates_via_connector_and_persists() -> None:
         ) as mock_write_back,
         patch(
             "kairos.routers.calendar.CalendarEventRepository.upsert_kairos_event",
-            new=AsyncMock(),
+            new=AsyncMock(return_value=fake_row),
         ) as mock_upsert,
     ):
         from kairos.connectors.types import WriteResult
@@ -123,6 +138,19 @@ async def test_post_event_creates_via_connector_and_persists() -> None:
 
     assert response.status_code == 201
     mock_upsert.assert_called_once()
+    body = response.json()
+    assert body["id"] == str(fake_row.id)
+    assert body == {
+        "id": str(fake_row.id),
+        "summary": "Long Run",
+        "description": None,
+        "location": None,
+        "start_at": "2026-03-01T07:00:00+00:00",
+        "end_at": "2026-03-01T08:30:00+00:00",
+        "all_day": False,
+        "status": "confirmed",
+        "source": "kairos",
+    }
 
 
 @pytest.mark.asyncio

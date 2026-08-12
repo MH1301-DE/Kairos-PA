@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from kairos.auth.deps import current_user
 from kairos.calendar.free_time import BusyBlock, CalendarPrefs, compute_free_blocks
 from kairos.connectors.google_calendar.connector import GoogleCalendarConnector
-from kairos.db.models import UserSetting
+from kairos.db.models import CalendarEvent, UserSetting
 from kairos.db.rls import install_rls_listener
 from kairos.db.session import get_session
 from kairos.repositories.calendar_event import CalendarEventRepository
@@ -38,22 +38,7 @@ async def list_events(
     install_rls_listener(session, user_id)
     repo = CalendarEventRepository(session)
     events = await repo.list_between(user_id, _to_utc(from_), _to_utc(to))
-    return {
-        "events": [
-            {
-                "id": str(e.id),
-                "summary": e.summary,
-                "description": e.description,
-                "location": e.location,
-                "start_at": e.start_at.isoformat(),
-                "end_at": e.end_at.isoformat(),
-                "all_day": e.all_day,
-                "status": e.status,
-                "source": e.source,
-            }
-            for e in events
-        ]
-    }
+    return {"events": [_event_to_dict(e) for e in events]}
 
 
 @router.get("/free-slots")
@@ -106,7 +91,7 @@ async def create_event(
     del connector  # write_back not used here; single-record path calls the client directly
 
     repo = CalendarEventRepository(session)
-    await repo.upsert_kairos_event(
+    row = await repo.upsert_kairos_event(
         user_id,
         "google_calendar",
         str(created["id"]),
@@ -116,12 +101,7 @@ async def create_event(
         req.description,
     )
     await session.commit()
-    return {
-        "summary": req.summary,
-        "start_at": req.start_at.isoformat(),
-        "end_at": req.end_at.isoformat(),
-        "description": req.description,
-    }
+    return _event_to_dict(row)
 
 
 @router.delete("/events/{event_id}", status_code=204)
@@ -142,6 +122,20 @@ async def delete_event(
         client.delete_event(event.calendar_id, event.external_id)
     await repo.mark_deleted(user_id, event.connector, event.external_id)
     await session.commit()
+
+
+def _event_to_dict(e: CalendarEvent) -> dict:
+    return {
+        "id": str(e.id),
+        "summary": e.summary,
+        "description": e.description,
+        "location": e.location,
+        "start_at": e.start_at.isoformat(),
+        "end_at": e.end_at.isoformat(),
+        "all_day": e.all_day,
+        "status": e.status,
+        "source": e.source,
+    }
 
 
 async def _load_prefs(session: AsyncSession, user_id: UUID) -> dict:

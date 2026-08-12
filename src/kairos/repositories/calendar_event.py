@@ -67,7 +67,7 @@ class CalendarEventRepository:
         start_at: datetime,
         end_at: datetime,
         description: str | None,
-    ) -> None:
+    ) -> CalendarEvent:
         stmt = (
             insert(CalendarEvent)
             .values(
@@ -86,8 +86,10 @@ class CalendarEventRepository:
                 constraint="uq_calendar_event",
                 set_={"summary": summary, "description": description},
             )
+            .returning(CalendarEvent)
         )
-        await self._session.execute(stmt)
+        result = await self._session.execute(stmt)
+        return result.scalar_one()
 
     async def list_between(
         self, user_id: UUID, start: datetime, end: datetime
