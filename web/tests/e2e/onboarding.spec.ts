@@ -8,9 +8,13 @@ import http from 'node:http';
 // server-to-server HTTP call through Vite's `/api` proxy (see vite.config.ts)
 // that never touches the browser's network stack. `page.route()` only
 // intercepts requests the browser makes directly, so it cannot see or mock
-// this call. Instead we stand up a real HTTP server on port 8000 — the exact
-// port `server.proxy` in vite.config.ts forwards `/api` requests to — and let
-// the proxy hop land on it for real.
+// this call. Instead we stand up a real HTTP server on the port that
+// `server.proxy` in vite.config.ts forwards `/api` requests to, and let the
+// proxy hop land on it for real. playwright.config.ts sets
+// KAIROS_API_PROXY_TARGET on the dev server so this is a dedicated E2E port,
+// never 8000 — the suite can therefore run alongside a live local backend.
+const STUB_PORT = 8791;
+
 function startGarminStub(
 	responder: (callCount: number) => { status: number; body: unknown }
 ): Promise<http.Server> {
@@ -20,8 +24,7 @@ function startGarminStub(
 			res.writeHead(404).end();
 			return;
 		}
-		const chunks: Buffer[] = [];
-		req.on('data', (chunk: Buffer) => chunks.push(chunk));
+		req.resume();
 		req.on('end', () => {
 			callCount += 1;
 			const { status, body } = responder(callCount);
@@ -31,7 +34,7 @@ function startGarminStub(
 	});
 	return new Promise((resolve, reject) => {
 		server.once('error', reject);
-		server.listen(8000, () => resolve(server));
+		server.listen(STUB_PORT, () => resolve(server));
 	});
 }
 
@@ -51,8 +54,8 @@ test.describe('onboarding', () => {
 	});
 
 	test.afterEach(async () => {
-		// always release port 8000, even on assertion failure, so a real
-		// backend (or the next test's stub) can bind it
+		// always release the stub port, even on assertion failure, so the
+		// next test's stub can bind it
 		await closeStub(stub);
 		stub = undefined;
 	});
@@ -83,6 +86,10 @@ test.describe('onboarding', () => {
 		await page.fill('input[name=password]', 'correctpass');
 		await page.locator('main form button[type=submit]').click();
 		await expect(page.locator('input[name=mfa_token]')).toBeVisible();
+		// the server never echoes the password back, so the retry needs it re-typed
+		await expect(page.locator('input[name=password]')).toHaveValue('');
+		await expect(page.locator('input[name=email]')).toHaveValue('user@example.com');
+		await page.fill('input[name=password]', 'correctpass');
 		await page.fill('input[name=mfa_token]', '123456');
 		await page.locator('main form button[type=submit]').click();
 		await expect(page.getByText(/Verbunden mit/)).toBeVisible();

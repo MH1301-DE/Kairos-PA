@@ -25,6 +25,13 @@ export async function apiPost<T>(
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(body)
 	});
-	const data = (await resp.json()) as T;
+	// a proxy/gateway error yields HTML or an empty body — degrade so callers
+	// can still branch on the status code instead of crashing on a SyntaxError
+	let data: T;
+	try {
+		data = (await resp.json()) as T;
+	} catch {
+		data = {} as T;
+	}
 	return { status: resp.status, data };
 }

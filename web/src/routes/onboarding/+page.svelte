@@ -22,15 +22,15 @@
 		</label>
 		<label>
 			Passwort
-			<input type="password" name="password" value={form?.password ?? ''} required />
+			<!-- never pre-filled: the server does not echo the password back -->
+			<input type="password" name="password" required />
 		</label>
 		{#if form?.mfaRequired}
 			<label>
 				MFA-Code (aus E-Mail/App)
+				<!-- svelte-ignore a11y_autofocus -->
 				<input type="text" name="mfa_token" required autofocus />
 			</label>
-			<input type="hidden" name="email" value={form.email} />
-			<input type="hidden" name="password" value={form.password} />
 		{/if}
 		{#if form?.error}
 			<p class="error">{form.error}</p>

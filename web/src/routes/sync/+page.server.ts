@@ -1,12 +1,19 @@
 // web/src/routes/sync/+page.server.ts
 import type { PageServerLoad } from './$types';
-import { apiGet } from '$lib/api';
+import { redirect } from '@sveltejs/kit';
+import { apiGet, ApiError } from '$lib/api';
 import type { ConnectionInfo, SyncJob } from '$lib/types';
 
 export const load: PageServerLoad = async ({ fetch }) => {
-	const [connections, syncStatus] = await Promise.all([
-		apiGet<{ connections: ConnectionInfo[] }>(fetch, '/api/connections'),
-		apiGet<{ jobs: SyncJob[] }>(fetch, '/api/sync/status')
-	]);
-	return { connections: connections.connections, jobs: syncStatus.jobs };
+	try {
+		const [connections, syncStatus] = await Promise.all([
+			apiGet<{ connections: ConnectionInfo[] }>(fetch, '/api/connections'),
+			apiGet<{ jobs: SyncJob[] }>(fetch, '/api/sync/status')
+		]);
+		return { connections: connections.connections, jobs: syncStatus.jobs };
+	} catch (err) {
+		// stale/invalid session cookie: send the user back to login instead of a dead end
+		if (err instanceof ApiError && err.status === 401) redirect(302, '/auth/login');
+		throw err;
+	}
 };

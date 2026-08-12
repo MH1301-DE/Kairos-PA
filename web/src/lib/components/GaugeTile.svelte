@@ -11,6 +11,8 @@
 	let option = $derived.by((): EChartsOption | null => {
 		if (result.value === null || !module.gauge) return null;
 		const spec = module.gauge(result);
+		// a zero-width band (e.g. a flat baseline) would make every color stop NaN
+		if (spec.max === spec.min) return null;
 		const dict = result.value as Record<string, number>;
 		const value = dict[spec.valueKey];
 		return {

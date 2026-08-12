@@ -4,6 +4,10 @@ import adapter from '@sveltejs/adapter-node';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { SvelteKitPWA } from '@vite-pwa/sveltekit';
 
+// overridable so the E2E suite can point the proxy at its own stub port
+// instead of colliding with a locally running backend on 8000
+const apiProxyTarget = process.env.KAIROS_API_PROXY_TARGET ?? 'http://localhost:8000';
+
 export default defineConfig({
 	plugins: [
 		sveltekit({
@@ -16,6 +20,10 @@ export default defineConfig({
 		}),
 		SvelteKitPWA({
 			registerType: 'autoUpdate',
+			// SvelteKit builds with vite base './', which would emit a relative
+			// manifest/sw href and 404 on every nested route (/sync, /onboarding)
+			base: '/',
+			scope: '/',
 			manifest: {
 				name: 'Kairos',
 				short_name: 'Kairos',
@@ -37,8 +45,8 @@ export default defineConfig({
 	],
 	server: {
 		proxy: {
-			'/api': { target: 'http://localhost:8000', changeOrigin: true },
-			'/auth': { target: 'http://localhost:8000', changeOrigin: true }
+			'/api': { target: apiProxyTarget, changeOrigin: true },
+			'/auth': { target: apiProxyTarget, changeOrigin: true }
 		}
 	},
 	test: {
@@ -65,6 +73,7 @@ export default defineConfig({
 				test: {
 					name: 'server',
 					environment: 'jsdom',
+					setupFiles: ['./tests/setup-jsdom.ts'],
 					include: ['src/**/*.{test,spec}.{js,ts}', 'tests/**/*.{test,spec}.{js,ts}'],
 					// tests/e2e runs under Playwright, not vitest — its test.describe() call
 					// throws when collected outside a Playwright runner

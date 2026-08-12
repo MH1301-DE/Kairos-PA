@@ -18,13 +18,17 @@ export const actions: Actions = {
 			return { success: true, email };
 		}
 		if (status === 202) {
-			return { mfaRequired: true, email, password };
+			// never echo the password back — it would land in the SSR'd HTML
+			return { mfaRequired: true, email };
 		}
 		if (status === 401) {
-			return { error: 'E-Mail oder Passwort falsch.' };
+			return { error: 'E-Mail oder Passwort falsch.', email };
 		}
 		if (status === 503) {
-			return { error: 'Garmin ist gerade nicht erreichbar. Bitte später erneut versuchen.' };
+			return {
+				error: 'Garmin ist gerade nicht erreichbar. Bitte später erneut versuchen.',
+				email
+			};
 		}
 		return { error: `Unerwarteter Fehler (${status}): ${data.detail ?? 'unbekannt'}` };
 	}

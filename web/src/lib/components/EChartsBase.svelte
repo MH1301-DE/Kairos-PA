@@ -7,19 +7,22 @@
 		$props();
 	let container: HTMLDivElement;
 	let chart: echarts.ECharts | undefined;
+	let resizeObserver: ResizeObserver | undefined;
 
 	$effect(() => {
 		if (!chart) {
 			chart = echarts.init(container, undefined, { renderer });
+			// the dashboard grid reflows on resize/rotation; echarts needs to be told
+			resizeObserver = new ResizeObserver(() => chart?.resize());
+			resizeObserver.observe(container);
 		}
 		chart.setOption(option, true);
-		return () => {
-			// no per-option teardown needed; chart instance is disposed below on unmount
-		};
 	});
 
 	$effect(() => {
 		return () => {
+			resizeObserver?.disconnect();
+			resizeObserver = undefined;
 			chart?.dispose();
 			chart = undefined;
 		};

@@ -32,4 +32,15 @@ describe('apiPost', () => {
 			body: JSON.stringify({ a: 1 })
 		});
 	});
+
+	it('returns an empty object when the response body is not JSON', async () => {
+		const fetchFn = vi
+			.fn()
+			.mockResolvedValue(
+				new Response('<html><body>502 Bad Gateway</body></html>', { status: 502 })
+			);
+		const result = await apiPost(fetchFn, '/api/x', { a: 1 });
+		expect(result.status).toBe(502);
+		expect(result.data).toEqual({});
+	});
 });

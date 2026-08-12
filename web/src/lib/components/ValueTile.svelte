@@ -16,11 +16,11 @@
 		<dl>
 			{#each module.fields as field (field.key)}
 				<dt>{field.label}</dt>
-				<dd>{dict[field.key].toFixed(2)} {field.unit ?? ''}</dd>
+				<dd>{(dict[field.key] ?? 0).toFixed(2)} {field.unit ?? ''}</dd>
 			{/each}
 		</dl>
 		{#if module.trendKey}
-			{@const delta = dict[module.trendKey]}
+			{@const delta = dict[module.trendKey] ?? 0}
 			<p class="trend">{delta < 0 ? '↓' : delta > 0 ? '↑' : '→'} {delta.toFixed(1)} bpm</p>
 		{/if}
 	{:else}
