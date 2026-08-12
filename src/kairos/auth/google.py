@@ -6,10 +6,10 @@ from fastapi import APIRouter, Cookie, HTTPException
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 
-from kairos.auth.crypto import generate_dek, kek_from_settings, wrap_dek
+from kairos.auth.crypto import encrypt, generate_dek, kek_from_settings, unwrap_dek, wrap_dek
 from kairos.auth.session import create_session, delete_session, get_redis
 from kairos.config import settings
-from kairos.db.models import AppUser
+from kairos.db.models import AppUser, Connection
 from kairos.db.session import async_session_factory
 
 router = APIRouter(prefix="/auth")
@@ -92,6 +92,27 @@ async def callback(
             db.add(user)
             await db.commit()
             await db.refresh(user)
+
+        # Google only returns refresh_token on first consent, but login() forces prompt=consent
+        refresh_token = tokens.get("refresh_token")
+        if refresh_token:
+            kek = kek_from_settings(settings.kairos_kek)
+            if user.dek_wrapped is None:
+                dek = generate_dek()
+                user.dek_wrapped = wrap_dek(dek, kek)
+            else:
+                dek = unwrap_dek(user.dek_wrapped, kek)
+            credentials_enc = encrypt(refresh_token.encode(), dek)
+            db.add(
+                Connection(
+                    user_id=user.id,
+                    connector="google_calendar",
+                    external_account=email,
+                    status="active",
+                    credentials_enc=credentials_enc,
+                )
+            )
+            await db.commit()
 
     session_id = await create_session(user.id, email)
     response = RedirectResponse(url="/", status_code=302)

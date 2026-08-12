@@ -1,5 +1,6 @@
 import uuid
 from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -137,6 +138,81 @@ async def test_callback_redirects_to_frontend_root(
     assert "max-age=2592000" in set_cookie
     # secure flag should NOT be present since is_dev=True (development mode)
     assert "secure" not in set_cookie
+
+
+@pytest.mark.asyncio
+async def test_callback_persists_google_calendar_connection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    redis_stub = google_auth.get_redis()
+    state = "valid-test-state-calendar"
+    await redis_stub.set(f"oauth_state:{state}", "1", ex=600)
+
+    mock_token_resp = AsyncMock()
+    mock_token_resp.json = lambda: {
+        "access_token": "test-access-token",
+        "refresh_token": "test-refresh-token-xyz",
+    }
+    mock_token_resp.raise_for_status = lambda: None
+
+    mock_info_resp = AsyncMock()
+    mock_info_resp.json = lambda: {
+        "sub": "google-sub-calendar-test",
+        "email": "calendar-test@example.com",
+        "name": "Calendar Test User",
+    }
+    mock_info_resp.raise_for_status = lambda: None
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=mock_token_resp)
+    mock_client.get = AsyncMock(return_value=mock_info_resp)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    monkeypatch.setattr(google_auth, "httpx", AsyncMock(AsyncClient=lambda: mock_client))
+
+    saved_connections: list[models.Connection] = []
+    mock_user = MagicMock(spec=models.AppUser)
+    mock_user.id = uuid4()
+    mock_user.email = "calendar-test@example.com"
+    mock_user.google_sub = "google-sub-calendar-test"
+    mock_user.dek_wrapped = None  # exercised path: new user, dek generated in this request
+
+    mock_db = AsyncMock()
+
+    async def _execute(stmt: object) -> object:
+        del stmt
+        result = MagicMock()
+        result.scalar_one_or_none = lambda: None
+        return result
+
+    mock_db.execute = AsyncMock(side_effect=_execute)
+
+    def _add(obj: object) -> None:
+        if isinstance(obj, models.Connection):
+            saved_connections.append(obj)
+
+    mock_db.add = MagicMock(side_effect=_add)
+    mock_db.commit = AsyncMock()
+    mock_db.refresh = AsyncMock()
+    mock_db.__aenter__ = AsyncMock(return_value=mock_db)
+    mock_db.__aexit__ = AsyncMock(return_value=None)
+    monkeypatch.setattr(google_auth, "async_session_factory", lambda: mock_db)
+    monkeypatch.setattr(google_auth, "create_session", AsyncMock(return_value="test-session-id"))
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(
+            f"/auth/callback?code=test-code&state={state}",
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 302
+    assert len(saved_connections) == 1
+    conn = saved_connections[0]
+    assert conn.connector == "google_calendar"
+    assert conn.external_account == "calendar-test@example.com"
+    assert conn.status == "active"
+    assert conn.credentials_enc is not None
+    assert conn.credentials_enc != b"test-refresh-token-xyz"  # must be encrypted, not raw
 
 
 @pytest.mark.asyncio
