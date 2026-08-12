@@ -2,6 +2,7 @@ import { defineConfig } from 'vitest/config';
 import { playwright } from '@vitest/browser-playwright';
 import adapter from '@sveltejs/adapter-node';
 import { sveltekit } from '@sveltejs/kit/vite';
+import { SvelteKitPWA } from '@vite-pwa/sveltekit';
 
 export default defineConfig({
 	plugins: [
@@ -12,6 +13,26 @@ export default defineConfig({
 					filename.split(/[/\\]/).includes('node_modules') ? undefined : true
 			},
 			adapter: adapter()
+		}),
+		SvelteKitPWA({
+			registerType: 'autoUpdate',
+			manifest: {
+				name: 'Kairos',
+				short_name: 'Kairos',
+				description: 'Persönlicher Gesundheits- und Trainingsassistent',
+				theme_color: '#0f172a',
+				background_color: '#ffffff',
+				display: 'standalone',
+				icons: [
+					{ src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+					{ src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' }
+				]
+			},
+			workbox: {
+				// app-shell caching only — dashboard data always requires a live
+				// backend connection, per the design spec's explicit no-offline-sync decision
+				globPatterns: ['**/*.{js,css,html,svg,png,ico}']
+			}
 		})
 	],
 	server: {
