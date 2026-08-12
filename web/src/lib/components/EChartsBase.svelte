@@ -3,13 +3,14 @@
 	import * as echarts from 'echarts';
 	import type { EChartsOption } from 'echarts';
 
-	let { option }: { option: EChartsOption } = $props();
+	let { option, renderer = 'canvas' }: { option: EChartsOption; renderer?: 'canvas' | 'svg' } =
+		$props();
 	let container: HTMLDivElement;
 	let chart: echarts.ECharts | undefined;
 
 	$effect(() => {
 		if (!chart) {
-			chart = echarts.init(container);
+			chart = echarts.init(container, undefined, { renderer });
 		}
 		chart.setOption(option, true);
 		return () => {
