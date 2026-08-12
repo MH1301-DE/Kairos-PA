@@ -14,12 +14,16 @@ from kairos.auth.crypto import decrypt, kek_from_settings, unwrap_dek
 from kairos.auth.deps import current_user
 from kairos.config import settings
 from kairos.connectors.garmin.connector import GarminConnector
+from kairos.connectors.google_calendar.client import GoogleCalendarClient
+from kairos.connectors.google_calendar.connector import GoogleCalendarConnector
+from kairos.connectors.types import Window
 from kairos.db.models import AppUser, Connection
 from kairos.db.rls import install_rls_listener
 from kairos.db.session import async_session_factory
 from kairos.ingestion.hash import payload_sha256
 from kairos.ingestion.job_registry import SyncJob, SyncJobRegistry, get_registry
 from kairos.ingestion.service import SyncService
+from kairos.repositories.calendar_event import CalendarEventRepository
 from kairos.repositories.canonical import SqlCanonicalRepository
 from kairos.repositories.raw_payload import SqlRawPayloadRepository
 from kairos.repositories.sync_state import SqlSyncStateRepository
@@ -93,6 +97,39 @@ async def sync_status(
 ) -> dict:
     user_id = UUID(user["user_id"])
     return {"jobs": [j.to_dict() for j in registry.get_jobs_for_user(user_id)]}
+
+
+@router.post("/google_calendar/sync", status_code=202)
+async def trigger_google_calendar_sync(
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(current_user),
+    registry: SyncJobRegistry = Depends(get_registry),
+) -> dict:
+    user_id = UUID(user["user_id"])
+    if registry.is_locked(user_id, "google_calendar", "events"):
+        raise HTTPException(status_code=409, detail="Sync already running")
+
+    from_dt = _to_utc_midnight(date.today() - timedelta(days=7))
+    to_dt = _to_utc_midnight(date.today() + timedelta(days=83))
+
+    jobs = registry.create_jobs(
+        user_id=user_id,
+        connector="google_calendar",
+        kinds=["events"],
+        from_date=from_dt.date().isoformat(),
+        to_date=to_dt.date().isoformat(),
+    )
+
+    background_tasks.add_task(
+        _run_calendar_sync_task,
+        user_id=user_id,
+        from_dt=from_dt,
+        to_dt=to_dt,
+        jobs=jobs,
+        registry=registry,
+    )
+
+    return {"jobs": [j.to_dict() for j in jobs]}
 
 
 # ── Background task ───────────────────────────────────────────────────────────
@@ -185,6 +222,91 @@ async def _build_garmin_client(session: AsyncSession, user_id: UUID) -> object |
         garmin = gc.Garmin()
         await asyncio.to_thread(garmin.login, token_json)
         return garmin
+    except Exception:
+        return None
+
+
+async def _run_calendar_sync_task(
+    *,
+    user_id: UUID,
+    from_dt: datetime,
+    to_dt: datetime,
+    jobs: list[SyncJob],
+    registry: SyncJobRegistry,
+) -> None:
+    async with async_session_factory() as session:
+        install_rls_listener(session, user_id)
+
+        client = await _build_google_calendar_client(session, user_id)
+        job = jobs[0]
+        if client is None:
+            job.status = "failed"
+            job.error = "No active Google Calendar connection or decryption failed"
+            job.finished_at = datetime.now(UTC).isoformat()
+            return
+
+        connector = GoogleCalendarConnector(client)
+        window = Window(start=from_dt, end=to_dt)
+
+        lock = registry.get_lock(user_id, "google_calendar", job.kind)
+        if lock.locked():
+            job.status = "skipped"
+            job.error = "Already running in another request"
+            job.finished_at = datetime.now(UTC).isoformat()
+            return
+
+        async with lock:
+            job.status = "running"
+            job.started_at = datetime.now(UTC).isoformat()
+            try:
+                envelope = connector.fetch(user_id, job.kind, window)
+                records = connector.normalize(job.kind, envelope.payload)
+                repo = CalendarEventRepository(session)
+                written = await repo.upsert_from_records(user_id, "google_calendar", records)
+                await session.commit()
+                job.status = "done"
+                job.windows_processed = written
+            except Exception as exc:
+                await session.rollback()
+                job.status = "failed"
+                job.error = str(exc)
+            finally:
+                job.finished_at = datetime.now(UTC).isoformat()
+
+
+async def _build_google_calendar_client(
+    session: AsyncSession, user_id: UUID
+) -> GoogleCalendarClient | None:
+    try:
+        # first() not scalar_one_or_none(): pre-existing duplicate rows must not raise here,
+        # the bare except below would turn that into an opaque "no connection" failure
+        conn_row = (await session.execute(
+            select(Connection).where(
+                Connection.user_id == user_id,
+                Connection.connector == "google_calendar",
+                Connection.status.in_(["active", "reauth_required"]),
+            ).order_by(Connection.connected_at.desc(), Connection.id.desc())
+        )).scalars().first()
+
+        if conn_row is None or conn_row.credentials_enc is None:
+            return None
+
+        user_row = (await session.execute(
+            select(AppUser).where(AppUser.id == user_id)
+        )).scalar_one_or_none()
+
+        if user_row is None or user_row.dek_wrapped is None:
+            return None
+
+        kek = kek_from_settings(settings.kairos_kek)
+        dek = unwrap_dek(user_row.dek_wrapped, kek)
+        refresh_token = decrypt(conn_row.credentials_enc, dek).decode()
+
+        return GoogleCalendarClient(
+            refresh_token=refresh_token,
+            client_id=settings.google_client_id,
+            client_secret=settings.google_client_secret,
+        )
     except Exception:
         return None
 
