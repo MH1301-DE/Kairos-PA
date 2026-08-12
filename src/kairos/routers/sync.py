@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 from datetime import UTC, date, datetime, timedelta
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
@@ -102,9 +103,9 @@ async def sync_status(
 @router.post("/google_calendar/sync", status_code=202)
 async def trigger_google_calendar_sync(
     background_tasks: BackgroundTasks,
-    user: dict = Depends(current_user),
+    user: dict[str, Any] = Depends(current_user),
     registry: SyncJobRegistry = Depends(get_registry),
-) -> dict:
+) -> dict[str, Any]:
     user_id = UUID(user["user_id"])
     if registry.is_locked(user_id, "google_calendar", "events"):
         raise HTTPException(status_code=409, detail="Sync already running")

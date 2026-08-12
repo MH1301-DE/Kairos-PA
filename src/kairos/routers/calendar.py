@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -31,9 +32,9 @@ class CreateEventRequest(BaseModel):
 async def list_events(
     from_: date = Query(alias="from"),
     to: date = Query(),
-    user: dict = Depends(current_user),
+    user: dict[str, Any] = Depends(current_user),
     session: AsyncSession = Depends(get_session),
-) -> dict:
+) -> dict[str, Any]:
     user_id = UUID(user["user_id"])
     install_rls_listener(session, user_id)
     repo = CalendarEventRepository(session)
@@ -46,9 +47,9 @@ async def free_slots(
     duration_minutes: int,
     from_: date = Query(alias="from"),
     to: date = Query(),
-    user: dict = Depends(current_user),
+    user: dict[str, Any] = Depends(current_user),
     session: AsyncSession = Depends(get_session),
-) -> dict:
+) -> dict[str, Any]:
     user_id = UUID(user["user_id"])
     install_rls_listener(session, user_id)
     repo = CalendarEventRepository(session)
@@ -70,9 +71,9 @@ async def free_slots(
 @router.post("/events", status_code=201)
 async def create_event(
     req: CreateEventRequest,
-    user: dict = Depends(current_user),
+    user: dict[str, Any] = Depends(current_user),
     session: AsyncSession = Depends(get_session),
-) -> dict:
+) -> dict[str, Any]:
     user_id = UUID(user["user_id"])
     install_rls_listener(session, user_id)
 
@@ -107,7 +108,7 @@ async def create_event(
 @router.delete("/events/{event_id}", status_code=204)
 async def delete_event(
     event_id: UUID,
-    user: dict = Depends(current_user),
+    user: dict[str, Any] = Depends(current_user),
     session: AsyncSession = Depends(get_session),
 ) -> None:
     user_id = UUID(user["user_id"])
@@ -124,7 +125,7 @@ async def delete_event(
     await session.commit()
 
 
-def _event_to_dict(e: CalendarEvent) -> dict:
+def _event_to_dict(e: CalendarEvent) -> dict[str, Any]:
     return {
         "id": str(e.id),
         "summary": e.summary,
@@ -138,7 +139,7 @@ def _event_to_dict(e: CalendarEvent) -> dict:
     }
 
 
-async def _load_prefs(session: AsyncSession, user_id: UUID) -> dict:
+async def _load_prefs(session: AsyncSession, user_id: UUID) -> dict[str, Any]:
     row = (
         await session.execute(select(UserSetting).where(UserSetting.user_id == user_id))
     ).scalar_one_or_none()
