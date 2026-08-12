@@ -33,6 +33,7 @@
 			<a href={resolve('/')}>Dashboard</a>
 			<a href={resolve('/sync')}>Sync-Status</a>
 			<a href={resolve('/onboarding')}>Garmin verbinden</a>
+			<a href={resolve('/calendar')}>Kalender</a>
 		</div>
 		{#if data.authenticated}
 			<form method="POST" action="/auth/logout">
