@@ -30,3 +30,20 @@ export interface SyncJob {
 	started_at: string;
 	finished_at: string | null;
 }
+
+export interface CalendarEvent {
+	id: string;
+	summary: string | null;
+	description: string | null;
+	location: string | null;
+	start_at: string;
+	end_at: string;
+	all_day: boolean;
+	status: string;
+	source: string;
+}
+
+export interface FreeSlot {
+	start: string;
+	end: string;
+}
