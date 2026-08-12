@@ -4,6 +4,7 @@
 	import type { ModuleDef } from '../modules';
 	import ValueTile from './ValueTile.svelte';
 	import BarTile from './BarTile.svelte';
+	import GaugeTile from './GaugeTile.svelte';
 
 	let { result, module }: { result: MetricResult; module: ModuleDef } = $props();
 </script>
@@ -13,5 +14,5 @@
 {:else if module.form === 'bar'}
 	<BarTile {result} {module} />
 {:else if module.form === 'gauge'}
-	<div class="pending-form">{module.title} (Gauge folgt in Task 8)</div>
+	<GaugeTile {result} {module} />
 {/if}
