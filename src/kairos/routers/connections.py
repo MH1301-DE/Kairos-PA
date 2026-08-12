@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -74,6 +74,19 @@ async def _store_connection(
     kek = kek_from_settings(settings.kairos_kek)
     dek = unwrap_dek(user_row.dek_wrapped, kek)  # type: ignore[arg-type]
     credentials_enc = encrypt(token_json.encode(), dek)
+
+    # uq_connection includes external_account, so re-onboarding with another Garmin account
+    # would insert a second active row and make the sync-side lookup ambiguous
+    await session.execute(
+        update(Connection)
+        .where(
+            Connection.user_id == user_id,
+            Connection.connector == "garmin",
+            # IS DISTINCT FROM, so legacy rows with a NULL external_account are caught too
+            Connection.external_account.is_distinct_from(email),
+        )
+        .values(status="disabled")
+    )
 
     stmt = (
         insert(Connection)

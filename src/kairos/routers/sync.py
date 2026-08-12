@@ -157,13 +157,15 @@ async def _run_backfill_task(
 
 async def _build_garmin_client(session: AsyncSession, user_id: UUID) -> object | None:
     try:
+        # first() not scalar_one_or_none(): pre-existing duplicate rows must not raise here,
+        # the bare except below would turn that into an opaque "no connection" failure
         conn_row = (await session.execute(
             select(Connection).where(
                 Connection.user_id == user_id,
                 Connection.connector == "garmin",
                 Connection.status.in_(["active", "reauth_required"]),
-            )
-        )).scalar_one_or_none()
+            ).order_by(Connection.connected_at.desc(), Connection.id.desc())
+        )).scalars().first()
 
         if conn_row is None or conn_row.credentials_enc is None:
             return None
