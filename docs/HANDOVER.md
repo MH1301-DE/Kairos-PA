@@ -284,7 +284,7 @@ tests/test_metrics_*.py                # Phase-2 Metrics-Backend (siehe unten)
 | Phase 0 — Fundament | ✅ `v0.0.1-phase0` getaggt |
 | Phase 1 — Garmin-Pipeline | ~90% — API-Endpoint ✅, Hypertables ✅ (RLS-kompatibel, ohne Compression), Quality-Flag fehlt, echter Backfill-Lauf ausstehend |
 | Phase 2 — Kennzahlen & Dashboard | ✅ beide Teilpläne (Metrics-Backend, Dashboard-Frontend) auf `main` gemergt und gepusht (siehe unten) — nur echte Google-OAuth-Credentials + Produktions-Deployment-Topologie fehlen noch für einen vollen Live-Test |
-| Phase 3 — Kalender | ❌ nicht gestartet |
+| Phase 3 — Kalender | 🔄 alle 12 Tasks implementiert + reviewed, finales Whole-Branch-Review läuft — siehe unten |
 | Phase 4 — Agent | ❌ nicht gestartet |
 
 ### Was für Phase-1-Abnahme noch fehlt
@@ -450,6 +450,78 @@ Minimum für User-Test (unverändert aus ursprünglicher Phase-2-Definition):
 1. Onboarding-Seite: Garmin-E-Mail + Passwort → `connection` anlegen
 2. Sync-Status-Seite: Fortschritt des Backfills
 3. Ein einfacher Chart (Ruhepuls letzte 30 Tage)
+
+---
+
+### Phase 3 — Kalender: Fortschritt (Stand 2026-08-13)
+
+**Autonome Session** (Nutzer zeitweise nicht verfügbar/beschäftigt mit anderem, volle
+Entscheidungsfreigabe für Feinplanung + Ausführung). Design-Spec:
+`docs/superpowers/specs/2026-08-13-phase-3-kalender-design.md`. Plan-Dokument (12 Tasks):
+`docs/superpowers/plans/2026-08-13-phase-3-kalender.md`. Branch: `phase-3-kalender`.
+
+**Scope-Entscheidungen (autonom getroffen, vollständig begründet in der Design-Spec):**
+nur Google Calendar für dieses MVP (kein CalDAV — Nutzer 0 hat kein iCloud-Bedürfnis, der
+`Connector`-Vertrag ist provider-agnostisch genug für einen späteren Nachtrag); Google-
+OAuth-Token wird wiederverwendet statt eines separaten Consent-Screens — **wichtiger Fund
+beim Codelesen**: der bestehende Login-Flow (`auth/google.py`) fordert bereits den
+Kalender-Scope mit `access_type=offline`+`prompt=consent` an, verwarf den `refresh_token`
+bisher aber sofort nach der Login-Nutzung, statt ihn zu persistieren — genau diese Lücke
+wurde geschlossen (Task 2), keine neue OAuth-UI nötig; `primary_write_calendar` =
+Googles `"primary"`-Konstante (keine Auswahl-UI); kein Watch-Channel-Push (kein
+öffentlicher Webhook-Endpunkt vorhanden, gleiche Lücke wie das dokumentierte
+Produktions-Deployment-Gap) — nur `syncToken`-basiertes Fallback-Polling.
+
+**Stand: alle 12 Tasks implementiert, reviewed, committed.** Kein Task komplett ohne
+Fix-Runde durchgekommen war nicht das Ziel — zwei echte Bugs wurden während der
+Task-Reviews gefunden und in je einer Fix-Runde behoben (nicht aufgeschoben):
+- **Task 2 (Sicherheitsrelevant):** `db.add(Connection(...))` bei jedem Login hätte bei
+  jedem ZWEITEN Login mit `IntegrityError` gecrasht (`login()` fordert `prompt=consent`
+  unbedingt an, Google liefert also bei praktisch jedem Login einen `refresh_token`,
+  nicht nur beim ersten — `uq_connection`-Constraint verletzt, wiederkehrende Nutzer
+  wären ausgesperrt gewesen). Fix: `on_conflict_do_update` nach dem etablierten Muster
+  aus `connections.py`s `_store_connection` für Garmin.
+- **Task 9:** `POST /api/calendar/events`s Antwort fehlten `id`/`location`/`all_day`/
+  `status`/`source` gegenüber `GET /events`s Form — ein Widerspruch zwischen der
+  Plan-Prosa (verlangte identische Form) und dem Plan-Codebeispiel selbst. Ohne den lokalen
+  `id` hätte Task 11 (Frontend) den gerade angelegten Termin nicht referenzieren können.
+  Fix: `.returning(CalendarEvent)` + eine geteilte `_event_to_dict()`-Hilfsfunktion, die
+  beide Endpunkte nutzen — die Formen können jetzt nicht mehr auseinanderlaufen.
+
+Der letzte Task (12, Dedup-Integrationstest) bestand beim ersten echten Lauf gegen einen
+realen Postgres-Container — die Dedup-Garantie (Kairos-angelegter Termin taucht beim
+nächsten Sync nicht doppelt auf) hält über alle 9 Backend-Tasks hinweg. Der Implementer
+erweiterte den Scope proaktiv (der Plan bat selbst um einen Whole-Tree-`mypy`-Lauf "um
+Cross-File-Type-Drift zu finden") und fand+behob 11 echte `mypy --strict`-Fehler, die den
+per-Task-Checks entgangen waren, weil jeder Task nur seine eigenen neuen Dateien prüfte.
+
+**Bewusst offen gelassene Punkte** (dokumentiert, nicht übersehen — jeweils geprüft, dass
+nichts im tatsächlichen Scope dieses Plans sie erreichbar macht):
+- `upsert_kairos_event`s SET-Klausel aktualisiert nur `summary`/`description`, nicht
+  `start_at`/`end_at`/`status` — ein künftiges "Termin verschieben"-Feature würde das
+  brauchen, aber dieser Plan hat keinen PATCH/Edit-Endpunkt (trotz irreführendem
+  Task-9-Titel "propose, edit, delete" — die tatsächliche Spezifikation hatte nie ein
+  PATCH, nur POST+DELETE).
+- `DELETE /events/{id}` läuft lokal auch ohne aktive Google-Verbindung durch (setzt den
+  Termin trotzdem auf `cancelled`) — ein späterer Sync könnte ihn theoretisch
+  wiederbeleben, wenn der Google-Termin noch lebt. Kein Test in diesem Plan prüft dieses
+  Szenario.
+- Frontend: die `delete`-Action in `web/src/routes/calendar/+page.server.ts` prüft den
+  Fetch-Status nicht — ein fehlgeschlagenes Löschen wird der UI unbedingt als Erfolg
+  gemeldet. Stammt aus dem Plan-Codebeispiel selbst, nicht vom Implementer eingeführt.
+- **CI-Hinweis (nicht durch Phase 3 verursacht, vor diesem Branch bereits bestehend):**
+  `ruff check src tests` (der echte CI-Befehl) hat 21 vorbestehende `B008`-Fehler
+  (`Depends()`/`Query()` in Argument-Defaults, das Standard-FastAPI-Idiom) bereits auf
+  `main`, unabhängig verifiziert vor dieser Branch-Erstellung. Phase 3 fügt 14 weitere
+  Instanzen desselben etablierten Musters hinzu (neue `calendar.py`, neuer
+  `sync.py`-Endpunkt) — konsistent mit bestehendem Code, keine neue Abweichung. Eigentliche
+  Ursache: `pyproject.toml`s `B008`-Regel hat keine `per-file-ignores` für das
+  FastAPI-Depends-Idiom, auf das der ganze Router-Layer setzt — eine Repo-weite
+  Konfigurationsentscheidung, kein Phase-3-Defekt. Braucht eine bewusste Entscheidung
+  (Regel deaktivieren vs. ~50 Stellen einzeln mit `noqa` versehen), kein automatischer Fix.
+
+**Finales Whole-Branch-Review läuft** (opus) — danach Fix-Welle falls nötig, dann Merge
+nach `main`.
 
 ---
 
