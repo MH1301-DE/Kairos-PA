@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -84,3 +84,71 @@ async def test_get_free_slots_filters_by_min_duration() -> None:
     assert response.status_code == 200
     body = response.json()
     assert len(body["slots"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_post_event_creates_via_connector_and_persists() -> None:
+    # GoogleCalendarClient.create_event is synchronous (httpx.Client, not AsyncClient) —
+    # a MagicMock reflects that; an AsyncMock's child attrs are AsyncMock too, so calling
+    # create_event() without await (matching production) would return an unawaited coroutine.
+    mock_client = MagicMock()
+    mock_client.create_event.return_value = {"id": "google-event-1"}
+
+    with (
+        patch(
+            "kairos.routers.calendar._build_google_calendar_client",
+            new=AsyncMock(return_value=mock_client),
+        ),
+        patch(
+            "kairos.routers.calendar.GoogleCalendarConnector.write_back",
+        ) as mock_write_back,
+        patch(
+            "kairos.routers.calendar.CalendarEventRepository.upsert_kairos_event",
+            new=AsyncMock(),
+        ) as mock_upsert,
+    ):
+        from kairos.connectors.types import WriteResult
+
+        mock_write_back.return_value = WriteResult(written=1, failed=0)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/calendar/events",
+                json={
+                    "summary": "Long Run",
+                    "start_at": "2026-03-01T07:00:00+00:00",
+                    "end_at": "2026-03-01T08:30:00+00:00",
+                    "description": None,
+                },
+            )
+
+    assert response.status_code == 201
+    mock_upsert.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_post_event_returns_503_without_active_connection() -> None:
+    with patch(
+        "kairos.routers.calendar._build_google_calendar_client", new=AsyncMock(return_value=None)
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/calendar/events",
+                json={
+                    "summary": "Long Run",
+                    "start_at": "2026-03-01T07:00:00+00:00",
+                    "end_at": "2026-03-01T08:30:00+00:00",
+                    "description": None,
+                },
+            )
+    assert response.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_delete_event_returns_404_for_missing_event() -> None:
+    with patch(
+        "kairos.routers.calendar.CalendarEventRepository.get_by_id",
+        new=AsyncMock(return_value=None),
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.delete(f"/api/calendar/events/{uuid4()}")
+    assert response.status_code == 404

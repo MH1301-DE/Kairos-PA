@@ -104,6 +104,14 @@ class CalendarEventRepository:
         )
         return list(result.scalars().all())
 
+    async def get_by_id(self, user_id: UUID, event_id: UUID) -> CalendarEvent | None:
+        result = await self._session.execute(
+            select(CalendarEvent).where(
+                CalendarEvent.user_id == user_id, CalendarEvent.id == event_id
+            )
+        )
+        return result.scalar_one_or_none()
+
     async def mark_deleted(self, user_id: UUID, connector: str, external_id: str) -> None:
         await self._session.execute(
             update(CalendarEvent)
