@@ -293,7 +293,7 @@ tests/test_metrics_*.py                # Phase-2 Metrics-Backend (siehe unten)
 2. **Quality-Flag** — Plausibilitätsprüfung im Normalizer (HR < 25 oder > 230 → `suspect`)
 3. **Echter Backfill-Lauf** — 12 Monate importieren, Stichprobenvergleich mit Garmin Connect
 
-### Phase 2 — Fortschritt (Stand 2026-08-11)
+### Phase 2 — Fortschritt (Stand 2026-08-12)
 
 Phase 2 wurde in zwei unabhängige Pläne aufgeteilt, um nicht auf der Frontend-Framework-
 Entscheidung zu blockieren:
@@ -338,10 +338,57 @@ Entscheidung zu blockieren:
      vorschlagen (vorbestehend, nicht durch Phase-2-Arbeit verursacht); uneinheitliche
      Confidence-Abstufung zwischen Varianten (manche hart auf `"high"`, andere abgestuft);
      `sleep_debt_variant.py` u.ä. sind nur teilweise End-to-End getestet.
-2. **Dashboard-Frontend** — läuft. Framework-Entscheidung: **SvelteKit** (statt Next.js)
-   + ECharts, entschieden am 2026-08-10 (PWA/Web-Push-Reife wichtiger als
-   React-Grid-Layout-Ökosystem für dieses Projekt). Details zum Fortschritt: siehe unten
-   bzw. nächster Handover-Checkpoint.
+2. **Dashboard-Frontend** — läuft, **Subagent-Driven Development, autonome Session
+   (Nutzer nicht verfügbar, volle Entscheidungsfreigabe)**. Framework-Entscheidung:
+   **SvelteKit** (statt Next.js) + ECharts, entschieden am 2026-08-10 (PWA/Web-Push-Reife
+   wichtiger als React-Grid-Layout-Ökosystem für dieses Projekt). Plan-Dokument:
+   `docs/superpowers/plans/2026-08-11-dashboard-frontend.md` (14 Tasks). Branch:
+   `phase-2-dashboard-frontend`. SDD-Ledger (vollständige Historie, Fixes, Review-Funde):
+   `.superpowers/sdd/2026-08-11-dashboard-frontend/progress.md`.
+
+   **Stand: 8 von 14 Tasks fertig, alle Reviews clean, seit Task 3 kein einziger Fix-Loop
+   mehr nötig** (Task 1-3 backend/scaffold, Task 4 API-Client/Types/Auth-Guard, Task 5
+   Modul-Registry, Task 6 EChartsBase/ConfidenceBadge/ValueTile/MetricTile, Task 7 BarTile,
+   Task 8 GaugeTile). Ausstehend: Task 9 Dashboard-Seite, Task 10 Onboarding-Seite, Task 11
+   Sync-Status-Seite, Task 12 Root-Layout/Nav/Auth-Wiring, Task 13 PWA-Setup, Task 14
+   Playwright-E2E-Test — danach finales Whole-Branch-Review + Merge nach `main`.
+
+   Design-Korrekturen gegenüber dem ursprünglichen Spec-Dokument (autonom entschieden,
+   siehe Plan-Global-Constraints): `training_load`/`hrv_baseline` sind **keine** Liniendia-
+   gramme (Backend liefert nur Tages-Snapshots, kein Zeitreihen-Endpoint) — `training_load`
+   ist eine Multi-Stat-Value-Tile (CTL/ATL/TSB), `hrv_baseline` eine Gauge (heutiger Wert
+   gegen Baseline-Band, gleiche Komponente wie ACWR). ECharts-Wrapper ist handgeschrieben
+   (`EChartsBase.svelte`) statt der `svelte-echarts`-Fremdbibliothek (Svelte-5-Kompatibi-
+   litätsrisiko vermieden).
+
+   **Wiederkehrende technische Stolpersteine, gelöst und für spätere Tasks dokumentiert:**
+   - Aktuelle SvelteKit-Toolchain (`sv create` v0.17.0) hat **kein** `svelte.config.js`
+     mehr — Adapter/Preprocessor-Config liegt direkt in `vite.config.ts` als Optionen des
+     `sveltekit()`-Plugin-Aufrufs.
+   - `web/vite.config.ts`s "server"-Vitest-Projekt hatte anfangs `include: ['src/**/*...']`
+     — Tests unter `web/tests/**` (wie vom Plan vorgesehen) wurden nicht gefunden. Fix
+     (Task 4): `tests/**/*.{test,spec}.{js,ts}` zum Include hinzugefügt.
+   - Komponenten-Tests mit `@testing-library/svelte` liefen unter `environment: 'node'`
+     ins Leere (`document is not defined`). Fix (Task 6, empirisch verifiziert, nicht
+     geraten): `environment: 'jsdom'` **plus** `resolve: { conditions: ['browser'] }` (sonst
+     löst Vite Sveltes SSR-Build statt Client-Build auf) **plus** top-level `globals: true`
+     (sonst registriert sich `@testing-library/svelte`s Auto-Cleanup nicht über
+     `beforeEach`/`afterEach`). Alle drei zusammen nötig, einzeln nicht ausreichend.
+   - `EChartsBase.svelte` crasht unter jsdom mit dem Standard-Canvas-Renderer
+     (`TypeError: Cannot set properties of null (setting 'dpr')` — jsdom hat keinen echten
+     2D-Canvas-Kontext, das `canvas`-npm-Paket ist nicht installiert). Fix (Task 7): optionaler
+     `renderer?: 'canvas' | 'svg'`-Prop auf `EChartsBase` (Default `'canvas'`, abwärtskompa-
+     tibel), `BarTile`/`GaugeTile` übergeben `renderer="svg"`. **Für jede künftige
+     EChartsBase-Nutzung nötig** (in diesem Plan sind BarTile/GaugeTile die einzigen
+     Verbraucher, aber Phase 3 o.ä. sollte das nicht neu entdecken müssen).
+   - Node.js/npm-PATH-Reibung in der Bash-Tool-Session: `export PATH="/c/Program
+     Files/nodejs:$PATH"` bleibt session-intern nötig (Shell-Prozess wird einmalig beim
+     Session-Start initialisiert, `~/.bash_profile` wird von späteren Tool-Aufrufen
+     innerhalb derselben Session nicht automatisch neu eingelesen). Statt des PATH-Fixes
+     selbst wurde die **Freigabe-Reibung** behoben: Wildcard-Permission-Regeln in
+     `.claude/settings.local.json` für den Export-Präfix sowie für die SDD-Helper-Skripte
+     (`task-brief`/`review-package`/`sdd-workspace`) — vorher pro Task-Nummer/Commit-Hash-
+     Paar einzeln freigegeben, jetzt eine Wildcard-Regel je Skript.
 
 Minimum für User-Test (unverändert aus ursprünglicher Phase-2-Definition):
 1. Onboarding-Seite: Garmin-E-Mail + Passwort → `connection` anlegen
