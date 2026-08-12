@@ -5,6 +5,7 @@ import httpx
 from fastapi import APIRouter, Cookie, HTTPException
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 
 from kairos.auth.crypto import encrypt, generate_dek, kek_from_settings, unwrap_dek, wrap_dek
 from kairos.auth.session import create_session, delete_session, get_redis
@@ -103,15 +104,23 @@ async def callback(
             else:
                 dek = unwrap_dek(user.dek_wrapped, kek)
             credentials_enc = encrypt(refresh_token.encode(), dek)
-            db.add(
-                Connection(
+            # every login re-consents (prompt=consent), so this must upsert, not insert —
+            # a plain insert would raise IntegrityError on uq_connection for a returning user
+            stmt = (
+                insert(Connection)
+                .values(
                     user_id=user.id,
                     connector="google_calendar",
                     external_account=email,
                     status="active",
                     credentials_enc=credentials_enc,
                 )
+                .on_conflict_do_update(
+                    constraint="uq_connection",
+                    set_={"status": "active", "credentials_enc": credentials_enc},
+                )
             )
+            await db.execute(stmt)
             await db.commit()
 
     session_id = await create_session(user.id, email)
