@@ -2,7 +2,7 @@ import secrets
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Cookie, HTTPException
 from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import select
 
@@ -107,7 +107,7 @@ async def callback(
 
 
 @router.post("/logout")
-async def logout(session_id: str | None = None) -> JSONResponse:
+async def logout(session_id: str | None = Cookie(default=None)) -> JSONResponse:
     if session_id:
         await delete_session(session_id)
     response = JSONResponse({"ok": True})
