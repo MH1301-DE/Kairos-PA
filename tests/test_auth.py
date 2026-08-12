@@ -1,3 +1,4 @@
+import uuid
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -135,4 +136,37 @@ async def test_callback_redirects_to_frontend_root(
     assert "samesite=lax" in set_cookie
     assert "max-age=2592000" in set_cookie
     # secure flag should NOT be present since is_dev=True (development mode)
-    assert "secure" not in set_cookie or set_cookie.count("secure") == 0
+    assert "secure" not in set_cookie
+
+
+@pytest.mark.asyncio
+async def test_logout_redirects_to_root_and_clears_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    redis_stub = google_auth.get_redis()
+    # create_session/delete_session resolve get_redis through their own module
+    monkeypatch.setattr(_sess, "get_redis", lambda: redis_stub)
+
+    session_id = await _sess.create_session(uuid.uuid4(), "logout@example.com")
+    assert await _sess.get_session(session_id) is not None
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/auth/logout",
+            cookies={"session_id": session_id},
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "/"
+
+    set_cookie = response.headers.get("set-cookie", "").lower()
+    assert "session_id=" in set_cookie
+    assert "max-age=0" in set_cookie
+    assert "httponly" in set_cookie
+    assert "samesite=lax" in set_cookie
+    # secure flag should NOT be present since is_dev=True (development mode)
+    assert "secure" not in set_cookie
+
+    assert await _sess.get_session(session_id) is None
+    assert f"session:{session_id}" not in redis_stub._data

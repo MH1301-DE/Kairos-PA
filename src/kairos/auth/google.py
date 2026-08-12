@@ -3,7 +3,7 @@ from urllib.parse import urlencode
 
 import httpx
 from fastapi import APIRouter, Cookie, HTTPException
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 
 from kairos.auth.crypto import generate_dek, kek_from_settings, wrap_dek
@@ -107,9 +107,16 @@ async def callback(
 
 
 @router.post("/logout")
-async def logout(session_id: str | None = Cookie(default=None)) -> JSONResponse:
+async def logout(session_id: str | None = Cookie(default=None)) -> RedirectResponse:
     if session_id:
         await delete_session(session_id)
-    response = JSONResponse({"ok": True})
-    response.delete_cookie("session_id")
+    # nav posts a plain HTML form, so the browser follows this response — must land on a page
+    response = RedirectResponse(url="/", status_code=302)
+    # attributes must mirror the set_cookie() in callback() or browsers keep the cookie
+    response.delete_cookie(
+        "session_id",
+        httponly=True,
+        secure=not settings.is_dev,
+        samesite="lax",
+    )
     return response
