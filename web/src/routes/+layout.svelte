@@ -1,4 +1,5 @@
 <script lang="ts">
+	import '../app.css';
 	import favicon from '$lib/assets/favicon.svg';
 	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
@@ -25,29 +26,62 @@
 	{@html webManifestLink}
 </svelte:head>
 
-<nav>
-	<a href={resolve('/')}>Dashboard</a>
-	<a href={resolve('/sync')}>Sync-Status</a>
-	<a href={resolve('/onboarding')}>Garmin verbinden</a>
-	{#if data.authenticated}
-		<form method="POST" action="/auth/logout" style="display: inline;">
-			<button type="submit">Abmelden</button>
-		</form>
-	{/if}
-</nav>
+<div class="shell">
+	<nav>
+		<span class="wordmark">Kairos</span>
+		<div class="nav-links">
+			<a href={resolve('/')}>Dashboard</a>
+			<a href={resolve('/sync')}>Sync-Status</a>
+			<a href={resolve('/onboarding')}>Garmin verbinden</a>
+		</div>
+		{#if data.authenticated}
+			<form method="POST" action="/auth/logout">
+				<button type="submit" class="btn btn-ghost">Abmelden</button>
+			</form>
+		{/if}
+	</nav>
 
-<main>
-	{@render children()}
-</main>
+	<main>
+		{@render children()}
+	</main>
+</div>
 
 <style>
+	.shell {
+		min-height: 100vh;
+	}
 	nav {
 		display: flex;
-		gap: 1rem;
-		padding: 1rem;
-		border-bottom: 1px solid #e2e8f0;
+		align-items: center;
+		gap: var(--space-6);
+		padding: var(--space-4) var(--space-6);
+		border-bottom: 1px solid var(--color-border);
+	}
+	.wordmark {
+		font-family: var(--font-display);
+		font-size: var(--text-lg);
+		font-weight: 600;
+		color: var(--color-accent);
+		letter-spacing: -0.01em;
+	}
+	.nav-links {
+		display: flex;
+		gap: var(--space-5);
+		flex: 1;
+	}
+	.nav-links a {
+		color: var(--color-text-muted);
+		font-size: var(--text-sm);
+		font-weight: 500;
+	}
+	.nav-links a:hover,
+	.nav-links a:focus-visible {
+		color: var(--color-text);
+		text-decoration: none;
 	}
 	main {
-		padding: 1rem;
+		padding: var(--space-6);
+		max-width: 72rem;
+		margin: 0 auto;
 	}
 </style>

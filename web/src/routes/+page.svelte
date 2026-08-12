@@ -26,12 +26,6 @@
 	.tile-grid {
 		display: grid;
 		grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-		gap: 1rem;
-	}
-	.tile-error {
-		border: 1px solid #fecaca;
-		border-radius: 0.5rem;
-		padding: 1rem;
-		color: #b91c1c;
+		gap: var(--space-4);
 	}
 </style>

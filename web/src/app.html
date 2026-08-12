@@ -4,6 +4,26 @@
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<meta name="text-scale" content="scale" />
+		<meta name="theme-color" content="#14161c" />
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
+		<!--
+			Loaded non-render-blocking: media="print" doesn't match screen rendering,
+			so the browser fetches it without holding up first paint/hydration, then
+			the onload flips it to media="all" once it's actually ready.
+		-->
+		<link
+			rel="stylesheet"
+			href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"
+			media="print"
+			onload="this.media = 'all'"
+		/>
+		<noscript>
+			<link
+				rel="stylesheet"
+				href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"
+			/>
+		</noscript>
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">

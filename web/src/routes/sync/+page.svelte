@@ -10,28 +10,42 @@
 <h1>Sync-Status</h1>
 
 {#if !garminConnection}
-	<p>Keine Garmin-Verbindung. <a href={resolve('/onboarding')}>Jetzt einrichten</a></p>
+	<div class="tile">
+		<p>Keine Garmin-Verbindung.</p>
+		<a href={resolve('/onboarding')} class="btn btn-primary">Jetzt einrichten</a>
+	</div>
 {:else}
-	<p>Garmin: {garminConnection.status} ({garminConnection.external_account})</p>
+	<p class="connection-line">
+		Garmin: <span class="figure">{garminConnection.status}</span>
+		({garminConnection.external_account})
+	</p>
 
-	<table>
-		<thead>
-			<tr>
-				<th>Kind</th>
-				<th>Status</th>
-				<th>Verarbeitete Fenster</th>
-				<th>Fehler</th>
-			</tr>
-		</thead>
-		<tbody>
-			{#each data.jobs as job (job.job_id)}
+	<div class="tile">
+		<table>
+			<thead>
 				<tr>
-					<td>{job.kind}</td>
-					<td>{job.status}</td>
-					<td>{job.windows_processed}</td>
-					<td>{job.error ?? '–'}</td>
+					<th>Kind</th>
+					<th>Status</th>
+					<th>Verarbeitete Fenster</th>
+					<th>Fehler</th>
 				</tr>
-			{/each}
-		</tbody>
-	</table>
+			</thead>
+			<tbody>
+				{#each data.jobs as job (job.job_id)}
+					<tr>
+						<td>{job.kind}</td>
+						<td>{job.status}</td>
+						<td>{job.windows_processed}</td>
+						<td>{job.error ?? '–'}</td>
+					</tr>
+				{/each}
+			</tbody>
+		</table>
+	</div>
 {/if}
+
+<style>
+	.connection-line {
+		color: var(--color-text-muted);
+	}
+</style>

@@ -65,7 +65,11 @@ test.describe('onboarding', () => {
 			status: 401,
 			body: { detail: 'invalid_credentials' }
 		}));
-		await page.goto('/onboarding');
+		// SvelteKit dev mode serves the JS module graph unbundled (dozens of
+		// small requests); `goto()` only waits for the HTML shell, so clicking
+		// immediately after can race `use:enhance` attaching to the form.
+		// `networkidle` gives hydration a real settle point before we interact.
+		await page.goto('/onboarding', { waitUntil: 'networkidle' });
 		await page.fill('input[name=email]', 'wrong@example.com');
 		await page.fill('input[name=password]', 'wrongpass');
 		// scoped to the onboarding form: the layout nav also renders a
@@ -81,7 +85,7 @@ test.describe('onboarding', () => {
 				? { status: 202, body: { status: 'mfa_required' } }
 				: { status: 201, body: { status: 'connected' } }
 		);
-		await page.goto('/onboarding');
+		await page.goto('/onboarding', { waitUntil: 'networkidle' });
 		await page.fill('input[name=email]', 'user@example.com');
 		await page.fill('input[name=password]', 'correctpass');
 		await page.locator('main form button[type=submit]').click();

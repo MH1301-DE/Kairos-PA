@@ -21,7 +21,7 @@
 	});
 </script>
 
-<div class="bar-tile">
+<div class="tile bar-tile">
 	<h3>{module.title}</h3>
 	{#if result.confidence === 'insufficient_data' || option === null}
 		<p class="empty">Nicht genug Daten</p>
@@ -30,14 +30,3 @@
 	{/if}
 	<ConfidenceBadge confidence={result.confidence} />
 </div>
-
-<style>
-	.bar-tile {
-		border: 1px solid #e2e8f0;
-		border-radius: 0.5rem;
-		padding: 1rem;
-	}
-	.empty {
-		color: #94a3b8;
-	}
-</style>

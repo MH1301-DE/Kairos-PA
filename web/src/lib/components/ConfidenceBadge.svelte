@@ -15,17 +15,12 @@
 </script>
 
 {#if label}
-	<span data-testid="confidence-badge" class="confidence-badge confidence-{confidence}">
+	<span
+		data-testid="confidence-badge"
+		class="badge confidence-badge confidence-{confidence}"
+		class:badge-warning={confidence === 'medium'}
+		class:badge-danger={confidence === 'low'}
+	>
 		Konfidenz: {label}
 	</span>
 {/if}
-
-<style>
-	.confidence-badge {
-		font-size: 0.75rem;
-		padding: 0.1rem 0.4rem;
-		border-radius: 0.25rem;
-		background: #fef3c7;
-		color: #92400e;
-	}
-</style>
