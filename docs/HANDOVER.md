@@ -283,7 +283,7 @@ tests/test_metrics_*.py                # Phase-2 Metrics-Backend (siehe unten)
 |---|---|
 | Phase 0 — Fundament | ✅ `v0.0.1-phase0` getaggt |
 | Phase 1 — Garmin-Pipeline | ~90% — API-Endpoint ✅, Hypertables ✅ (RLS-kompatibel, ohne Compression), Quality-Flag fehlt, echter Backfill-Lauf ausstehend |
-| Phase 2 — Kennzahlen & Dashboard | 🔄 in Arbeit — Metrics-Backend ✅ auf `main` gemergt, Dashboard-Frontend-Teilplan läuft (siehe unten) |
+| Phase 2 — Kennzahlen & Dashboard | ✅ beide Teilpläne (Metrics-Backend, Dashboard-Frontend) auf `main` gemergt und gepusht (siehe unten) — nur echte Google-OAuth-Credentials + Produktions-Deployment-Topologie fehlen noch für einen vollen Live-Test |
 | Phase 3 — Kalender | ❌ nicht gestartet |
 | Phase 4 — Agent | ❌ nicht gestartet |
 
@@ -338,25 +338,69 @@ Entscheidung zu blockieren:
      vorschlagen (vorbestehend, nicht durch Phase-2-Arbeit verursacht); uneinheitliche
      Confidence-Abstufung zwischen Varianten (manche hart auf `"high"`, andere abgestuft);
      `sleep_debt_variant.py` u.ä. sind nur teilweise End-to-End getestet.
-2. **Dashboard-Frontend** — läuft, **Subagent-Driven Development, autonome Session
-   (Nutzer nicht verfügbar, volle Entscheidungsfreigabe)**. Framework-Entscheidung:
-   **SvelteKit** (statt Next.js) + ECharts, entschieden am 2026-08-10 (PWA/Web-Push-Reife
-   wichtiger als React-Grid-Layout-Ökosystem für dieses Projekt). Plan-Dokument:
-   `docs/superpowers/plans/2026-08-11-dashboard-frontend.md` (14 Tasks). Branch:
-   `phase-2-dashboard-frontend`. SDD-Ledger (vollständige Historie, Fixes, Review-Funde):
-   `.superpowers/sdd/2026-08-11-dashboard-frontend/progress.md`.
+2. **Dashboard-Frontend** — ✅ **fertig, alle 14 Tasks + finales Whole-Branch-Review +
+   Fix-Welle (2 parallele Agenten, Backend/Frontend getrennt) + Re-Review gemergt nach
+   `main` und gepusht** (Commit `aa88219`, Branch `phase-2-dashboard-frontend` nach Merge
+   gelöscht, SDD-Workspace aufgeräumt). **Autonome Session** (Nutzer zeitweise nicht
+   verfügbar, volle Entscheidungsfreigabe für alle 14 Tasks + Review-Zyklus).
+   Framework-Entscheidung: **SvelteKit** (statt Next.js) + ECharts, entschieden am
+   2026-08-10 (PWA/Web-Push-Reife wichtiger als React-Grid-Layout-Ökosystem für dieses
+   Projekt). Plan-Dokument (als Referenz erhalten):
+   `docs/superpowers/plans/2026-08-11-dashboard-frontend.md`.
 
-   **Stand: alle 14 Tasks fertig implementiert, reviewed, committed — kein einziger
-   formaler Fix-Loop über die gesamte Ausführung nötig** (Tasks 1-14, siehe Ledger für
-   Details). Selbst unabhängig nachverifiziert (nicht nur den Task-Reports vertraut):
-   Backend `105 passed, 0 failed, 0 skipped` (Docker lief), Frontend Unit/Component
-   `6 files, 17 tests passed`, Playwright E2E `2 passed`. **Finales Whole-Branch-Review
-   (opus, wie bei Metrics-Backend) läuft aktuell** — danach Fix-Welle falls nötig, dann
-   Merge nach `main` via `superpowers:finishing-a-development-branch`.
+   Kein einziger formaler Task-Fix-Loop über alle 14 Tasks nötig — aber das finale
+   Whole-Branch-Review (opus) fand trotzdem 1 Critical + 9 Important, ausschließlich
+   Kompositionsfehler zwischen einzeln korrekten Tasks, die kein Einzel-Review sehen
+   konnte (gleiche Lektion wie beim Metrics-Backend-Plan, siehe oben — bestätigt sich
+   zum zweiten Mal in Folge):
+   - **Critical:** PWA-Plugin generierte Manifest/Service-Worker, aber nichts in der App
+     hat sie verlinkt/registriert — nie installierbar, SW lief nie. Fix:
+     `virtual:pwa-info`/`virtual:pwa-register` in `+layout.svelte` verdrahtet; beim
+     Verifizieren einen ZWEITEN echten Bug gefunden (relative statt absolute
+     Manifest/SW-URLs, 404 auf jeder Nicht-Root-Route) — behoben mit `base:'/'`+`scope:'/'`.
+   - Ungültiges/abgelaufenes `session_id`-Cookie brachte die App ohne Rückweg zum
+     Stillstand (Guard prüft nur Präsenz, Backend prüft Gültigkeit) — Fix: 401 gezielt
+     abfangen und zu `/auth/login` redirecten.
+   - `/auth/logout` gab rohes JSON zurück statt zu redirecten — Nutzer landete auf
+     `{"ok":true}` ohne Rückweg.
+   - Garmin-Passwort wurde beim MFA-Retry im Klartext ins DOM zurückgespiegelt (verstecktes
+     Formularfeld) — Fix: Passwort wird nicht mehr zurückgegeben, Nutzer tippt es beim
+     Retry neu ein.
+   - Erneutes Onboarding mit anderem Garmin-Konto legte eine zweite aktive
+     `connection`-Zeile an (Unique-Constraint ist `(user_id, connector, external_account)`,
+     nicht `(user_id, connector)`) — `MultipleResultsFound` wurde von einem `bare except`
+     verschluckt, Sync schlug danach dauerhaft und ohne Diagnose fehl. Fix (nur
+     Anwendungsebene, keine Migration): alte Garmin-Zeilen vor dem Upsert deaktivieren
+     (`is_distinct_from` für NULL-Sicherheit), Lesepfad tolerant gegen Altbestände
+     (`order_by(connected_at.desc())`).
+   - E2E-Test-Stub belegte Port 8000 fest — Kollision mit dem echten lokalen Backend.
+     Fix: konfigurierbares `KAIROS_API_PROXY_TARGET`, Test-Stub auf Port 8791.
+   - Das Ledger hatte fälschlich behauptet, es gäbe kein docker-compose — tatsächlich
+     existiert `deploy/docker-compose.dev.yml` (nur Postgres+Redis, kein `web`/`caddy`).
+     Dadurch wurden 4 Tasks' manuelle Verifikationsschritte übersprungen, am teuersten für
+     den ungetesteten Logout-Fix.
+   - `apiPost` parste JSON ungeschützt (Backend-Ausfall → Crash statt Fehlermeldung);
+     Charts hatten kein Resize; mehrere Minor-Funde (echarts `^6` statt `^5`, `lang="en"`,
+     GaugeTile Div-durch-Null-Risiko, u.a.).
+   Alle Findings unabhängig im Re-Review bestätigt behoben (nicht nur den Fix-Reports
+   vertraut) — inklusive Live-Verifikation der PWA-Fix gegen einen echten
+   `npm run preview`-Server auf einer verschachtelten Route, nicht nur `/`.
 
-   Bemerkenswerte Funde während der Task-Reviews (alle bereits behoben, siehe Ledger für
-   Details): eine SvelteKit-Serialisierungs-Falle (Funktionen können nicht über die
-   server→client `load()`-Grenze), ein Svelte-`{#each}`-Duplicate-Key-Risiko bei
+   **Bewusst offen gelassen** (dokumentiert, nicht übersehen): Bestehende
+   Garmin-Doppel-Zeilen in einer realen DB werden nicht automatisch repariert (kein
+   Migrations-Versuch); `_build_garmin_client`s `bare except Exception` verschluckt
+   weiterhin den echten Fehlertyp (nächster sinnvoller Folge-Fix: `logger.exception(...)`
+   statt stillem `return None`); 401→Redirect-Fix hat keinen automatisierten Test (nur
+   Code-Lesen + eine manuelle Live-Prüfung); **Produktions-Deployment (Caddyfile,
+   `web/Dockerfile`, `api`-Dockerfile, `ORIGIN`-Env-Wiring) existiert noch nicht** —
+   `deploy/docker-compose.yml` referenziert sie, aber die Dateien selbst fehlen. Braucht
+   einen eigenen Folge-Task/Plan, bevor die Same-Origin-Cookie-Architektur produktiv
+   getestet werden kann.
+
+   Bemerkenswerte Funde während der einzelnen Task-Reviews (vor dem finalen Review,
+   alle bereits damals behoben): eine SvelteKit-Serialisierungs-Falle (Funktionen können
+   nicht über die server→client `load()`-Grenze), ein Svelte-`{#each}`-Duplicate-Key-Risiko
+   bei
    Sync-Jobs (jetzt auf `job_id` statt `kind` geschlüsselt), ein echter
    Backend-Sicherheitsbug (`/auth/logout` invalidierte die Session serverseitig nie,
    da `session_id` implizit als Query-Parameter statt aus dem Cookie gelesen wurde —
