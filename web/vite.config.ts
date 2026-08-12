@@ -22,6 +22,7 @@ export default defineConfig({
 	},
 	test: {
 		expect: { requireAssertions: true },
+		globals: true,
 		projects: [
 			{
 				extends: './vite.config.ts',
@@ -39,9 +40,10 @@ export default defineConfig({
 
 			{
 				extends: './vite.config.ts',
+				resolve: { conditions: ['browser'] },
 				test: {
 					name: 'server',
-					environment: 'node',
+					environment: 'jsdom',
 					include: ['src/**/*.{test,spec}.{js,ts}', 'tests/**/*.{test,spec}.{js,ts}'],
 					exclude: ['src/**/*.svelte.{test,spec}.{js,ts}']
 				}
