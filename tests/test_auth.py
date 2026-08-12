@@ -128,3 +128,11 @@ async def test_callback_redirects_to_frontend_root(
     assert response.status_code == 302
     assert response.headers["location"] == "/"
     assert "session_id" in response.cookies
+
+    # Verify cookie security attributes via Set-Cookie header
+    set_cookie = response.headers.get("set-cookie", "").lower()
+    assert "httponly" in set_cookie
+    assert "samesite=lax" in set_cookie
+    assert "max-age=2592000" in set_cookie
+    # secure flag should NOT be present since is_dev=True (development mode)
+    assert "secure" not in set_cookie or set_cookie.count("secure") == 0
