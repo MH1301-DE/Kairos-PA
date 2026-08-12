@@ -346,12 +346,24 @@ Entscheidung zu blockieren:
    `phase-2-dashboard-frontend`. SDD-Ledger (vollständige Historie, Fixes, Review-Funde):
    `.superpowers/sdd/2026-08-11-dashboard-frontend/progress.md`.
 
-   **Stand: 8 von 14 Tasks fertig, alle Reviews clean, seit Task 3 kein einziger Fix-Loop
-   mehr nötig** (Task 1-3 backend/scaffold, Task 4 API-Client/Types/Auth-Guard, Task 5
-   Modul-Registry, Task 6 EChartsBase/ConfidenceBadge/ValueTile/MetricTile, Task 7 BarTile,
-   Task 8 GaugeTile). Ausstehend: Task 9 Dashboard-Seite, Task 10 Onboarding-Seite, Task 11
-   Sync-Status-Seite, Task 12 Root-Layout/Nav/Auth-Wiring, Task 13 PWA-Setup, Task 14
-   Playwright-E2E-Test — danach finales Whole-Branch-Review + Merge nach `main`.
+   **Stand: alle 14 Tasks fertig implementiert, reviewed, committed — kein einziger
+   formaler Fix-Loop über die gesamte Ausführung nötig** (Tasks 1-14, siehe Ledger für
+   Details). Selbst unabhängig nachverifiziert (nicht nur den Task-Reports vertraut):
+   Backend `105 passed, 0 failed, 0 skipped` (Docker lief), Frontend Unit/Component
+   `6 files, 17 tests passed`, Playwright E2E `2 passed`. **Finales Whole-Branch-Review
+   (opus, wie bei Metrics-Backend) läuft aktuell** — danach Fix-Welle falls nötig, dann
+   Merge nach `main` via `superpowers:finishing-a-development-branch`.
+
+   Bemerkenswerte Funde während der Task-Reviews (alle bereits behoben, siehe Ledger für
+   Details): eine SvelteKit-Serialisierungs-Falle (Funktionen können nicht über die
+   server→client `load()`-Grenze), ein Svelte-`{#each}`-Duplicate-Key-Risiko bei
+   Sync-Jobs (jetzt auf `job_id` statt `kind` geschlüsselt), ein echter
+   Backend-Sicherheitsbug (`/auth/logout` invalidierte die Session serverseitig nie,
+   da `session_id` implizit als Query-Parameter statt aus dem Cookie gelesen wurde —
+   auf das etablierte `Cookie(default=None)`-Muster aus `deps.py` korrigiert), und ein
+   grundlegend fehlerhafter E2E-Mocking-Ansatz (`page.route()` kann serverseitig
+   ausgelöste Fetches aus einer SvelteKit-Form-Action nicht abfangen — durch einen
+   `node:http`-Stub-Server auf Port 8000 ersetzt).
 
    Design-Korrekturen gegenüber dem ursprünglichen Spec-Dokument (autonom entschieden,
    siehe Plan-Global-Constraints): `training_load`/`hrv_baseline` sind **keine** Liniendia-
