@@ -1,6 +1,7 @@
 <!-- web/src/routes/onboarding/+page.svelte -->
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { resolve } from '$app/paths';
 	import type { ActionData } from './$types';
 
 	let { form }: { form: ActionData } = $props();
@@ -11,8 +12,7 @@
 {#if form?.success}
 	<p class="success">
 		Verbunden mit {form.email}.
-		<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- /sync route lands in a later task -->
-		<a href="/sync">Zum Sync-Status</a>
+		<a href={resolve('/sync')}>Zum Sync-Status</a>
 	</p>
 {:else}
 	<form method="POST" use:enhance>

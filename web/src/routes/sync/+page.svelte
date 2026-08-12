@@ -24,7 +24,7 @@
 			</tr>
 		</thead>
 		<tbody>
-			{#each data.jobs as job (job.kind)}
+			{#each data.jobs as job (job.job_id)}
 				<tr>
 					<td>{job.kind}</td>
 					<td>{job.status}</td>
