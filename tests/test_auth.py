@@ -1,9 +1,12 @@
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 import kairos.auth.session as _sess
-from kairos.auth import google as google_auth
 from kairos.api import app
+from kairos.auth import google as google_auth
+from kairos.db import models
 
 
 class _MemoryRedis:
@@ -64,3 +67,64 @@ async def test_callback_rejects_invalid_state() -> None:
         response = await client.get("/auth/callback?code=abc&state=invalid-state")
     assert response.status_code == 400
     assert response.json()["detail"] == "invalid_state"
+
+
+@pytest.mark.asyncio
+async def test_callback_redirects_to_frontend_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Set up a valid state in Redis
+    redis_stub = google_auth.get_redis()
+    state = "valid-test-state"
+    await redis_stub.set(f"oauth_state:{state}", "1", ex=600)
+
+    # Mock httpx.AsyncClient responses for token and userinfo
+    mock_token_resp = AsyncMock()
+    mock_token_resp.json = lambda: {"access_token": "test-token"}
+    mock_token_resp.raise_for_status = lambda: None
+
+    mock_info_resp = AsyncMock()
+    mock_info_resp.json = lambda: {
+        "sub": "google-sub-123",
+        "email": "test@example.com",
+        "name": "Test User",
+    }
+    mock_info_resp.raise_for_status = lambda: None
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=mock_token_resp)
+    mock_client.get = AsyncMock(return_value=mock_info_resp)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    monkeypatch.setattr(google_auth, "httpx", AsyncMock(AsyncClient=lambda: mock_client))
+
+    # Mock database session
+    mock_user = MagicMock(spec=models.AppUser)
+    mock_user.id = 123
+    mock_user.email = "test@example.com"
+    mock_user.google_sub = "google-sub-123"
+
+    mock_db = AsyncMock()
+    mock_db.execute = AsyncMock()
+    mock_db.execute.return_value.scalar_one_or_none = lambda: None  # New user
+    mock_db.add = MagicMock()
+    mock_db.commit = AsyncMock()
+    mock_db.refresh = AsyncMock()
+    mock_db.__aenter__ = AsyncMock(return_value=mock_db)
+    mock_db.__aexit__ = AsyncMock(return_value=None)
+
+    monkeypatch.setattr(google_auth, "async_session_factory", lambda: mock_db)
+
+    # Mock session creation
+    monkeypatch.setattr(google_auth, "create_session", AsyncMock(return_value="test-session-id"))
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(
+            f"/auth/callback?code=test-code&state={state}",
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "/"
+    assert "session_id" in response.cookies

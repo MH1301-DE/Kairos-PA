@@ -41,7 +41,7 @@ async def callback(
     state: str,
     code: str | None = None,
     error: str | None = None,
-) -> JSONResponse:
+) -> RedirectResponse:
     if error:
         raise HTTPException(status_code=400, detail=f"google_error:{error}")
     if not code:
@@ -94,7 +94,7 @@ async def callback(
             await db.refresh(user)
 
     session_id = await create_session(user.id, email)
-    response = JSONResponse({"ok": True, "email": email})
+    response = RedirectResponse(url="/", status_code=302)
     response.set_cookie(
         "session_id",
         session_id,
