@@ -1,5 +1,5 @@
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, time
 from typing import Any
 
 from sqlalchemy import (
@@ -14,6 +14,7 @@ from sqlalchemy import (
     LargeBinary,
     SmallInteger,
     Text,
+    Time,
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -56,6 +57,10 @@ class UserSetting(Base):
     resting_hr_override: Mapped[int | None] = mapped_column(SmallInteger)
     hr_max_override: Mapped[int | None] = mapped_column(SmallInteger)
     sleep_target_hours: Mapped[float] = mapped_column(Float, nullable=False, default=8.0)
+    work_hours_start: Mapped[time | None] = mapped_column(Time)
+    work_hours_end: Mapped[time | None] = mapped_column(Time)
+    calendar_buffer_minutes: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=15)
+    min_free_block_minutes: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=30)
 
     __table_args__ = (
         CheckConstraint("sex IN ('male', 'female')", name="user_setting_sex_check"),
@@ -90,6 +95,41 @@ class Connection(Base):
             name="connection_status_check",
         ),
         UniqueConstraint("user_id", "connector", "external_account", name="uq_connection"),
+    )
+
+
+class CalendarEvent(Base):
+    __tablename__ = "calendar_event"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app_user.id", ondelete="CASCADE"), nullable=False
+    )
+    connector: Mapped[str] = mapped_column(Text, nullable=False)
+    external_id: Mapped[str] = mapped_column(Text, nullable=False)
+    calendar_id: Mapped[str] = mapped_column(Text, nullable=False, default="primary")
+    summary: Mapped[str | None] = mapped_column(Text)
+    description: Mapped[str | None] = mapped_column(Text)
+    location: Mapped[str | None] = mapped_column(Text)
+    start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    end_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    all_day: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="confirmed")
+    source: Mapped[str] = mapped_column(Text, nullable=False, default="external")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "connector", "external_id", name="uq_calendar_event"),
+        CheckConstraint(
+            "status IN ('confirmed', 'tentative', 'cancelled')",
+            name="calendar_event_status_check",
+        ),
+        CheckConstraint("source IN ('external', 'kairos')", name="calendar_event_source_check"),
     )
 
 
