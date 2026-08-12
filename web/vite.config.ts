@@ -66,7 +66,9 @@ export default defineConfig({
 					name: 'server',
 					environment: 'jsdom',
 					include: ['src/**/*.{test,spec}.{js,ts}', 'tests/**/*.{test,spec}.{js,ts}'],
-					exclude: ['src/**/*.svelte.{test,spec}.{js,ts}']
+					// tests/e2e runs under Playwright, not vitest — its test.describe() call
+					// throws when collected outside a Playwright runner
+					exclude: ['src/**/*.svelte.{test,spec}.{js,ts}', 'tests/e2e/**']
 				}
 			}
 		]
