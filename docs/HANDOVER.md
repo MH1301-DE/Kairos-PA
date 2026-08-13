@@ -284,7 +284,7 @@ tests/test_metrics_*.py                # Phase-2 Metrics-Backend (siehe unten)
 | Phase 0 — Fundament | ✅ `v0.0.1-phase0` getaggt |
 | Phase 1 — Garmin-Pipeline | ~90% — API-Endpoint ✅, Hypertables ✅ (RLS-kompatibel, ohne Compression), Quality-Flag fehlt, echter Backfill-Lauf ausstehend |
 | Phase 2 — Kennzahlen & Dashboard | ✅ beide Teilpläne (Metrics-Backend, Dashboard-Frontend) auf `main` gemergt und gepusht (siehe unten) — nur echte Google-OAuth-Credentials + Produktions-Deployment-Topologie fehlen noch für einen vollen Live-Test |
-| Phase 3 — Kalender | 🔄 alle 12 Tasks implementiert + reviewed, finales Whole-Branch-Review läuft — siehe unten |
+| Phase 3 — Kalender | ✅ alle 12 Tasks + Whole-Branch-Review + Fix-Welle + Re-Review clean, Merge nach main folgt — siehe unten |
 | Phase 4 — Agent | ❌ nicht gestartet |
 
 ### Was für Phase-1-Abnahme noch fehlt
@@ -506,9 +506,6 @@ nichts im tatsächlichen Scope dieses Plans sie erreichbar macht):
   Termin trotzdem auf `cancelled`) — ein späterer Sync könnte ihn theoretisch
   wiederbeleben, wenn der Google-Termin noch lebt. Kein Test in diesem Plan prüft dieses
   Szenario.
-- Frontend: die `delete`-Action in `web/src/routes/calendar/+page.server.ts` prüft den
-  Fetch-Status nicht — ein fehlgeschlagenes Löschen wird der UI unbedingt als Erfolg
-  gemeldet. Stammt aus dem Plan-Codebeispiel selbst, nicht vom Implementer eingeführt.
 - **CI-Hinweis (nicht durch Phase 3 verursacht, vor diesem Branch bereits bestehend):**
   `ruff check src tests` (der echte CI-Befehl) hat 21 vorbestehende `B008`-Fehler
   (`Depends()`/`Query()` in Argument-Defaults, das Standard-FastAPI-Idiom) bereits auf
@@ -519,9 +516,55 @@ nichts im tatsächlichen Scope dieses Plans sie erreichbar macht):
   FastAPI-Depends-Idiom, auf das der ganze Router-Layer setzt — eine Repo-weite
   Konfigurationsentscheidung, kein Phase-3-Defekt. Braucht eine bewusste Entscheidung
   (Regel deaktivieren vs. ~50 Stellen einzeln mit `noqa` versehen), kein automatischer Fix.
+- `upsert_kairos_event`s SET-Klausel (s.o.) und `_apply_work_hours`s Multi-Tage-Verhalten
+  im Whole-Branch-Review erneut geprüft — beide Rulings halten, weiterhin unerreichbar
+  im tatsächlichen Scope dieses Plans.
+- `app_user` trägt ebenfalls `FORCE ROW LEVEL SECURITY` mit einer `current_user_id`-Policy,
+  aber die ERSTE DB-Session in `auth/google.py`s `callback()` (der `AppUser`-Lookup) kann
+  keinen RLS-Listener anhängen — die `user_id` ist an dieser Stelle noch nicht bekannt
+  (Henne-Ei-Problem). Der `connection`-Schreibzugriff (s.u.) ist jetzt least-privilege-sicher,
+  der `callback()`-Flow als Ganzes braucht aber weiterhin die Superuser-DB-Rolle. Eigenes
+  künftiges Ticket, außerhalb des Phase-3-Scopes.
+- Freie-Slots-Vorschlag begrenzt auf max. 20 Kandidaten pro freiem Block (Sicherheitsventil
+  gegen degenerierte Vorschlagslisten bei sehr langen freien Blöcken) — keine UI-Anzeige,
+  falls mehr verfügbar wäre. `duration_minutes` hat keine `gt=0`-Validierung.
 
-**Finales Whole-Branch-Review läuft** (opus) — danach Fix-Welle falls nötig, dann Merge
-nach `main`.
+**Finales Whole-Branch-Review (opus, Diff `6b4e639..95a9c9f`):** fand 1 Critical + 6
+Important + 8 Minor Findings, alle Nahtstellen-Bugs zwischen Tasks, die kein einzelnes
+Task-Review sehen konnte:
+- **Critical:** `/free-slots` gab rohe freie Zeitblöcke zurück (können tagelang sein) statt
+  auf die angefragte Dauer zugeschnittener Kandidaten-Slots — die Bestätigen-Aktion postete
+  diese ungeprüft weiter an `POST /events`. Eine 60-Minuten-Anfrage hätte einen mehrtägigen
+  Termin in den echten Google-Kalender des Nutzers geschrieben. Die zentrale User-Story der
+  Phase, an einer Nahtstelle gebrochen.
+- **Important (6):** ungeschützter `KeyError` bei Google-4xx in `POST /events`; drei
+  blockierende `httpx`-Aufrufe liefen direkt im Event-Loop statt via `asyncio.to_thread`
+  (etabliertes Muster in `ingestion/service.py`/`connections.py`); `list_events` ohne
+  `singleEvents=true` (wiederkehrende Termine wurden im Busy-Set unterzählt) und ohne
+  Pagination (Kalender mit >250 Terminen wurden stillschweigend abgeschnitten); kein
+  UI-Pfad löste je einen Google-Calendar-Sync aus (`/calendar` blieb dauerhaft leer); **der
+  OAuth-Callback schrieb `connection` (FORCE-RLS-Tabelle) ohne `install_rls_listener`** —
+  aktuell nur folgenlos, weil die App-DB-Rolle Superuser ist, hätte unter einer
+  Least-Privilege-Rolle den Login komplett gebrochen; drei einzeln geparkte Findings aus
+  Tasks 4/9/11 setzten sich zu einem echten Bug zusammen (gelöschte Termine tauchten nach
+  dem nächsten Sync wieder auf).
+
+**Eine Fix-Welle** (opus, Brief mit exaktem Ziel-Code je Finding) behob alle 7
+Critical/Important-Findings in Commit `0a448d1`. Tests 142→144 (2 neue: Slot-Slicing-
+Dauerprüfung, `list_events`-Pagination), `npm run check` weiterhin 472/0/0, `npm test:unit`
+weiterhin 20 bestanden. Zwei Task-2-Auth-Tests mussten umgeschrieben werden (der echte
+RLS-Listener kann nicht an ein `AsyncMock` andocken) — beide wurden dabei verschärft, nicht
+abgeschwächt (prüfen jetzt zusätzlich `install_rls_listener`s Aufrufargumente).
+
+**Ein skopiertes Re-Review** (opus, Diff `7dd97ae..0a448d1`) verifizierte jeden der 7 Fixes
+einzeln von Hand gegen den Quellcode (nicht nur den Fix-Report vertraut) — insbesondere die
+RLS-Listener-Anhänge-Reihenfolge vor Transaktionsbeginn, `dek_wrapped`-Persistenz über den
+Session-Split hinweg, und die Pagination-Schleife auf Leck-Freiheit. Verdict: **clean —
+ready to merge**, keine neuen Probleme eingeführt. Drei nicht-blockierende Folgepunkte
+notiert (s.o., in die "bewusst offen gelassene Punkte" eingearbeitet).
+
+**Nächster Schritt:** Merge nach `main` (lokal, Tests auf dem gemergten Ergebnis erneut
+grün verifizieren vor dem Push — etabliertes Muster aus der Dashboard-Frontend-Phase).
 
 ---
 
