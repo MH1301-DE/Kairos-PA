@@ -284,8 +284,8 @@ tests/test_metrics_*.py                # Phase-2 Metrics-Backend (siehe unten)
 | Phase 0 — Fundament | ✅ `v0.0.1-phase0` getaggt |
 | Phase 1 — Garmin-Pipeline | ~90% — API-Endpoint ✅, Hypertables ✅ (RLS-kompatibel, ohne Compression), Quality-Flag fehlt, echter Backfill-Lauf ausstehend |
 | Phase 2 — Kennzahlen & Dashboard | ✅ beide Teilpläne (Metrics-Backend, Dashboard-Frontend) auf `main` gemergt und gepusht (siehe unten) — nur echte Google-OAuth-Credentials + Produktions-Deployment-Topologie fehlen noch für einen vollen Live-Test |
-| Phase 3 — Kalender | ✅ alle 12 Tasks + Whole-Branch-Review + Fix-Welle + Re-Review clean, Merge nach main folgt — siehe unten |
-| Phase 4 — Agent | ❌ nicht gestartet |
+| Phase 3 — Kalender | ✅ auf `main` gemergt und gepusht (Commit `67fce04`) — siehe unten |
+| Phase 4 — Agent | 🔄 Brainstorming läuft (dialogisch, Nutzer aktiv im Gespräch) — siehe unten |
 
 ### Was für Phase-1-Abnahme noch fehlt
 
@@ -624,3 +624,49 @@ docker compose up -d        # Postgres+Timescale, Redis
 ```
 garmin_tokens_smoke.json  # .gitignore — Token für Smoke-Tests
 ```
+
+---
+
+### Phase 4 — Agent: Brainstorming-Stand (2026-08-13)
+
+**Wichtig für die nächste Session: das hier ist eine DIALOGISCHE Brainstorming-Session,
+keine autonome Feinplanung.** Der Nutzer war aktiv im Gespräch (im Unterschied zu Phase 3,
+wo er abwesend war und die `superpowers:brainstorming`-Session vollautonom ohne Rückfragen
+lief). Wenn eine neue Session das hier fortsetzt: `superpowers:brainstorming` erneut
+aufrufen und den Dialog fortsetzen, NICHT einfach selbst entscheiden.
+
+**Bereits getroffene Entscheidung (überschreibt eine veraltete Doku-Annahme):**
+`docs/00-vision-und-scope.md` Zeile 129 sagt bisher "LLM-Zugang: API-basiert (Anthropic
+Claude), kein lokales Modell" — das ist überholt. Der Nutzer hat explizit entschieden:
+**LLM-Provider muss pluggable sein, beliebiger API-Key soll einsetzbar sein** (Zitat:
+"It just be possible to just insert any api key"), kein Hardcoding auf einen Anbieter.
+Passt zum bestehenden `Connector`-Protocol-Pattern dieses Projekts (`src/kairos/connectors/
+base.py`) — vermutlich eine ähnliche Abstraktion für LLM-Provider, oder eine bestehende
+Multi-Provider-Bibliothek (z. B. litellm) statt Marken-Lock-in. `docs/00-vision-und-scope.md`
+Zeile 129 muss bei der Spec-Erstellung aktualisiert werden, um diesen Widerspruch aufzulösen.
+
+**Offene Frage, bei der die Session unterbrochen wurde:** Scope-Entscheidung MVP-Slice vs.
+volle Phase-4-Spezifikation aus `docs/03-agent-design.md`/`08-roadmap.md` in einem Rutsch.
+Empfehlung war ein MVP-Slice zuerst (Orchestrator + Situation Brief + die 8 Core-Tools ohne
+zweistufige Registry/Embeddings, da bei nur 8 Tools nichts zu durchsuchen ist + einfache
+Konversationspersistenz + Risikoklassen-Durchsetzung read/write/destructive mit
+Proposal-Bestätigung + Gesundheitsleitplanken; Tool-Registry mit Embeddings, volles
+3-Schicht-Gedächtnis, Sticky-Loading/Pack-Prewarming und der nächtliche Proaktivitäts-Job
+würden ein Folge-Plan). Die AskUserQuestion mit dieser Wahl wurde gestellt, aber der Nutzer
+hat stattdessen um eine Zwischenklärung gebeten (Memory/Session sichern) — **noch nicht
+beantwortet**. Nächster Schritt: die Scope-Frage erneut stellen bzw. die Antwort abwarten.
+
+**Bereits vorhandene Grundlagen für Phase 4** (nicht neu zu erfinden):
+- Die 15 Referenzfragen (Eval-Suite-Gate) stehen bereits vollständig in
+  `docs/00-vision-und-scope.md` Abschnitt 5 — Gesundheit&Erholung (5), Training&Belastung
+  (5), Planung&Kalender (5). Einige (Fragen 8, 11, 13, 14) überschneiden sich inhaltlich mit
+  Phase 5 "Planung & Proaktivität" laut Roadmap — dieser Widerspruch (Phase 4 verlangt
+  15/15 als Abnahme, aber Fragen 13 "Trainingsplan für 3 Wochen" klingt nach Phase-5-Scope)
+  ist in der Doku selbst nicht aufgelöst und sollte in der Spec-Phase geklärt werden, nicht
+  stillschweigend übernommen werden.
+- Vollständige Architektur-Vorlage bereits in `docs/03-agent-design.md`: Situation-Brief-
+  Format, Tool-Ausgabekontrakt (`summary`/`data`/`meta`, Hardcap 2000 Tokens/Tool-Ergebnis),
+  Risikoklassen-Tabelle, Memory-Schema (Profil/semantisch/episodisch), Prompt-Injection-
+  Gegenmaßnahmen (externe Inhalte immer als Daten markiert, nie als Anweisung), Gesundheits-
+  Leitplanken (keine Diagnosen, keine Medikation, keine Kalorienziele ohne Nachfrage).
+- Kontextbudget-Zielwert bereits definiert: Median-Input < 15.000 Tokens/Turn, Hardcap 40.000.
