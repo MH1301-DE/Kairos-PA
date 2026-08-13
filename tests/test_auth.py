@@ -190,6 +190,9 @@ async def test_callback_persists_google_calendar_connection(
     mock_db.__aexit__ = AsyncMock(return_value=None)
     monkeypatch.setattr(google_auth, "async_session_factory", lambda: mock_db)
     monkeypatch.setattr(google_auth, "create_session", AsyncMock(return_value="test-session-id"))
+    # the real listener needs a live sync_session; an AsyncMock has none
+    mock_install_rls = MagicMock()
+    monkeypatch.setattr(google_auth, "install_rls_listener", mock_install_rls)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get(
@@ -198,6 +201,10 @@ async def test_callback_persists_google_calendar_connection(
         )
 
     assert response.status_code == 302
+
+    # connection is a FORCE-RLS tenant table: the write session must carry the tenant id
+    mock_install_rls.assert_called_once()
+    assert mock_install_rls.call_args.args[0] is mock_db
 
     connection_inserts = [s for s in executed_statements if isinstance(s, PGInsert)]
     assert len(connection_inserts) == 1
@@ -269,6 +276,9 @@ async def test_callback_upserts_google_calendar_connection_on_repeat_login(
     mock_db.__aexit__ = AsyncMock(return_value=None)
     monkeypatch.setattr(google_auth, "async_session_factory", lambda: mock_db)
     monkeypatch.setattr(google_auth, "create_session", AsyncMock(return_value="test-session-id"))
+    # the real listener needs a live sync_session; an AsyncMock has none
+    mock_install_rls = MagicMock()
+    monkeypatch.setattr(google_auth, "install_rls_listener", mock_install_rls)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get(
@@ -280,6 +290,9 @@ async def test_callback_upserts_google_calendar_connection_on_repeat_login(
     # before the session cookie is ever set — a returning user couldn't complete login
     assert response.status_code == 302
     assert "session_id" in response.cookies
+
+    # connection is a FORCE-RLS tenant table: the write session must carry the tenant id
+    mock_install_rls.assert_called_once_with(mock_db, mock_user.id)
 
     connection_inserts = [s for s in executed_statements if isinstance(s, PGInsert)]
     assert len(connection_inserts) == 1

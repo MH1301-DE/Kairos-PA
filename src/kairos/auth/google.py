@@ -11,6 +11,7 @@ from kairos.auth.crypto import encrypt, generate_dek, kek_from_settings, unwrap_
 from kairos.auth.session import create_session, delete_session, get_redis
 from kairos.config import settings
 from kairos.db.models import AppUser, Connection
+from kairos.db.rls import install_rls_listener
 from kairos.db.session import async_session_factory
 
 router = APIRouter(prefix="/auth")
@@ -96,14 +97,23 @@ async def callback(
 
         # Google only returns refresh_token on first consent, but login() forces prompt=consent
         refresh_token = tokens.get("refresh_token")
+        credentials_enc: bytes | None = None
         if refresh_token:
             kek = kek_from_settings(settings.kairos_kek)
             if user.dek_wrapped is None:
                 dek = generate_dek()
                 user.dek_wrapped = wrap_dek(dek, kek)
+                db.add(user)
+                await db.commit()
             else:
                 dek = unwrap_dek(user.dek_wrapped, kek)
             credentials_enc = encrypt(refresh_token.encode(), dek)
+
+    # connection is a FORCE-RLS tenant table, and install_rls_listener must be attached
+    # before the session's transaction begins — hence a second, dedicated session scope
+    if credentials_enc is not None:
+        async with async_session_factory() as conn_db:
+            install_rls_listener(conn_db, user.id)
             # every login re-consents (prompt=consent), so this must upsert, not insert —
             # a plain insert would raise IntegrityError on uq_connection for a returning user
             stmt = (
@@ -120,8 +130,8 @@ async def callback(
                     set_={"status": "active", "credentials_enc": credentials_enc},
                 )
             )
-            await db.execute(stmt)
-            await db.commit()
+            await conn_db.execute(stmt)
+            await conn_db.commit()
 
     session_id = await create_session(user.id, email)
     response = RedirectResponse(url="/", status_code=302)

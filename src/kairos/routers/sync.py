@@ -260,7 +260,7 @@ async def _run_calendar_sync_task(
             job.status = "running"
             job.started_at = datetime.now(UTC).isoformat()
             try:
-                envelope = connector.fetch(user_id, job.kind, window)
+                envelope = await asyncio.to_thread(connector.fetch, user_id, job.kind, window)
                 records = connector.normalize(job.kind, envelope.payload)
                 repo = CalendarEventRepository(session)
                 written = await repo.upsert_from_records(user_id, "google_calendar", records)

@@ -62,7 +62,22 @@ export const actions: Actions = {
 	delete: async ({ request, fetch }) => {
 		const form = await request.formData();
 		const eventId = String(form.get('event_id'));
-		await fetch(`/api/calendar/events/${eventId}`, { method: 'DELETE', credentials: 'include' });
+		const resp = await fetch(`/api/calendar/events/${eventId}`, {
+			method: 'DELETE',
+			credentials: 'include'
+		});
+		if (!resp.ok) {
+			if (resp.status === 401) redirect(302, '/auth/login');
+			return fail(resp.status, { error: 'Termin konnte nicht gelöscht werden.' });
+		}
 		return { deleted: true };
+	},
+	sync: async ({ fetch }) => {
+		const { status } = await apiPost(fetch, '/api/sync/google_calendar/sync', {});
+		if (status === 401) redirect(302, '/auth/login');
+		if (status !== 202) {
+			return fail(status, { error: 'Synchronisierung konnte nicht gestartet werden.' });
+		}
+		return { syncStarted: true };
 	}
 };

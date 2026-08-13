@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+import asyncio
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -10,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kairos.auth.deps import current_user
-from kairos.calendar.free_time import BusyBlock, CalendarPrefs, compute_free_blocks
+from kairos.calendar.free_time import BusyBlock, CalendarPrefs, FreeBlock, compute_free_blocks
 from kairos.connectors.google_calendar.connector import GoogleCalendarConnector
 from kairos.db.models import CalendarEvent, UserSetting
 from kairos.db.rls import install_rls_listener
@@ -19,6 +20,22 @@ from kairos.repositories.calendar_event import CalendarEventRepository
 from kairos.routers.sync import _build_google_calendar_client
 
 router = APIRouter(prefix="/api/calendar", tags=["calendar"])
+
+# cap per free block so a multi-day block can't generate hundreds of candidates
+_MAX_SLOTS_PER_BLOCK = 20
+
+
+def _slice_into_slots(blocks: list[FreeBlock], duration_minutes: int) -> list[FreeBlock]:
+    step = timedelta(minutes=duration_minutes)
+    slots: list[FreeBlock] = []
+    for block in blocks:
+        cursor = block.start
+        count = 0
+        while cursor + step <= block.end and count < _MAX_SLOTS_PER_BLOCK:
+            slots.append(FreeBlock(start=cursor, end=cursor + step))
+            cursor += step
+            count += 1
+    return slots
 
 
 class CreateEventRequest(BaseModel):
@@ -64,7 +81,7 @@ async def free_slots(
         min_free_minutes=prefs_row["min_free_block_minutes"],
     )
     blocks = compute_free_blocks(busy, _to_utc(from_), _to_utc(to), prefs)
-    slots = [b for b in blocks if (b.end - b.start).total_seconds() / 60 >= duration_minutes]
+    slots = _slice_into_slots(blocks, duration_minutes)
     return {"slots": [{"start": s.start.isoformat(), "end": s.end.isoformat()} for s in slots]}
 
 
@@ -82,13 +99,20 @@ async def create_event(
         raise HTTPException(status_code=503, detail="no_active_google_calendar_connection")
 
     connector = GoogleCalendarConnector(client)
-    created = client.create_event(
+    created = await asyncio.to_thread(
+        client.create_event,
         "primary",
         summary=req.summary,
         start=req.start_at,
         end=req.end_at,
         description=req.description,
     )
+    # Google returns {"error": {...}} with no "id" on a 4xx — surface it instead of a KeyError
+    if isinstance(created, dict) and "error" in created:
+        raise HTTPException(
+            status_code=502,
+            detail=f"google_calendar_create_failed:{created['error']}",
+        )
     del connector  # write_back not used here; single-record path calls the client directly
 
     repo = CalendarEventRepository(session)
@@ -120,7 +144,7 @@ async def delete_event(
 
     client = await _build_google_calendar_client(session, user_id)
     if client is not None:
-        client.delete_event(event.calendar_id, event.external_id)
+        await asyncio.to_thread(client.delete_event, event.calendar_id, event.external_id)
     await repo.mark_deleted(user_id, event.connector, event.external_id)
     await session.commit()
 

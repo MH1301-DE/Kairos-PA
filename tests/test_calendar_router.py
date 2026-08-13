@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -58,7 +58,7 @@ async def test_get_events_returns_shaped_list() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_free_slots_filters_by_min_duration() -> None:
+async def test_get_free_slots_returns_slots_of_requested_duration() -> None:
     with (
         patch(
             "kairos.routers.calendar.CalendarEventRepository.list_between",
@@ -83,7 +83,50 @@ async def test_get_free_slots_filters_by_min_duration() -> None:
 
     assert response.status_code == 200
     body = response.json()
-    assert len(body["slots"]) == 1
+    # the 24h free block is sliced into 60-minute candidates, capped at _MAX_SLOTS_PER_BLOCK
+    assert len(body["slots"]) == 20
+    for slot in body["slots"]:
+        start = datetime.fromisoformat(slot["start"])
+        end = datetime.fromisoformat(slot["end"])
+        assert end - start == timedelta(minutes=60)
+
+
+@pytest.mark.asyncio
+async def test_get_free_slots_slices_multi_day_block_into_duration_sized_slots() -> None:
+    window_start = datetime(2026, 1, 1, tzinfo=UTC)
+    window_end = datetime(2026, 1, 4, tzinfo=UTC)
+
+    with (
+        patch(
+            "kairos.routers.calendar.CalendarEventRepository.list_between",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "kairos.routers.calendar._load_prefs",
+            new=AsyncMock(
+                return_value={
+                    "work_hours_start": None,
+                    "work_hours_end": None,
+                    "calendar_buffer_minutes": 0,
+                    "min_free_block_minutes": 30,
+                }
+            ),
+        ),
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get(
+                "/api/calendar/free-slots?from=2026-01-01&to=2026-01-04&duration_minutes=60"
+            )
+
+    assert response.status_code == 200
+    slots = response.json()["slots"]
+    assert slots
+    for slot in slots:
+        start = datetime.fromisoformat(slot["start"])
+        end = datetime.fromisoformat(slot["end"])
+        assert end - start == timedelta(minutes=60)
+        assert window_start <= start
+        assert end <= window_end
 
 
 @pytest.mark.asyncio

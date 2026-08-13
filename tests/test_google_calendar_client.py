@@ -48,6 +48,36 @@ def test_list_events_refreshes_token_then_lists(mock_client_cls: MagicMock) -> N
 
 
 @patch("kairos.connectors.google_calendar.client.httpx.Client")
+def test_list_events_follows_next_page_token(mock_client_cls: MagicMock) -> None:
+    mock_http = MagicMock()
+    mock_client_cls.return_value.__enter__.return_value = mock_http
+
+    token_resp = MagicMock()
+    token_resp.status_code = 200
+    token_resp.json.return_value = {"access_token": "fresh-access-token"}
+    page1 = MagicMock()
+    page1.status_code = 200
+    page1.json.return_value = {"items": [{"id": "evt1"}], "nextPageToken": "page-2"}
+    page2 = MagicMock()
+    page2.status_code = 200
+    page2.json.return_value = {"items": [{"id": "evt2"}], "nextSyncToken": "sync-tok-2"}
+    mock_http.post.return_value = token_resp
+    mock_http.get.side_effect = [page1, page2]
+
+    client = _client()
+    result = client.list_events(
+        "primary", datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 8, tzinfo=UTC)
+    )
+
+    assert result["items"] == [{"id": "evt1"}, {"id": "evt2"}]
+    assert result["nextSyncToken"] == "sync-tok-2"
+    assert mock_http.get.call_count == 2
+    assert mock_http.get.call_args_list[0].kwargs["params"]["singleEvents"] == "true"
+    assert "pageToken" not in mock_http.get.call_args_list[0].kwargs["params"]
+    assert mock_http.get.call_args_list[1].kwargs["params"]["pageToken"] == "page-2"
+
+
+@patch("kairos.connectors.google_calendar.client.httpx.Client")
 def test_token_refresh_failure_raises_token_expired(mock_client_cls: MagicMock) -> None:
     mock_http = MagicMock()
     mock_client_cls.return_value.__enter__.return_value = mock_http

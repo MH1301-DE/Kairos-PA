@@ -9,6 +9,13 @@
 <h1>Kalender</h1>
 <p class="lede">Die nächsten 14 Tage sowie freie Zeitfenster zum Vorschlagen eines Termins.</p>
 
+<form method="POST" action="?/sync" use:enhance>
+	<button type="submit" class="btn btn-ghost">Kalender synchronisieren</button>
+</form>
+{#if form?.syncStarted}
+	<p class="status-success">Synchronisierung gestartet.</p>
+{/if}
+
 <div class="tile">
 	<h3>Termine</h3>
 	{#if data.events.length === 0}

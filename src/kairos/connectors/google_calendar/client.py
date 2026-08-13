@@ -33,21 +33,37 @@ class GoogleCalendarClient:
     ) -> dict[str, Any]:
         with httpx.Client(timeout=15.0) as http:
             access_token = self._refresh_access_token(http)
-            params: dict[str, str] = {}
+            base_params: dict[str, str] = {"singleEvents": "true"}
             if sync_token:
-                params["syncToken"] = sync_token
+                base_params["syncToken"] = sync_token
             else:
-                params["timeMin"] = time_min.isoformat()
-                params["timeMax"] = time_max.isoformat()
-            resp = http.get(
-                EVENTS_URL.format(calendar_id=calendar_id),
-                headers={"Authorization": f"Bearer {access_token}"},
-                params=params,
-            )
-            if resp.status_code >= 500:
-                raise UpstreamUnavailable(f"Google Calendar list_events: {resp.status_code}")
-            resp_json: dict[str, Any] = resp.json()
-            return resp_json
+                base_params["timeMin"] = time_min.isoformat()
+                base_params["timeMax"] = time_max.isoformat()
+                # orderBy needs singleEvents=true and is rejected alongside syncToken
+                base_params["orderBy"] = "startTime"
+
+            items: list[Any] = []
+            page_token: str | None = None
+            result: dict[str, Any] = {}
+            while True:
+                params = dict(base_params)
+                if page_token:
+                    params["pageToken"] = page_token
+                resp = http.get(
+                    EVENTS_URL.format(calendar_id=calendar_id),
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    params=params,
+                )
+                if resp.status_code >= 500:
+                    raise UpstreamUnavailable(f"Google Calendar list_events: {resp.status_code}")
+                result = resp.json()
+                items.extend(result.get("items", []))
+                page_token = result.get("nextPageToken")
+                if not page_token:
+                    break
+            # mutating the last page's dict keeps nextSyncToken, which only that page carries
+            result["items"] = items
+            return result
 
     def create_event(
         self,
