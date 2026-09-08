@@ -10,14 +10,14 @@ logs:
 	docker compose -f deploy/docker-compose.dev.yml logs -f
 
 migrate:
-	uv run alembic upgrade head
+	.venv/bin/python -m alembic upgrade head || .venv/Scripts/python -m alembic upgrade head
 
 test:
-	uv run pytest
+	.venv/bin/python -m pytest -q || .venv/Scripts/python -m pytest -q
 
 lint:
-	uv run ruff check src tests
-	uv run mypy src
+	.venv/bin/python -m ruff check src tests || .venv/Scripts/python -m ruff check src tests
+	.venv/bin/python -m mypy src || .venv/Scripts/python -m mypy src
 
 dev:
-	uv run uvicorn kairos.api:app --reload --host 0.0.0.0 --port 8000
+	.venv/bin/uvicorn kairos.api:app --reload --host 0.0.0.0 --port 8000 || .venv/Scripts/uvicorn kairos.api:app --reload --host 0.0.0.0 --port 8000
