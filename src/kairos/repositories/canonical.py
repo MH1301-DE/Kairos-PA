@@ -69,6 +69,7 @@ class SqlCanonicalRepository:
                 metric_id=metric_id,
                 observed_at=record.occurred_at,
                 value=float(record.data.get("value", 0)),  # type: ignore[arg-type]
+                quality=record.data.get("quality", "ok"),
                 raw_payload_id=raw_payload_id,
             )
             .on_conflict_do_nothing(constraint="uq_wellness_sample")

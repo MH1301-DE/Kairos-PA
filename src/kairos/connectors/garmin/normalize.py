@@ -31,6 +31,10 @@ def normalize_payload(*, kind: str, payload: JSONValue) -> list[CanonicalRecord]
 
 # ── Wellness ──────────────────────────────────────────────────────────────────
 
+_HR_MIN_PLAUSIBLE = 25.0
+_HR_MAX_PLAUSIBLE = 230.0
+
+
 def _normalize_hr_intraday(payload: JSONValue) -> list[CanonicalRecord]:
     if not isinstance(payload, dict):
         return []
@@ -50,12 +54,13 @@ def _normalize_hr_intraday(payload: JSONValue) -> list[CanonicalRecord]:
         occurred_at = _parse_datetime_utc(timestamp_raw)
         if occurred_at is None:
             continue
+        quality = "ok" if _HR_MIN_PLAUSIBLE <= float(value_raw) <= _HR_MAX_PLAUSIBLE else "suspect"
         records.append(
             CanonicalRecord(
                 record_type="wellness_sample",
                 external_id=f"hr:{occurred_at.isoformat()}",
                 occurred_at=occurred_at,
-                data={"metric": "hr", "value": float(value_raw)},
+                data={"metric": "hr", "value": float(value_raw), "quality": quality},
             )
         )
     return records

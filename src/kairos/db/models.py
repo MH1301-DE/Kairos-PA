@@ -13,6 +13,7 @@ from sqlalchemy import (
     Integer,
     LargeBinary,
     SmallInteger,
+    String,
     Text,
     Time,
     UniqueConstraint,
@@ -242,6 +243,7 @@ class WellnessSample(Base):
         DateTime(timezone=True), nullable=False, primary_key=True
     )
     value: Mapped[float] = mapped_column(Float, nullable=False)
+    quality: Mapped[str] = mapped_column(String(16), nullable=False, server_default="ok")
     raw_payload_id: Mapped[int | None] = mapped_column(
         ForeignKey("raw_payload.id", ondelete="SET NULL")
     )

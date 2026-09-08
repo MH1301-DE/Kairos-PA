@@ -19,7 +19,7 @@ def test_normalize_hr_intraday_into_canonical_records() -> None:
     assert records[0].record_type == "wellness_sample"
     assert records[0].external_id == "hr:2026-08-04T09:00:00+00:00"
     assert records[0].occurred_at == datetime(2026, 8, 4, 9, 0, tzinfo=UTC)
-    assert records[0].data == {"metric": "hr", "value": 62.0}
+    assert records[0].data == {"metric": "hr", "value": 62.0, "quality": "ok"}
 
 
 def test_normalize_sleep_into_canonical_records() -> None:
