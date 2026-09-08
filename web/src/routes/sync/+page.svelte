@@ -8,6 +8,7 @@
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 	let garminConnection = $derived(data.connections.find((c) => c.connector === 'garmin'));
+	let triggering = $state(false);
 
 	// polls while any job is queued/running; stops once every job is done/failed/skipped
 	const ACTIVE_STATUSES = new Set(['queued', 'running']);
@@ -41,8 +42,21 @@
 		({garminConnection.external_account})
 	</p>
 
-	<form method="POST" action="?/triggerBackfill" use:enhance class="tile trigger-panel">
-		<button type="submit" class="btn btn-primary">Backfill starten</button>
+	<form
+		method="POST"
+		action="?/triggerBackfill"
+		use:enhance={() => {
+			triggering = true;
+			return async ({ update }) => {
+				await update();
+				triggering = false;
+			};
+		}}
+		class="tile trigger-panel"
+	>
+		<button type="submit" class="btn btn-primary" disabled={triggering}>
+			{triggering ? 'Startet …' : 'Backfill starten'}
+		</button>
 		{#if form?.triggerError}
 			<p class="status-error">{form.triggerError}</p>
 		{/if}
