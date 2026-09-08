@@ -53,16 +53,28 @@ class SqlDataReadRepository:
     ) -> Page[Activity]:
         stmt = select(Activity).where(Activity.user_id == user_id)
         if cursor is not None:
-            cursor_start_at = _decode_cursor(cursor)
-            stmt = stmt.where(Activity.start_at < cursor_start_at)
-        stmt = stmt.order_by(Activity.start_at.desc()).limit(limit + 1)
+            cursor_start_at, cursor_id = _decode_cursor(cursor)
+            if cursor_start_at is None:
+                # cursor row had start_at IS NULL: Postgres sorts NULLs first for DESC, so
+                # "after" it means remaining NULL rows (smaller id) plus the entire non-NULL
+                # group (which sorts after the NULL group in full). Non-NULL rows naturally
+                # satisfy this without an extra IS NOT NULL check further below, but here we
+                # have no start_at to compare against at all, so it must be explicit.
+                stmt = stmt.where(
+                    (Activity.start_at.is_(None) & (Activity.id < cursor_id))
+                    | Activity.start_at.is_not(None)
+                )
+            else:
+                stmt = stmt.where(
+                    (Activity.start_at < cursor_start_at)
+                    | ((Activity.start_at == cursor_start_at) & (Activity.id < cursor_id))
+                )
+        stmt = stmt.order_by(Activity.start_at.desc(), Activity.id.desc()).limit(limit + 1)
         result = await self._session.execute(stmt)
         rows = list(result.scalars().all())
         has_more = len(rows) > limit
         items = rows[:limit]
-        next_cursor = (
-            _encode_cursor(items[-1].start_at) if has_more and items[-1].start_at else None
-        )
+        next_cursor = _encode_cursor(items[-1].start_at, items[-1].id) if has_more else None
         return Page(items=items, next_cursor=next_cursor)
 
     async def get_activity_detail(
@@ -98,9 +110,13 @@ class SqlDataReadRepository:
         return list(result.scalars().all())
 
 
-def _encode_cursor(dt: datetime) -> str:
-    return base64.urlsafe_b64encode(dt.isoformat().encode()).decode()
+def _encode_cursor(dt: datetime | None, activity_id: int) -> str:
+    dt_part = dt.isoformat() if dt is not None else "null"
+    return base64.urlsafe_b64encode(f"{dt_part}|{activity_id}".encode()).decode()
 
 
-def _decode_cursor(cursor: str) -> datetime:
-    return datetime.fromisoformat(base64.urlsafe_b64decode(cursor.encode()).decode())
+def _decode_cursor(cursor: str) -> tuple[datetime | None, int]:
+    raw = base64.urlsafe_b64decode(cursor.encode()).decode()
+    dt_part, id_part = raw.rsplit("|", 1)
+    dt = None if dt_part == "null" else datetime.fromisoformat(dt_part)
+    return dt, int(id_part)
