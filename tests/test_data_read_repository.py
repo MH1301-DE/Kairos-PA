@@ -9,6 +9,7 @@ import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from kairos.db.rls import install_rls_listener
 from kairos.repositories.data_read import SqlDataReadRepository
 
 
@@ -284,3 +285,46 @@ async def test_list_sleep_sessions_filters_by_date_range(db_session, seeded_slee
         datetime(2026, 8, 1, tzinfo=UTC) <= s.start_at < datetime(2026, 8, 3, tzinfo=UTC)
         for s in result
     )
+
+
+@pytest.mark.asyncio
+async def test_data_read_repository_enforces_rls_isolation(
+    session: AsyncSession, app_session: AsyncSession
+) -> None:
+    """The read API's RLS enforcement (install_rls_listener) is only real on a non-superuser
+    connection — every other test in this file uses the superuser `session` fixture, which
+    bypasses RLS. This mirrors tests/test_rls.py::test_rls_isolates_users against the new read
+    repository. One method is enough: the RLS policy is table-level, not per-endpoint, so
+    proving the listener drives enforcement for list_activities validates the mechanism for
+    the whole /api/data/* surface."""
+    user_a_id = uuid.uuid4()
+    user_b_id = uuid.uuid4()
+
+    # Seed via the superuser session (superuser bypasses RLS → no WITH CHECK blocks)
+    for user_id, external_id in ((user_a_id, "act-rls-a"), (user_b_id, "act-rls-b")):
+        await _insert_user(session, user_id, f"{user_id}@test.com", f"sub-{user_id}")
+        await session.execute(
+            text(
+                """
+                INSERT INTO activity (user_id, external_id, name, sport, start_at)
+                VALUES (:uid, :eid, 'Run', 'running', :start_at)
+                """
+            ),
+            {
+                "uid": str(user_id),
+                "eid": external_id,
+                "start_at": datetime(2026, 8, 1, 8, 0, tzinfo=UTC),
+            },
+        )
+    await session.commit()
+
+    # app_session connects as kairos_app (NOSUPERUSER) → RLS is enforced
+    install_rls_listener(app_session, user_a_id)
+    repo = SqlDataReadRepository(session=app_session)
+
+    page_a = await repo.list_activities(user_id=user_a_id, limit=50)
+    assert {a.external_id for a in page_a.items} == {"act-rls-a"}
+
+    # Even asking explicitly for user B's rows returns nothing under user A's RLS context
+    page_b = await repo.list_activities(user_id=user_b_id, limit=50)
+    assert page_b.items == []
