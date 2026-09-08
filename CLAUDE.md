@@ -23,14 +23,11 @@ For every commit by a **different author**, read its diff:
 git show <hash>
 ```
 
-### 3. Invoke the kairos-handover skill
-If the Skill tool is available, invoke `kairos-handover` to load the full protocol.
-
 ## Project Conventions
 
 - **Language:** Python 3.14, FastAPI, SQLAlchemy async
 - **Linting:** `ruff` (line-length 100) + `mypy --strict`
-- **Tests:** `.venv/bin/python -m pytest -q` (Windows: `.venv/Scripts/python -m pytest -q`) → must be 109 passed, 0 skipped (0 skipped requires Docker running for the testcontainers tests)
+- **Tests:** `.venv/bin/python -m pytest -q` (Windows: `.venv/Scripts/python -m pytest -q`) → must be 159 passed, 0 skipped (0 skipped requires Docker running for the testcontainers tests)
 - **Commits:** conventional commits (`feat(scope):`, `fix:`, `chore:`)
 - **No docstrings** on code you didn't change
 - **Comments:** one short line only — state what the code cannot show, not what it does
