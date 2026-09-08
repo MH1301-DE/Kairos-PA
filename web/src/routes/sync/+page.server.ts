@@ -1,10 +1,11 @@
 // web/src/routes/sync/+page.server.ts
-import type { PageServerLoad } from './$types';
+import type { Actions, PageServerLoad } from './$types';
 import { redirect } from '@sveltejs/kit';
-import { apiGet, ApiError } from '$lib/api';
+import { apiGet, apiPost, ApiError } from '$lib/api';
 import type { ConnectionInfo, SyncJob } from '$lib/types';
 
-export const load: PageServerLoad = async ({ fetch }) => {
+export const load: PageServerLoad = async ({ fetch, depends }) => {
+	depends('sync:status');
 	try {
 		const [connections, syncStatus] = await Promise.all([
 			apiGet<{ connections: ConnectionInfo[] }>(fetch, '/api/connections'),
@@ -15,5 +16,19 @@ export const load: PageServerLoad = async ({ fetch }) => {
 		// stale/invalid session cookie: send the user back to login instead of a dead end
 		if (err instanceof ApiError && err.status === 401) redirect(302, '/auth/login');
 		throw err;
+	}
+};
+
+export const actions: Actions = {
+	triggerBackfill: async ({ fetch }) => {
+		const { status, data } = await apiPost<{ detail?: string }>(
+			fetch,
+			'/api/sync/garmin/backfill',
+			{}
+		);
+		if (status !== 202) {
+			return { triggerError: `Backfill konnte nicht gestartet werden (${status}): ${data.detail ?? 'unbekannt'}` };
+		}
+		return { triggered: true };
 	}
 };
