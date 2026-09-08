@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -30,7 +30,8 @@ async def wellness_series(
         user_id=user_id,
         metric=metric,
         from_date=_to_utc_midnight(from_date or date.today().replace(day=1)),
-        to_date=_to_utc_midnight(to_date or date.today()),
+        # +1 day: the repository bound is exclusive, so this covers all of to_date
+        to_date=_to_utc_midnight(to_date or date.today()) + timedelta(days=1),
     )
     return {
         "metric": metric,
@@ -109,7 +110,8 @@ async def sleep_sessions(
     sessions = await repo.list_sleep_sessions(
         user_id=user_id,
         from_date=_to_utc_midnight(from_date or date.today().replace(day=1)),
-        to_date=_to_utc_midnight(to_date or date.today()),
+        # +1 day: the repository bound is exclusive, so this covers all of to_date
+        to_date=_to_utc_midnight(to_date or date.today()) + timedelta(days=1),
     )
     return {
         "sessions": [

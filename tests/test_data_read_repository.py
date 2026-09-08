@@ -41,7 +41,10 @@ async def seeded_hr_samples(db_session: AsyncSession) -> tuple[uuid.UUID, int]:
         (datetime(2026, 8, 1, 6, 0, tzinfo=UTC), 60.0),
         (datetime(2026, 8, 1, 18, 0, tzinfo=UTC), 65.0),
         (datetime(2026, 8, 2, 0, 0, tzinfo=UTC), 58.0),
-        (datetime(2026, 8, 3, 0, 0, tzinfo=UTC), 70.0),  # after range
+        # strictly inside the range but on no boundary instant — the row an inclusive-midnight
+        # upper bound silently dropped
+        (datetime(2026, 8, 2, 18, 0, tzinfo=UTC), 62.0),
+        (datetime(2026, 8, 3, 0, 0, tzinfo=UTC), 70.0),  # at/after the exclusive upper bound
     ]
     for observed_at, value in samples:
         await db_session.execute(
@@ -125,7 +128,9 @@ async def seeded_sleep_sessions(db_session: AsyncSession) -> uuid.UUID:
         ("sleep-1", datetime(2026, 8, 1, 6, 0, tzinfo=UTC)),
         ("sleep-2", datetime(2026, 8, 1, 22, 0, tzinfo=UTC)),
         ("sleep-3", datetime(2026, 8, 2, 0, 0, tzinfo=UTC)),
-        ("sleep-4", datetime(2026, 8, 3, 0, 0, tzinfo=UTC)),  # after range
+        # strictly inside the range but on no boundary instant
+        ("sleep-4", datetime(2026, 8, 2, 18, 0, tzinfo=UTC)),
+        ("sleep-5", datetime(2026, 8, 3, 0, 0, tzinfo=UTC)),  # at/after exclusive upper bound
     ]
     for external_id, start_at in sessions:
         await db_session.execute(
@@ -183,16 +188,23 @@ async def seeded_activity_with_records(db_session: AsyncSession) -> tuple[uuid.U
 
 @pytest.mark.asyncio
 async def test_list_wellness_series_filters_by_date_range(db_session, seeded_hr_samples):
+    """`to_date` is an EXCLUSIVE upper bound: callers pass midnight of the day AFTER the last
+    wanted day, so every sample of that last day (not just its 00:00 instant) is returned."""
     user_id, metric_id = seeded_hr_samples
+    del metric_id
     repo = SqlDataReadRepository(session=db_session)
     result = await repo.list_wellness_series(
         user_id=user_id,
         metric="hr",
         from_date=datetime(2026, 8, 1, tzinfo=UTC),
-        to_date=datetime(2026, 8, 2, tzinfo=UTC),
+        to_date=datetime(2026, 8, 3, tzinfo=UTC),
     )
+    observed = [s.observed_at for s in result]
+    assert datetime(2026, 8, 2, 18, 0, tzinfo=UTC) in observed
+    assert datetime(2026, 8, 3, 0, 0, tzinfo=UTC) not in observed
+    assert datetime(2026, 7, 31, 12, 0, tzinfo=UTC) not in observed
     assert all(
-        datetime(2026, 8, 1, tzinfo=UTC) <= s.observed_at <= datetime(2026, 8, 2, tzinfo=UTC)
+        datetime(2026, 8, 1, tzinfo=UTC) <= s.observed_at < datetime(2026, 8, 3, tzinfo=UTC)
         for s in result
     )
 
@@ -241,15 +253,19 @@ async def test_list_activities_paginates_across_null_start_at_boundary(
 
 @pytest.mark.asyncio
 async def test_list_sleep_sessions_filters_by_date_range(db_session, seeded_sleep_sessions):
+    """`to_date` is an EXCLUSIVE upper bound — see the wellness counterpart above."""
     user_id = seeded_sleep_sessions
     repo = SqlDataReadRepository(session=db_session)
     result = await repo.list_sleep_sessions(
         user_id=user_id,
         from_date=datetime(2026, 8, 1, tzinfo=UTC),
-        to_date=datetime(2026, 8, 2, tzinfo=UTC),
+        to_date=datetime(2026, 8, 3, tzinfo=UTC),
     )
-    assert len(result) > 0
+    starts = [s.start_at for s in result]
+    assert datetime(2026, 8, 2, 18, 0, tzinfo=UTC) in starts
+    assert datetime(2026, 8, 3, 0, 0, tzinfo=UTC) not in starts
+    assert datetime(2026, 7, 31, 22, 0, tzinfo=UTC) not in starts
     assert all(
-        datetime(2026, 8, 1, tzinfo=UTC) <= s.start_at <= datetime(2026, 8, 2, tzinfo=UTC)
+        datetime(2026, 8, 1, tzinfo=UTC) <= s.start_at < datetime(2026, 8, 3, tzinfo=UTC)
         for s in result
     )

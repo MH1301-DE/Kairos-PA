@@ -65,6 +65,7 @@ async def seeded_hr_samples(
         (datetime(2026, 8, 1, 6, 0, tzinfo=UTC), 60.0),
         (datetime(2026, 8, 1, 18, 0, tzinfo=UTC), 65.0),
         (datetime(2026, 8, 2, 0, 0, tzinfo=UTC), 58.0),
+        (datetime(2026, 8, 2, 18, 0, tzinfo=UTC), 62.0),  # mid-day, no boundary instant
         (datetime(2026, 8, 3, 0, 0, tzinfo=UTC), 70.0),  # after range
     ]
     for observed_at, value in samples:
@@ -109,7 +110,8 @@ async def seeded_sleep_sessions(db_session: AsyncSession, test_user_id: uuid.UUI
         ("sleep-1", datetime(2026, 8, 1, 6, 0, tzinfo=UTC)),
         ("sleep-2", datetime(2026, 8, 1, 22, 0, tzinfo=UTC)),
         ("sleep-3", datetime(2026, 8, 2, 0, 0, tzinfo=UTC)),
-        ("sleep-4", datetime(2026, 8, 3, 0, 0, tzinfo=UTC)),  # after range
+        ("sleep-4", datetime(2026, 8, 2, 18, 0, tzinfo=UTC)),  # mid-day, no boundary instant
+        ("sleep-5", datetime(2026, 8, 3, 0, 0, tzinfo=UTC)),  # after range
     ]
     for external_id, start_at in sessions:
         await db_session.execute(
@@ -194,15 +196,29 @@ async def test_activities_list_paginates(authed_client, seeded_activities):
 
 
 @pytest.mark.asyncio
+async def test_wellness_series_single_day_includes_whole_day(authed_client, seeded_hr_samples):
+    """Regression: from_date == to_date must return that day's samples, not only its 00:00
+    instant. The old inclusive-midnight upper bound returned just the 2026-08-02T00:00 row."""
+    resp = await authed_client.get(
+        "/api/data/wellness/hr", params={"from_date": "2026-08-02", "to_date": "2026-08-02"}
+    )
+    assert resp.status_code == 200
+    observed = [p["observed_at"] for p in resp.json()["points"]]
+    assert any(ts.startswith("2026-08-02T18:00") for ts in observed)
+    assert all(ts.startswith("2026-08-02") for ts in observed)
+
+
+@pytest.mark.asyncio
 async def test_sleep_sessions_returns_filtered_list(authed_client, seeded_sleep_sessions):
     resp = await authed_client.get(
         "/api/data/sleep", params={"from_date": "2026-08-01", "to_date": "2026-08-02"}
     )
     assert resp.status_code == 200
     body = resp.json()
-    assert len(body["sessions"]) > 0
-    for session_row in body["sessions"]:
-        assert "2026-08-01" <= session_row["start_at"][:10] <= "2026-08-02"
+    starts = [s["start_at"] for s in body["sessions"]]
+    # the whole of 2026-08-02 is included, not only its 00:00 instant
+    assert any(ts.startswith("2026-08-02T18:00") for ts in starts)
+    assert all("2026-08-01" <= ts[:10] <= "2026-08-02" for ts in starts)
 
 
 @pytest.mark.asyncio

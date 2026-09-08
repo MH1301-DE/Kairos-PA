@@ -42,7 +42,9 @@ class SqlDataReadRepository:
                 WellnessSample.user_id == user_id,
                 WellnessSample.metric_id == metric_id,
                 WellnessSample.observed_at >= from_date,
-                WellnessSample.observed_at <= to_date,
+                # to_date is an EXCLUSIVE upper bound (callers pass midnight of the day after
+                # the last wanted day), otherwise everything after 00:00 of it is dropped
+                WellnessSample.observed_at < to_date,
             )
             .order_by(WellnessSample.observed_at)
         )
@@ -103,7 +105,8 @@ class SqlDataReadRepository:
             .where(
                 SleepSession.user_id == user_id,
                 SleepSession.start_at >= from_date,
-                SleepSession.start_at <= to_date,
+                # exclusive upper bound, see list_wellness_series
+                SleepSession.start_at < to_date,
             )
             .order_by(SleepSession.start_at)
         )
