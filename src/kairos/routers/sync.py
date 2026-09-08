@@ -208,14 +208,25 @@ async def _build_garmin_client(session: AsyncSession, user_id: UUID) -> object |
             ).order_by(Connection.connected_at.desc(), Connection.id.desc())
         )).scalars().first()
 
-        if conn_row is None or conn_row.credentials_enc is None:
+        if conn_row is None:
+            # info, not warning: the user simply has not connected Garmin yet
+            logger.info("No active Garmin connection for user %s", user_id)
+            return None
+        if conn_row.credentials_enc is None:
+            logger.warning(
+                "Garmin connection %s for user %s has no stored credentials", conn_row.id, user_id
+            )
             return None
 
         user_row = (await session.execute(
             select(AppUser).where(AppUser.id == user_id)
         )).scalar_one_or_none()
 
-        if user_row is None or user_row.dek_wrapped is None:
+        if user_row is None:
+            logger.warning("No app_user row for user %s while building Garmin client", user_id)
+            return None
+        if user_row.dek_wrapped is None:
+            logger.warning("User %s has no wrapped DEK — cannot decrypt Garmin tokens", user_id)
             return None
 
         kek = kek_from_settings(settings.kairos_kek)

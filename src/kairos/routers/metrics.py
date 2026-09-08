@@ -25,7 +25,10 @@ async def list_metrics(user: dict[str, Any] = Depends(current_user)) -> dict[str
 
 
 @router.get("/{metric_id}/variants")
-async def list_variants(metric_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+async def list_variants(
+    metric_id: str,
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
     del user
     variants = _registry.variants_for(metric_id)
     if not variants:

@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from kairos.auth.deps import current_user
 from kairos.db.rls import install_rls_listener
 from kairos.db.session import get_session
-from kairos.repositories.data_read import SqlDataReadRepository
+from kairos.repositories.data_read import InvalidCursorError, SqlDataReadRepository
 
 router = APIRouter(prefix="/api/data", tags=["data"])
 
@@ -54,7 +54,10 @@ async def list_activities(
     user_id = UUID(user["user_id"])
     install_rls_listener(session, user_id)
     repo = SqlDataReadRepository(session=session)
-    page = await repo.list_activities(user_id=user_id, limit=limit, cursor=cursor)
+    try:
+        page = await repo.list_activities(user_id=user_id, limit=limit, cursor=cursor)
+    except InvalidCursorError as exc:
+        raise HTTPException(status_code=422, detail="invalid cursor") from exc
     return {
         "items": [
             {

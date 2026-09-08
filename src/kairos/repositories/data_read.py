@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
@@ -9,6 +10,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kairos.db.models import Activity, ActivityRecord, MetricDef, SleepSession, WellnessSample
+
+
+class InvalidCursorError(ValueError):
+    """Raised when a client-supplied pagination cursor cannot be decoded."""
 
 
 @dataclass(frozen=True)
@@ -121,7 +126,11 @@ def _encode_cursor(dt: datetime | None, activity_id: int) -> str:
 
 
 def _decode_cursor(cursor: str) -> tuple[datetime | None, int]:
-    raw = base64.urlsafe_b64decode(cursor.encode()).decode()
-    dt_part, id_part = raw.rsplit("|", 1)
-    dt = None if dt_part == "null" else datetime.fromisoformat(dt_part)
-    return dt, int(id_part)
+    # cursors come straight from the query string — every decode step can fail on junk
+    try:
+        raw = base64.urlsafe_b64decode(cursor.encode()).decode()
+        dt_part, id_part = raw.rsplit("|", 1)
+        dt = None if dt_part == "null" else datetime.fromisoformat(dt_part)
+        return dt, int(id_part)
+    except (binascii.Error, UnicodeDecodeError, ValueError) as exc:
+        raise InvalidCursorError("malformed pagination cursor") from exc

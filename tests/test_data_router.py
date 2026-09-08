@@ -196,6 +196,23 @@ async def test_activities_list_paginates(authed_client, seeded_activities):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "cursor",
+    [
+        "not-base64!!",  # binascii.Error
+        "//8=",  # decodes to bytes that are not valid UTF-8
+        "bm8tc2VwYXJhdG9y",  # valid base64/UTF-8 ("no-separator") but has no "|"
+        "bnVsbHxub3QtYW4taW50",  # "null|not-an-int" → int() ValueError
+    ],
+)
+async def test_activities_rejects_malformed_cursor(authed_client, seeded_activities, cursor):
+    """A malformed ?cursor= used to bubble out of _decode_cursor as an uncaught 500."""
+    resp = await authed_client.get("/api/data/activities", params={"cursor": cursor})
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "invalid cursor"
+
+
+@pytest.mark.asyncio
 async def test_wellness_series_single_day_includes_whole_day(authed_client, seeded_hr_samples):
     """Regression: from_date == to_date must return that day's samples, not only its 00:00
     instant. The old inclusive-midnight upper bound returned just the 2026-08-02T00:00 row."""
