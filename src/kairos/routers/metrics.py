@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -18,13 +19,13 @@ _registry: MetricRegistry = build_default_registry()
 
 
 @router.get("")
-async def list_metrics(user: dict = Depends(current_user)) -> dict:
+async def list_metrics(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     del user
     return {"metric_ids": _registry.metric_ids()}
 
 
 @router.get("/{metric_id}/variants")
-async def list_variants(metric_id: str, user: dict = Depends(current_user)) -> dict:
+async def list_variants(metric_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     del user
     variants = _registry.variants_for(metric_id)
     if not variants:
@@ -37,9 +38,9 @@ async def get_metric(
     metric_id: str,
     variant: str | None = None,
     as_of: date | None = None,
-    user: dict = Depends(current_user),
+    user: dict[str, Any] = Depends(current_user),
     session: AsyncSession = Depends(get_session),
-) -> dict:
+) -> dict[str, Any]:
     user_id = UUID(user["user_id"])
     install_rls_listener(session, user_id)
 

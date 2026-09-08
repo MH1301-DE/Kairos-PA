@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -36,9 +37,9 @@ class GarminConnectionRequest(BaseModel):
 @router.post("/garmin", status_code=201, response_model=None)
 async def connect_garmin(
     req: GarminConnectionRequest,
-    user: dict = Depends(current_user),
+    user: dict[str, Any] = Depends(current_user),
     session: AsyncSession = Depends(get_session),
-) -> dict | JSONResponse:
+) -> dict[str, Any] | JSONResponse:
     user_id = UUID(user["user_id"])
     install_rls_listener(session, user_id)
 
@@ -107,9 +108,9 @@ async def _store_connection(
 
 @router.get("")
 async def list_connections(
-    user: dict = Depends(current_user),
+    user: dict[str, Any] = Depends(current_user),
     session: AsyncSession = Depends(get_session),
-) -> dict:
+) -> dict[str, Any]:
     user_id = UUID(user["user_id"])
     install_rls_listener(session, user_id)
     rows = (

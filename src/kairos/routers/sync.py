@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import logging
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
@@ -28,6 +29,8 @@ from kairos.repositories.calendar_event import CalendarEventRepository
 from kairos.repositories.canonical import SqlCanonicalRepository
 from kairos.repositories.raw_payload import SqlRawPayloadRepository
 from kairos.repositories.sync_state import SqlSyncStateRepository
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/sync", tags=["sync"])
 
@@ -54,9 +57,9 @@ class BackfillRequest(BaseModel):
 async def trigger_garmin_backfill(
     req: BackfillRequest,
     background_tasks: BackgroundTasks,
-    user: dict = Depends(current_user),
+    user: dict[str, Any] = Depends(current_user),
     registry: SyncJobRegistry = Depends(get_registry),
-) -> dict:
+) -> dict[str, Any]:
     user_id = UUID(user["user_id"])
     to_dt = _to_utc_midnight(req.to_date or date.today())
     from_dt = _to_utc_midnight(
@@ -93,9 +96,9 @@ async def trigger_garmin_backfill(
 
 @router.get("/status")
 async def sync_status(
-    user: dict = Depends(current_user),
+    user: dict[str, Any] = Depends(current_user),
     registry: SyncJobRegistry = Depends(get_registry),
-) -> dict:
+) -> dict[str, Any]:
     user_id = UUID(user["user_id"])
     return {"jobs": [j.to_dict() for j in registry.get_jobs_for_user(user_id)]}
 
@@ -220,8 +223,8 @@ async def _build_garmin_client(session: AsyncSession, user_id: UUID) -> object |
         token_json = decrypt(conn_row.credentials_enc, dek).decode()
 
         gc = importlib.import_module("garminconnect")
-        garmin = gc.Garmin()
-        await asyncio.to_thread(garmin.login, token_json)
+        garmin: object = cast(Any, gc.Garmin())
+        await asyncio.to_thread(garmin.login, token_json)  # type: ignore[attr-defined]
         return garmin
     except Exception:
         return None

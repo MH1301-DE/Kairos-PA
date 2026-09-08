@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import importlib
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from kairos.connectors.garmin.fit_decoder import decode_fit_zip, records_to_json
@@ -69,7 +69,7 @@ class GarminConnector:
             return {"activities": []}
 
         activities = self._garmin.get_activities_by_date(start, end)
-        result: list[dict[str, Any]] = []
+        result: list[JSONValue] = []
         for act in activities:
             activity_id = act.get("activityId")
             if activity_id is None:
@@ -79,9 +79,9 @@ class GarminConnector:
                 messages = decode_fit_zip(zip_bytes)
                 result.append({
                     "activity_id": str(activity_id),
-                    "records": records_to_json(messages.get("record_mesgs", [])),
-                    "sessions": records_to_json(messages.get("session_mesgs", [])),
-                    "laps": records_to_json(messages.get("lap_mesgs", [])),
+                    "records": cast(JSONValue, records_to_json(messages.get("record_mesgs", []))),
+                    "sessions": cast(JSONValue, records_to_json(messages.get("session_mesgs", []))),
+                    "laps": cast(JSONValue, records_to_json(messages.get("lap_mesgs", []))),
                 })
             except Exception as exc:
                 # one failed FIT must not abort the whole day window
