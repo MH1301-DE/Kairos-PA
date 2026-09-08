@@ -6,10 +6,13 @@ from kairos.connectors.garmin.normalize import normalize_payload
 
 
 def test_normalize_hr_intraday_into_canonical_records() -> None:
+    # get_heart_rates's real shape: list of [ts_ms, value] pairs, verified
+    # against a real archived Garmin response -- NOT {"timestamp", "value"}
+    # dicts (that shape never matched the live API).
     payload = {
         "heartRateValues": [
-            {"timestamp": "2026-08-04T09:00:00Z", "value": 62},
-            {"timestamp": "2026-08-04T09:01:00Z", "value": 64},
+            [1785834000000, 62],  # 2026-08-04T09:00:00Z
+            [1785834060000, 64],  # 2026-08-04T09:01:00Z
         ]
     }
 
@@ -23,25 +26,28 @@ def test_normalize_hr_intraday_into_canonical_records() -> None:
 
 
 def test_normalize_sleep_into_canonical_records() -> None:
+    # get_sleep_data's real shape: no top-level "sleepId" -- the id lives at
+    # dailySleepDTO.id (int), and the start/end timestamps are epoch-ms ints,
+    # not ISO strings. Verified against a real archived Garmin response.
     payload = {
         "dailySleepDTO": {
-            "sleepStartTimestampGMT": "2026-08-03T22:30:00Z",
-            "sleepEndTimestampGMT": "2026-08-04T06:45:00Z",
-            "sleepTimeSeconds": 29700,
+            "id": 1785796200000,  # 2026-08-03T22:30:00Z
+            "sleepStartTimestampGMT": 1785796200000,  # 2026-08-03T22:30:00Z
+            "sleepEndTimestampGMT": 1785825000000,  # 2026-08-04T06:30:00Z
+            "sleepTimeSeconds": 27600,
             "calendarDate": "2026-08-04",
         },
-        "sleepId": "sleep-123",
     }
 
     records = normalize_payload(kind="sleep", payload=payload)
 
     assert len(records) == 1
     assert records[0].record_type == "sleep_session"
-    assert records[0].external_id == "sleep-123"
+    assert records[0].external_id == "1785796200000"
     assert records[0].occurred_at == datetime(2026, 8, 3, 22, 30, tzinfo=UTC)
     assert records[0].data == {
         "start_at": "2026-08-03T22:30:00+00:00",
-        "end_at": "2026-08-04T06:45:00+00:00",
-        "duration_seconds": 29700,
+        "end_at": "2026-08-04T06:30:00+00:00",
+        "duration_seconds": 27600,
         "day": "2026-08-04",
     }

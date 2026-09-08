@@ -36,6 +36,11 @@ _HR_MAX_PLAUSIBLE = 230.0
 
 
 def _normalize_hr_intraday(payload: JSONValue) -> list[CanonicalRecord]:
+    # get_heart_rates -> {"heartRateValues": [[ts_ms, value], ...], ...}
+    # NOT a list of {"timestamp": ..., "value": ...} dicts -- verified against a
+    # real archived Garmin response; the dict shape never matched the live API
+    # and silently dropped every reading (raw_payload had data, wellness_sample
+    # stayed empty across a full 450-day backfill).
     if not isinstance(payload, dict):
         return []
     heart_rate_values = payload.get("heartRateValues")
@@ -43,17 +48,12 @@ def _normalize_hr_intraday(payload: JSONValue) -> list[CanonicalRecord]:
         return []
     records: list[CanonicalRecord] = []
     for item in heart_rate_values:
-        if not isinstance(item, dict):
+        if not isinstance(item, list) or len(item) < 2:
             continue
-        timestamp_raw = item.get("timestamp")
-        value_raw = item.get("value")
-        if not isinstance(timestamp_raw, str):
+        ts_ms, value_raw = item[0], item[1]
+        if not isinstance(ts_ms, int | float) or not isinstance(value_raw, int | float):
             continue
-        if not isinstance(value_raw, int | float):
-            continue
-        occurred_at = _parse_datetime_utc(timestamp_raw)
-        if occurred_at is None:
-            continue
+        occurred_at = datetime.fromtimestamp(ts_ms / 1000, tz=UTC)
         quality = "ok" if _HR_MIN_PLAUSIBLE <= float(value_raw) <= _HR_MAX_PLAUSIBLE else "suspect"
         records.append(
             CanonicalRecord(
@@ -377,6 +377,12 @@ def _semicircle_to_deg(val: int | float) -> float:
 
 
 def _normalize_sleep(payload: JSONValue) -> list[CanonicalRecord]:
+    # get_sleep_data -> no top-level "sleepId"; the unique id is
+    # dailySleepDTO.id (an int, epoch ms -- same value as
+    # sleepStartTimestampGMT). sleepStart/EndTimestampGMT are epoch-ms ints,
+    # not ISO strings. Verified against a real archived Garmin response --
+    # both original assumptions were wrong and made every sleep_session
+    # write a silent no-op across a full 450-day backfill.
     if not isinstance(payload, dict):
         return []
 
@@ -384,30 +390,28 @@ def _normalize_sleep(payload: JSONValue) -> list[CanonicalRecord]:
     if not isinstance(daily_sleep, dict):
         return []
 
-    sleep_id_raw = payload.get("sleepId")
+    sleep_id_raw = daily_sleep.get("id")
     start_raw = daily_sleep.get("sleepStartTimestampGMT")
     end_raw = daily_sleep.get("sleepEndTimestampGMT")
     duration_raw = daily_sleep.get("sleepTimeSeconds")
     day_raw = daily_sleep.get("calendarDate")
 
-    if not isinstance(sleep_id_raw, str):
+    if not isinstance(sleep_id_raw, int | float):
         return []
-    if not isinstance(start_raw, str) or not isinstance(end_raw, str):
+    if not isinstance(start_raw, int | float) or not isinstance(end_raw, int | float):
         return []
     if not isinstance(duration_raw, int):
         return []
     if not isinstance(day_raw, str):
         return []
 
-    start_at = _parse_datetime_utc(start_raw)
-    end_at = _parse_datetime_utc(end_raw)
-    if start_at is None or end_at is None:
-        return []
+    start_at = datetime.fromtimestamp(start_raw / 1000, tz=UTC)
+    end_at = datetime.fromtimestamp(end_raw / 1000, tz=UTC)
 
     return [
         CanonicalRecord(
             record_type="sleep_session",
-            external_id=sleep_id_raw,
+            external_id=str(int(sleep_id_raw)),
             occurred_at=start_at,
             data={
                 "start_at": start_at.isoformat(),
