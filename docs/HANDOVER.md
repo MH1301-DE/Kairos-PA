@@ -230,7 +230,9 @@ Throttle: 2 s Delay zwischen Fenstern beim Backfill
                  └─ c4d2e3f5a6b7  activity_fields_metric_seeds
                       └─ 6bf30be597a0  hypertables_wellness_activity_record
                            └─ f67b0560a2ad  user_setting
-                                └─ 339358b313ef  metrics_raw_tables  ← HEAD
+                                └─ 339358b313ef  metrics_raw_tables
+                                     └─ a3580dcb7b4a  calendar_event_and_calendar_prefs
+                                          └─ ad8779b9f2f5  wellness_quality_flag  ← HEAD
 ```
 
 **Wichtig:** `6bf30be597a0` enthält **keine** Compression Policy mehr — TimescaleDB kann
@@ -565,6 +567,27 @@ notiert (s.o., in die "bewusst offen gelassene Punkte" eingearbeitet).
 
 **Nächster Schritt:** Merge nach `main` (lokal, Tests auf dem gemergten Ergebnis erneut
 grün verifizieren vor dem Push — etabliertes Muster aus der Dashboard-Frontend-Phase).
+
+---
+
+### Phase 1 Härtung — bekannte, bewusst offene Punkte (Stand 2026-09-08)
+
+Am Ende des 7-Task-Härtungsplans (`docs/superpowers/plans/2026-09-08-phase-1-haertung.md`)
+im Whole-Branch-Review identifiziert und **bewusst nicht** in dieser Phase behoben:
+
+- **`WellnessSample.quality` wird geschrieben, aber nirgends gelesen** — die Tagesaggregate in
+  `src/kairos/repositories/metrics_recompute.py` (Basis für `/api/metrics/*`-Baselines) mitteln
+  weiterhin `suspect`-markierte Messwerte mit ein; der Fix wäre ein `WHERE quality <> 'suspect'`
+  plus Recompute, gehört aber zur bereits ausgelieferten Phase 2, nicht zu dieser Garmin-Phase.
+- **`_build_google_calendar_client` (`src/kairos/routers/sync.py`) schluckt Fehler weiterhin
+  still** (`except Exception: return None`) — dasselbe Muster, das `_build_garmin_client` in
+  dieser Phase losgeworden ist; unangetastet gelassen, weil es Phase-3-Kalendercode ist.
+- **Kein `CHECK`-Constraint auf `WellnessSample.quality`** (aktuell freies `String(16)`) —
+  bräuchte eine eigene Migration; Risiko derzeit gering, da genau ein Code-Pfad die Spalte
+  schreibt. Nachzuholen, sobald weitere `quality`-Werte dazukommen.
+- **Die `/api/data/*`-Lese-API hat noch keinen Frontend-Konsumenten** — in dieser Phase bekam
+  nur `/api/sync/*` eine UI; die Visualisierung dieser Daten ist explizit Aufgabe einer
+  späteren Phase, nicht dieser Härtung.
 
 ---
 
