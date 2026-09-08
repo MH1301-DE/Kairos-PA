@@ -223,9 +223,9 @@ async def _build_garmin_client(session: AsyncSession, user_id: UUID) -> object |
         token_json = decrypt(conn_row.credentials_enc, dek).decode()
 
         gc = importlib.import_module("garminconnect")
-        garmin = cast(object, gc.Garmin())
-        await asyncio.to_thread(garmin.login, token_json)  # type: ignore[attr-defined]
-        return garmin
+        garmin = cast(Any, gc.Garmin())
+        await asyncio.to_thread(garmin.login, token_json)
+        return garmin  # type: ignore[no-any-return]
     except Exception:
         return None
 
