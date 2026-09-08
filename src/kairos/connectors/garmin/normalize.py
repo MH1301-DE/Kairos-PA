@@ -126,7 +126,11 @@ def _normalize_body_battery(payload: JSONValue) -> list[CanonicalRecord]:
 
 
 def _normalize_hrv(payload: JSONValue) -> list[CanonicalRecord]:
-    # get_hrv_data → {"hrvReadings": [{"hrv5MinAvg": 45, "startTimeGMT": "..."}, ...]}
+    # get_hrv_data -> {"hrvReadings": [{"hrvValue": 45, "readingTimeGMT": "..."}, ...]}
+    # verified against a real archived Garmin response -- the assumed field
+    # names (hrv5MinAvg / startTimeGMT) don't exist in the live API at all,
+    # so every reading failed the isinstance(ts_raw, str) check and was
+    # silently dropped.
     if not isinstance(payload, dict):
         return []
     readings = payload.get("hrvReadings")
@@ -136,8 +140,8 @@ def _normalize_hrv(payload: JSONValue) -> list[CanonicalRecord]:
     for item in readings:
         if not isinstance(item, dict):
             continue
-        ts_raw = item.get("startTimeGMT")
-        val = item.get("hrv5MinAvg")
+        ts_raw = item.get("readingTimeGMT")
+        val = item.get("hrvValue")
         if not isinstance(ts_raw, str) or not isinstance(val, int | float):
             continue
         occurred_at = _parse_datetime_utc(ts_raw)

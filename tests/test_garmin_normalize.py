@@ -52,6 +52,26 @@ def test_normalize_body_battery_into_canonical_records() -> None:
     assert records[1].data == {"metric": "body_battery", "value": 100.0}
 
 
+def test_normalize_hrv_into_canonical_records() -> None:
+    # get_hrv_data's real shape: hrvReadings items use "hrvValue" and
+    # "readingTimeGMT" -- verified against a real archived Garmin response.
+    # The originally assumed field names ("hrv5MinAvg", "startTimeGMT") never
+    # existed in the live API.
+    payload = {
+        "hrvReadings": [
+            {"hrvValue": 77, "readingTimeGMT": "2026-09-06T20:38:15.0"},
+        ]
+    }
+
+    records = normalize_payload(kind="hrv", payload=payload)
+
+    assert len(records) == 1
+    assert records[0].record_type == "wellness_sample"
+    assert records[0].external_id == "hrv_5min:2026-09-06T20:38:15+00:00"
+    assert records[0].occurred_at == datetime(2026, 9, 6, 20, 38, 15, tzinfo=UTC)
+    assert records[0].data == {"metric": "hrv_5min", "value": 77.0}
+
+
 def test_normalize_sleep_into_canonical_records() -> None:
     # get_sleep_data's real shape: no top-level "sleepId" -- the id lives at
     # dailySleepDTO.id (int), and the start/end timestamps are epoch-ms ints,
