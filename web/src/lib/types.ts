@@ -50,3 +50,15 @@ export interface FreeSlot {
 	start: string;
 	end: string;
 }
+
+export interface Goal {
+	id: string;
+	title: string;
+	target_value: number | null;
+	target_unit: string | null;
+	target_date: string | null;
+	notes: string | null;
+	status: 'active' | 'completed' | 'abandoned';
+	created_at: string;
+	updated_at: string;
+}

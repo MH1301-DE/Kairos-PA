@@ -14,16 +14,17 @@ export async function apiGet<T>(fetchFn: typeof fetch, path: string): Promise<T>
 	return (await resp.json()) as T;
 }
 
-export async function apiPost<T>(
+async function apiRequest<T>(
+	method: 'POST' | 'PATCH' | 'DELETE',
 	fetchFn: typeof fetch,
 	path: string,
-	body: unknown
+	body?: unknown
 ): Promise<{ status: number; data: T }> {
 	const resp = await fetchFn(path, {
-		method: 'POST',
+		method,
 		credentials: 'include',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(body)
+		body: body === undefined ? undefined : JSON.stringify(body)
 	});
 	// a proxy/gateway error yields HTML or an empty body — degrade so callers
 	// can still branch on the status code instead of crashing on a SyntaxError
@@ -34,4 +35,24 @@ export async function apiPost<T>(
 		data = {} as T;
 	}
 	return { status: resp.status, data };
+}
+
+export async function apiPost<T>(
+	fetchFn: typeof fetch,
+	path: string,
+	body: unknown
+): Promise<{ status: number; data: T }> {
+	return apiRequest<T>('POST', fetchFn, path, body);
+}
+
+export async function apiPatch<T>(
+	fetchFn: typeof fetch,
+	path: string,
+	body: unknown
+): Promise<{ status: number; data: T }> {
+	return apiRequest<T>('PATCH', fetchFn, path, body);
+}
+
+export async function apiDelete<T>(fetchFn: typeof fetch, path: string): Promise<{ status: number; data: T }> {
+	return apiRequest<T>('DELETE', fetchFn, path);
 }
