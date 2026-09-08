@@ -55,7 +55,8 @@ class SyncStateRepository(Protocol):
         user_id: UUID,
         connector_id: str,
         kind: str,
-    ) -> tuple[datetime | None, datetime | None]:
+    ) -> tuple[datetime | None, datetime | None, datetime | None]:
+        # returns (cursor, complete_from, complete_to)
         ...
 
     async def set_backfill_cursor(
@@ -74,6 +75,7 @@ class SyncStateRepository(Protocol):
         user_id: UUID,
         connector_id: str,
         kind: str,
+        complete_from: datetime,
         complete_to: datetime,
     ) -> None:
         ...
@@ -143,12 +145,22 @@ class SyncService:
         if from_date >= to_date:
             return BackfillResult(windows_processed=0, completed=True, next_cursor=None)
 
-        cursor, complete_to = await self._sync_state_repo.get_backfill_state(
+        cursor, complete_from, complete_to = await self._sync_state_repo.get_backfill_state(
             user_id=user_id,
             connector_id=connector.connector_id,
             kind=kind,
         )
-        if complete_to is not None and complete_to >= to_date:
+        # short-circuit only when the ENTIRE requested [from_date, to_date] is
+        # already covered -- checking complete_to alone would wrongly skip a
+        # request for an older range than what's covered so far (e.g. "also
+        # backfill the 9 months before what we already have").
+        already_covered = (
+            complete_from is not None
+            and complete_to is not None
+            and complete_from <= from_date
+            and complete_to >= to_date
+        )
+        if already_covered:
             return BackfillResult(windows_processed=0, completed=True, next_cursor=None)
 
         if cursor is None:
@@ -192,6 +204,7 @@ class SyncService:
             user_id=user_id,
             connector_id=connector.connector_id,
             kind=kind,
+            complete_from=from_date,
             complete_to=to_date,
         )
         return BackfillResult(windows_processed=windows_processed, completed=True, next_cursor=None)

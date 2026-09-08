@@ -13,6 +13,12 @@ class Settings(BaseSettings):
     domain: str = "localhost"
     redirect_uri: str = "http://localhost:8000/auth/callback"
     env: str = "development"
+    # delay between backfill windows, deliberately configurable (not hardcoded)
+    # so it can be tuned per-environment without a code change; keep this
+    # conservative -- Garmin's SSO endpoint Cloudflare-banned this project's
+    # dev IP for a few hours after a burst of login attempts during testing,
+    # so avoid discovering the data-endpoint limit the same way.
+    garmin_backfill_throttle_seconds: float = 1.5
 
     @property
     def is_dev(self) -> bool:

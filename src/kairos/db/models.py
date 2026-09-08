@@ -171,6 +171,7 @@ class SyncState(Base):
     kind: Mapped[str] = mapped_column(Text, nullable=False, primary_key=True)
     synced_through: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     backfill_cursor: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    backfill_complete_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     backfill_complete_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     sync_token: Mapped[str | None] = mapped_column(Text)
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -385,4 +386,27 @@ class DailySummary(Base):
 
     __table_args__ = (
         UniqueConstraint("user_id", "day", "summary_type", name="uq_daily_summary"),
+    )
+
+
+class Goal(Base):
+    __tablename__ = "goal"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app_user.id", ondelete="CASCADE"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    # free-text unit ("min", "km", "kg", ...) instead of an enum -- goal
+    # shapes vary too much (race time, distance, weight, ...) to lock down
+    target_value: Mapped[float | None] = mapped_column(Float)
+    target_unit: Mapped[str | None] = mapped_column(String(32))
+    target_date: Mapped[date | None] = mapped_column(Date)
+    notes: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'completed', 'abandoned')", name="goal_status_check"),
     )

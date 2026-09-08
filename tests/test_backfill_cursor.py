@@ -50,9 +50,10 @@ class StubCanonicalRepo:
 class StubSyncStateRepo:
     def __init__(self) -> None:
         self.cursor: datetime | None = None
+        self.complete_from: datetime | None = None
         self.complete_to: datetime | None = None
         self.cursor_updates: list[datetime] = []
-        self.complete_updates: list[datetime] = []
+        self.complete_updates: list[tuple[datetime, datetime]] = []
 
     async def mark_success(self, **_: object) -> None:
         return None
@@ -63,9 +64,9 @@ class StubSyncStateRepo:
         user_id: UUID,
         connector_id: str,
         kind: str,
-    ) -> tuple[datetime | None, datetime | None]:
+    ) -> tuple[datetime | None, datetime | None, datetime | None]:
         del user_id, connector_id, kind
-        return self.cursor, self.complete_to
+        return self.cursor, self.complete_from, self.complete_to
 
     async def set_backfill_cursor(
         self,
@@ -85,12 +86,14 @@ class StubSyncStateRepo:
         user_id: UUID,
         connector_id: str,
         kind: str,
+        complete_from: datetime,
         complete_to: datetime,
     ) -> None:
         del user_id, connector_id, kind
         self.cursor = None
+        self.complete_from = complete_from
         self.complete_to = complete_to
-        self.complete_updates.append(complete_to)
+        self.complete_updates.append((complete_from, complete_to))
 
 
 def _service(sync_state_repo: StubSyncStateRepo) -> SyncService:
@@ -132,7 +135,7 @@ async def test_run_backfill_decrements_cursor_until_from_date() -> None:
         datetime(2026, 8, 2, tzinfo=UTC),
         datetime(2026, 8, 1, tzinfo=UTC),
     ]
-    assert repo.complete_updates == [to_date]
+    assert repo.complete_updates == [(from_date, to_date)]
 
 
 @pytest.mark.asyncio
@@ -184,12 +187,13 @@ async def test_run_backfill_can_stop_and_resume_from_cursor() -> None:
         Window(start=datetime(2026, 8, 2, tzinfo=UTC), end=datetime(2026, 8, 3, tzinfo=UTC)),
         Window(start=datetime(2026, 8, 1, tzinfo=UTC), end=datetime(2026, 8, 2, tzinfo=UTC)),
     ]
-    assert repo.complete_updates == [to_date]
+    assert repo.complete_updates == [(from_date, to_date)]
 
 
 @pytest.mark.asyncio
 async def test_run_backfill_skips_when_completion_marker_reaches_target() -> None:
     repo = StubSyncStateRepo()
+    repo.complete_from = datetime(2026, 8, 1, tzinfo=UTC)
     repo.complete_to = datetime(2026, 8, 4, tzinfo=UTC)
     service = _service(repo)
     connector = StubConnector()
@@ -205,3 +209,40 @@ async def test_run_backfill_skips_when_completion_marker_reaches_target() -> Non
 
     assert result == BackfillResult(windows_processed=0, completed=True, next_cursor=None)
     assert connector.windows == []
+
+
+@pytest.mark.asyncio
+async def test_run_backfill_extends_further_into_the_past_when_requested() -> None:
+    """A second, explicit request for an OLDER range than what's already
+    covered must not short-circuit -- this is what lets a follow-up backfill
+    fill in older history (e.g. extending 15 months of coverage to 24) without
+    re-fetching the part that's already there."""
+    repo = StubSyncStateRepo()
+    repo.complete_from = datetime(2026, 8, 2, tzinfo=UTC)
+    repo.complete_to = datetime(2026, 8, 4, tzinfo=UTC)
+    service = _service(repo)
+    connector = StubConnector()
+    user_id = uuid4()
+
+    # requests exactly the not-yet-covered older slice
+    result = await service.run_backfill(
+        connector=connector,
+        user_id=user_id,
+        kind="sleep",
+        from_date=datetime(2026, 8, 1, tzinfo=UTC),
+        to_date=datetime(2026, 8, 2, tzinfo=UTC),
+        step=timedelta(days=1),
+    )
+
+    assert result == BackfillResult(windows_processed=1, completed=True, next_cursor=None)
+    assert connector.windows == [
+        Window(start=datetime(2026, 8, 1, tzinfo=UTC), end=datetime(2026, 8, 2, tzinfo=UTC)),
+    ]
+    # SyncService reports exactly the range it just walked; reconciling this
+    # against the wider previously-known coverage (GREATEST/LEAST so the
+    # forward bound never regresses) is the SQL repository's job, not
+    # SyncService's -- covered by mark_backfill_complete's own SQL, this stub
+    # intentionally doesn't replicate that merge.
+    assert repo.complete_updates == [
+        (datetime(2026, 8, 1, tzinfo=UTC), datetime(2026, 8, 2, tzinfo=UTC)),
+    ]

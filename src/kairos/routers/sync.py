@@ -34,8 +34,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/sync", tags=["sync"])
 
-_DEFAULT_BACKFILL_MONTHS = 15
-_THROTTLE_SECONDS = 2.0
+_DEFAULT_BACKFILL_MONTHS = 24
 
 # activity_fit must run after activity_list (FK dependency on activity.id)
 _ALL_KINDS: tuple[str, ...] = (
@@ -189,7 +188,7 @@ async def _run_backfill_task(
                         kind=job.kind,
                         from_date=from_dt,
                         to_date=to_dt,
-                        throttle_seconds=_THROTTLE_SECONDS,
+                        throttle_seconds=settings.garmin_backfill_throttle_seconds,
                     )
                     await session.commit()
                     job.status = "done"

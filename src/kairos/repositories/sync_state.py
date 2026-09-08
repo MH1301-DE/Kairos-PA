@@ -69,13 +69,13 @@ class SqlSyncStateRepository:
         user_id: UUID,
         connector_id: str,
         kind: str,
-    ) -> tuple[datetime | None, datetime | None]:
+    ) -> tuple[datetime | None, datetime | None, datetime | None]:
         await self._set_rls_user(user_id)
         row = (
             await self._session.execute(
                 text(
                     """
-                    SELECT backfill_cursor, backfill_complete_to
+                    SELECT backfill_cursor, backfill_complete_from, backfill_complete_to
                     FROM sync_state
                     WHERE user_id = :user_id AND connector = :connector AND kind = :kind
                     """
@@ -88,8 +88,8 @@ class SqlSyncStateRepository:
             )
         ).one_or_none()
         if row is None:
-            return None, None
-        return row.backfill_cursor, row.backfill_complete_to
+            return None, None, None
+        return row.backfill_cursor, row.backfill_complete_from, row.backfill_complete_to
 
     async def set_backfill_cursor(
         self,
@@ -139,6 +139,7 @@ class SqlSyncStateRepository:
         user_id: UUID,
         connector_id: str,
         kind: str,
+        complete_from: datetime,
         complete_to: datetime,
     ) -> None:
         await self._set_rls_user(user_id)
@@ -150,6 +151,7 @@ class SqlSyncStateRepository:
                     connector,
                     kind,
                     backfill_cursor,
+                    backfill_complete_from,
                     backfill_complete_to,
                     last_run_at,
                     consecutive_failures
@@ -159,6 +161,7 @@ class SqlSyncStateRepository:
                     :connector,
                     :kind,
                     NULL,
+                    :complete_from,
                     :complete_to,
                     NOW(),
                     0
@@ -166,6 +169,10 @@ class SqlSyncStateRepository:
                 ON CONFLICT (user_id, connector, kind)
                 DO UPDATE SET
                     backfill_cursor = NULL,
+                    backfill_complete_from = COALESCE(
+                        LEAST(sync_state.backfill_complete_from, EXCLUDED.backfill_complete_from),
+                        EXCLUDED.backfill_complete_from
+                    ),
                     backfill_complete_to = COALESCE(
                         GREATEST(sync_state.backfill_complete_to, EXCLUDED.backfill_complete_to),
                         EXCLUDED.backfill_complete_to
@@ -177,6 +184,7 @@ class SqlSyncStateRepository:
                 "user_id": str(user_id),
                 "connector": connector_id,
                 "kind": kind,
+                "complete_from": complete_from,
                 "complete_to": complete_to,
             },
         )
