@@ -93,7 +93,13 @@ def _normalize_stress(payload: JSONValue) -> list[CanonicalRecord]:
 
 
 def _normalize_body_battery(payload: JSONValue) -> list[CanonicalRecord]:
-    # get_body_battery → list of {"bodyBatteryValuesArray": [[startGMT_ms, endGMT_ms, status, startLocal_ms, value], ...]}
+    # get_body_battery -> list of {"bodyBatteryValuesArray": [[ts_ms, level], ...], ...}
+    # verified against a real archived Garmin response: items are 2-element
+    # [timestamp, bodyBatteryLevel] pairs (see bodyBatteryValueDescriptorDTOList
+    # in the same payload, which documents exactly those two indices) -- NOT
+    # the assumed 5-element [startGMT_ms, endGMT_ms, status, startLocal_ms,
+    # value] shape, which made every item fail the length check and silently
+    # dropped every reading.
     if not isinstance(payload, list):
         return []
     records: list[CanonicalRecord] = []
@@ -104,9 +110,9 @@ def _normalize_body_battery(payload: JSONValue) -> list[CanonicalRecord]:
         if not isinstance(values, list):
             continue
         for item in values:
-            if not isinstance(item, list) or len(item) < 5:
+            if not isinstance(item, list) or len(item) < 2:
                 continue
-            ts_ms, battery_val = item[0], item[4]
+            ts_ms, battery_val = item[0], item[1]
             if not isinstance(ts_ms, int | float) or not isinstance(battery_val, int | float):
                 continue
             occurred_at = datetime.fromtimestamp(ts_ms / 1000, tz=UTC)

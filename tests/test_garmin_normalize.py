@@ -25,6 +25,33 @@ def test_normalize_hr_intraday_into_canonical_records() -> None:
     assert records[0].data == {"metric": "hr", "value": 62.0, "quality": "ok"}
 
 
+def test_normalize_body_battery_into_canonical_records() -> None:
+    # get_body_battery's real shape: list of days, each with
+    # bodyBatteryValuesArray as [ts_ms, level] 2-element pairs -- verified
+    # against a real archived Garmin response (the payload's own
+    # bodyBatteryValueDescriptorDTOList documents indices 0/1 as
+    # timestamp/bodyBatteryLevel). NOT a 5-element
+    # [startGMT_ms, endGMT_ms, status, startLocal_ms, value] shape.
+    payload = [
+        {
+            "date": "2026-09-07",
+            "bodyBatteryValuesArray": [
+                [1788732000000, 33],  # 2026-09-06T22:00:00Z
+                [1788753240000, 100],  # 2026-09-07T03:54:00Z
+            ],
+        }
+    ]
+
+    records = normalize_payload(kind="body_battery", payload=payload)
+
+    assert len(records) == 2
+    assert records[0].record_type == "wellness_sample"
+    assert records[0].external_id == "body_battery:2026-09-06T22:00:00+00:00"
+    assert records[0].occurred_at == datetime(2026, 9, 6, 22, 0, tzinfo=UTC)
+    assert records[0].data == {"metric": "body_battery", "value": 33.0}
+    assert records[1].data == {"metric": "body_battery", "value": 100.0}
+
+
 def test_normalize_sleep_into_canonical_records() -> None:
     # get_sleep_data's real shape: no top-level "sleepId" -- the id lives at
     # dailySleepDTO.id (int), and the start/end timestamps are epoch-ms ints,
