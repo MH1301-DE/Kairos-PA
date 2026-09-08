@@ -226,7 +226,8 @@ async def _build_garmin_client(session: AsyncSession, user_id: UUID) -> object |
         garmin = cast(Any, gc.Garmin())
         await asyncio.to_thread(garmin.login, token_json)
         return garmin  # type: ignore[no-any-return]
-    except Exception:
+    except Exception as exc:
+        logger.warning("Garmin client build failed for user %s: %s", user_id, exc)
         return None
 
 
