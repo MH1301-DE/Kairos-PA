@@ -230,6 +230,21 @@ async def test_get_activity_detail_includes_records(db_session, seeded_activity_
 
 
 @pytest.mark.asyncio
+async def test_get_activity_detail_caps_records_at_limit(
+    db_session, seeded_activity_with_records
+):
+    """A real multi-hour FIT activity has tens of thousands of records — the limit must be
+    applied in SQL, not after loading everything into memory."""
+    user_id, external_id = seeded_activity_with_records
+    repo = SqlDataReadRepository(session=db_session)
+    detail = await repo.get_activity_detail(user_id=user_id, external_id=external_id, limit=2)
+    assert detail is not None
+    assert len(detail.records) == 2
+    # limit applies to the earliest records (ordered by recorded_at)
+    assert detail.records[0].recorded_at < detail.records[1].recorded_at
+
+
+@pytest.mark.asyncio
 async def test_list_activities_paginates_across_null_start_at_boundary(
     db_session, seeded_activities_with_null_start_at
 ):

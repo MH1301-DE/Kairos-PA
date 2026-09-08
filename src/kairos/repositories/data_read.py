@@ -80,7 +80,7 @@ class SqlDataReadRepository:
         return Page(items=items, next_cursor=next_cursor)
 
     async def get_activity_detail(
-        self, *, user_id: UUID, external_id: str
+        self, *, user_id: UUID, external_id: str, limit: int = 5000
     ) -> ActivityDetail | None:
         activity_row = await self._session.execute(
             select(Activity).where(
@@ -94,6 +94,8 @@ class SqlDataReadRepository:
             select(ActivityRecord)
             .where(ActivityRecord.user_id == user_id, ActivityRecord.activity_id == activity.id)
             .order_by(ActivityRecord.recorded_at)
+            # a multi-hour FIT activity holds tens of thousands of 1 Hz rows — cap in SQL
+            .limit(limit)
         )
         return ActivityDetail(activity=activity, records=list(records_row.scalars().all()))
 

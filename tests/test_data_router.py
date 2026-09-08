@@ -234,6 +234,31 @@ async def test_activity_detail_returns_records_for_known_activity(
 
 
 @pytest.mark.asyncio
+async def test_activity_detail_caps_records_at_limit(
+    authed_client, seeded_activity_with_records
+):
+    """Regression: the endpoint used to return every ActivityRecord row unbounded."""
+    _, external_id = seeded_activity_with_records
+    resp = await authed_client.get(
+        f"/api/data/activities/{external_id}", params={"limit": 2}
+    )
+    assert resp.status_code == 200
+    assert len(resp.json()["records"]) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("limit", [0, 20001])
+async def test_activity_detail_rejects_out_of_range_limit(
+    authed_client, seeded_activity_with_records, limit
+):
+    _, external_id = seeded_activity_with_records
+    resp = await authed_client.get(
+        f"/api/data/activities/{external_id}", params={"limit": limit}
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_activity_detail_returns_404_for_unknown_activity(authed_client, test_user_id):
     del test_user_id  # only needed to ensure authed_client has a valid seeded user
     resp = await authed_client.get("/api/data/activities/does-not-exist")

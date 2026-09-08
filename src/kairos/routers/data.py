@@ -76,13 +76,18 @@ async def list_activities(
 @router.get("/activities/{external_id}")
 async def activity_detail(
     external_id: str,
+    limit: int = 5000,
     user: dict[str, Any] = Depends(current_user),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
+    if limit < 1 or limit > 20000:
+        raise HTTPException(status_code=422, detail="limit must be between 1 and 20000")
     user_id = UUID(user["user_id"])
     install_rls_listener(session, user_id)
     repo = SqlDataReadRepository(session=session)
-    detail = await repo.get_activity_detail(user_id=user_id, external_id=external_id)
+    detail = await repo.get_activity_detail(
+        user_id=user_id, external_id=external_id, limit=limit
+    )
     if detail is None:
         raise HTTPException(status_code=404, detail="activity not found")
     return {
