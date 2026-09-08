@@ -38,6 +38,7 @@ class FakeGarminClient:
     """Mimics garminconnect's internal client object."""
 
     dumped_dir: str | None = None
+    skip_strategies: set[str] | None = None
 
     def dump(self, directory: str) -> None:
         self.dumped_dir = directory
@@ -104,11 +105,14 @@ class FakeModule:
 
     def __init__(self, **kwargs: object) -> None:
         self._defaults = kwargs
+        self.last_instance: FakeGarmin | None = None
 
     def Garmin(self, **kwargs: object) -> FakeGarmin:
         merged = {**self._defaults, **kwargs}
         valid = FakeGarmin.__dataclass_fields__
-        return FakeGarmin(**{k: v for k, v in merged.items() if k in valid})
+        instance = FakeGarmin(**{k: v for k, v in merged.items() if k in valid})
+        self.last_instance = instance
+        return instance
 
 
 # ---------------------------------------------------------------------------
@@ -164,6 +168,27 @@ def test_login_connection_error_mapped_to_unavailable() -> None:
 
     with pytest.raises(BackendUnavailable):
         backend.login("user@example.com", "secret", mfa_token=None)
+
+
+def test_login_uses_single_hardened_strategy_not_cascade() -> None:
+    """Regression test: a real login must try exactly one strategy (mobile+cffi),
+    never the full 5-strategy cascade — each extra strategy is an extra request
+    against Garmin, and trying several per click is what got a real IP
+    Cloudflare-banned (Error 1015) during manual testing of this project."""
+    backend = _make_backend()
+    tokens = backend.login("user@example.com", "secret", mfa_token=None)
+
+    assert tokens.refresh_token == _TOKEN_JSON
+    # the FakeGarmin instance backend.login() constructed is discarded after the
+    # call, so inspect it through the module's last-built instance instead
+    built = backend._module.last_instance
+    assert built is not None
+    assert built.client.skip_strategies == {
+        "mobile+requests",
+        "widget+cffi",
+        "portal+cffi",
+        "portal+requests",
+    }
 
 
 # ---------------------------------------------------------------------------

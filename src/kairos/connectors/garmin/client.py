@@ -50,6 +50,28 @@ class GarminAuthBackend(Protocol):
 # garminconnect treats a tokenstore string as inline data when len > 512.
 _MIN_INLINE_TOKEN_LEN = 513
 
+# garminconnect's Client.login() cascades through up to 5 login strategies
+# (mobile+cffi, mobile+requests, widget+cffi, portal+cffi, portal+requests) by
+# default, trying each in turn on any non-credential failure. That means one
+# click can fire up to 5 requests at Garmin's SSO endpoints, and a run of mixed
+# 429s/challenge-page failures across strategies gets misclassified by the
+# library's own error-mapping as "wrong password" (a real, reproduced incident:
+# repeated manual login attempts against a real account triggered a Cloudflare
+# Error 1015 temporary IP ban on sso.garmin.com, and 401s were returned to the
+# user even though the credentials were never actually wrong).
+# curl_cffi is a hard dependency of this project (pyproject.toml), so
+# mobile+cffi — the strategy python-garminconnect documents as its primary,
+# TLS-fingerprint-rotating strategy — is always available; skip the other 4 so
+# a single login click makes exactly one attempt instead of a trial-and-error
+# cascade against Garmin.
+_SKIPPED_LOGIN_STRATEGIES = frozenset(
+    {"mobile+requests", "widget+cffi", "portal+cffi", "portal+requests"}
+)
+
+
+def _harden_to_single_strategy(garmin: Any) -> None:
+    garmin.client.skip_strategies = set(_SKIPPED_LOGIN_STRATEGIES)
+
 
 class GarminConnectBackend:
     def __init__(self, garmin_module: Any = None) -> None:
@@ -74,6 +96,7 @@ class GarminConnectBackend:
         mod = self._require_module()
         try:
             garmin = mod.Garmin(email=username, password=password, return_on_mfa=True)
+            _harden_to_single_strategy(garmin)
             with tempfile.TemporaryDirectory() as tmpdir:
                 mfa_status, client_state = garmin.login(tmpdir)
                 if mfa_status == "needs_mfa":
@@ -93,6 +116,7 @@ class GarminConnectBackend:
         mod = self._require_module()
         try:
             garmin = mod.Garmin()
+            _harden_to_single_strategy(garmin)
             if len(refresh_token) > _MIN_INLINE_TOKEN_LEN:
                 tokenstore: str = refresh_token
                 with tempfile.TemporaryDirectory() as tmpdir:
