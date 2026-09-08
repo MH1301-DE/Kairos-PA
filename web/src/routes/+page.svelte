@@ -33,6 +33,15 @@
 
 	async function refreshAll() {
 		refreshing = true;
+		try {
+			// the daily-aggregate tables behind every tile don't update
+			// themselves after a sync -- recompute before refetching, or
+			// "refresh" would just re-show the same stale numbers
+			await fetch('/api/metrics/recompute', { method: 'POST', credentials: 'include' });
+		} catch {
+			// recompute failures degrade to "tiles show whatever's already
+			// aggregated" -- still worth refetching
+		}
 		await invalidate('dashboard:tiles');
 		refreshing = false;
 	}
