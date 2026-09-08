@@ -19,6 +19,11 @@ class SyncJob:
     to_date: str
     status: str = "queued"
     windows_processed: int = 0
+    # total windows this job will process, so the UI can show a percentage.
+    # None for job kinds that don't process date-range windows one at a time
+    # (e.g. google_calendar's single-fetch "events" sync) -- there is no
+    # meaningful total to show for those.
+    windows_total: int | None = None
     error: str | None = None
     started_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     finished_at: str | None = None
@@ -32,6 +37,7 @@ class SyncJob:
             "to_date": self.to_date,
             "status": self.status,
             "windows_processed": self.windows_processed,
+            "windows_total": self.windows_total,
             "error": self.error,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
@@ -52,6 +58,7 @@ class SyncJobRegistry:
         kinds: list[str],
         from_date: str,
         to_date: str,
+        windows_total: int | None = None,
     ) -> list[SyncJob]:
         jobs = []
         for kind in kinds:
@@ -62,6 +69,7 @@ class SyncJobRegistry:
                 kind=kind,
                 from_date=from_date,
                 to_date=to_date,
+                windows_total=windows_total,
             )
             self._jobs[job.job_id] = job
             jobs.append(job)

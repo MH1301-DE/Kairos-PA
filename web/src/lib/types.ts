@@ -26,6 +26,9 @@ export interface SyncJob {
 	to_date: string;
 	status: string;
 	windows_processed: number;
+	// null for job kinds with no meaningful window count (e.g. google_calendar's
+	// single-fetch "events" sync)
+	windows_total: number | null;
 	error: string | null;
 	started_at: string;
 	finished_at: string | null;

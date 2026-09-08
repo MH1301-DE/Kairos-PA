@@ -74,12 +74,18 @@ async def trigger_garmin_backfill(
     if not queued:
         raise HTTPException(status_code=409, detail="All requested kinds are already running")
 
+    # SyncService.run_backfill windows one calendar day at a time (its `step`
+    # default) -- matches this count so the UI can show windows_processed as
+    # a percentage of a real total.
+    total_days = max((to_dt.date() - from_dt.date()).days, 0)
+
     jobs = registry.create_jobs(
         user_id=user_id,
         connector="garmin",
         kinds=queued,
         from_date=from_dt.date().isoformat(),
         to_date=to_dt.date().isoformat(),
+        windows_total=total_days,
     )
 
     background_tasks.add_task(

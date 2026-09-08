@@ -12,6 +12,15 @@
 
 	// polls while any job is queued/running; stops once every job is done/failed/skipped
 	const ACTIVE_STATUSES = new Set(['queued', 'running']);
+
+	// Derived from data.jobs (server truth, refreshed by load() on every poll
+	// tick AND on a plain page reload) rather than local component state --
+	// that's what makes "backfill running" survive a reload instead of only
+	// reflecting the few hundred ms the POST itself takes.
+	let hasActiveGarminJob = $derived(
+		data.jobs.some((j) => j.connector === 'garmin' && ACTIVE_STATUSES.has(j.status))
+	);
+
 	let pollHandle: ReturnType<typeof setInterval> | undefined;
 
 	$effect(() => {
@@ -23,6 +32,14 @@
 			pollHandle = undefined;
 		}
 	});
+
+	function progressLabel(job: PageData['jobs'][number]): string {
+		if (job.windows_total === null || job.windows_total === 0) {
+			return String(job.windows_processed);
+		}
+		const pct = Math.round((job.windows_processed / job.windows_total) * 100);
+		return `${job.windows_processed} / ${job.windows_total} (${pct}%)`;
+	}
 
 	onDestroy(() => {
 		if (pollHandle) clearInterval(pollHandle);
@@ -54,8 +71,14 @@
 		}}
 		class="tile trigger-panel"
 	>
-		<button type="submit" class="btn btn-primary" disabled={triggering}>
-			{triggering ? 'Startet …' : 'Backfill starten'}
+		<button type="submit" class="btn btn-primary" disabled={triggering || hasActiveGarminJob}>
+			{#if hasActiveGarminJob}
+				Backfill läuft …
+			{:else if triggering}
+				Startet …
+			{:else}
+				Backfill starten
+			{/if}
 		</button>
 		{#if form?.triggerError}
 			<p class="status-error">{form.triggerError}</p>
@@ -68,7 +91,7 @@
 				<tr>
 					<th>Kind</th>
 					<th>Status</th>
-					<th>Verarbeitete Fenster</th>
+					<th>Fortschritt</th>
 					<th>Fehler</th>
 				</tr>
 			</thead>
@@ -77,7 +100,13 @@
 					<tr>
 						<td>{job.kind}</td>
 						<td>{job.status}</td>
-						<td>{job.windows_processed}</td>
+						<td>
+							{#if job.windows_total}
+								<progress value={job.windows_processed} max={job.windows_total}
+								></progress>
+							{/if}
+							<span class="progress-label">{progressLabel(job)}</span>
+						</td>
 						<td>{job.error ?? '–'}</td>
 					</tr>
 				{/each}
@@ -95,5 +124,14 @@
 		flex-direction: column;
 		gap: var(--space-4);
 		align-items: flex-start;
+	}
+	progress {
+		vertical-align: middle;
+		margin-right: var(--space-2, 0.5rem);
+		width: 8rem;
+	}
+	.progress-label {
+		color: var(--color-text-muted);
+		font-variant-numeric: tabular-nums;
 	}
 </style>
