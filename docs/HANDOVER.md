@@ -284,7 +284,7 @@ tests/test_metrics_*.py                # Phase-2 Metrics-Backend (siehe unten)
 | Phase | Status |
 |---|---|
 | Phase 0 — Fundament | ✅ `v0.0.1-phase0` getaggt |
-| Phase 1 — Garmin-Pipeline | ~90% — API-Endpoint ✅, Hypertables ✅ (RLS-kompatibel, ohne Compression), Quality-Flag fehlt, echter Backfill-Lauf ausstehend |
+| Phase 1 — Garmin-Pipeline | ~95% — API-Endpoint ✅, Hypertables ✅, Quality-Flag ✅ (`ad8779b9f2f5`), echter 2-Jahres-Backfill läuft (Stand 2026-09-09) — siehe unten |
 | Phase 2 — Kennzahlen & Dashboard | ✅ beide Teilpläne (Metrics-Backend, Dashboard-Frontend) auf `main` gemergt und gepusht (siehe unten) — nur echte Google-OAuth-Credentials + Produktions-Deployment-Topologie fehlen noch für einen vollen Live-Test |
 | Phase 3 — Kalender | ✅ auf `main` gemergt und gepusht (Commit `67fce04`) — siehe unten |
 | Phase 4 — Agent | 🔄 Brainstorming läuft (dialogisch, Nutzer aktiv im Gespräch) — siehe unten |
@@ -292,8 +292,8 @@ tests/test_metrics_*.py                # Phase-2 Metrics-Backend (siehe unten)
 ### Was für Phase-1-Abnahme noch fehlt
 
 1. ~~Hypertables + Compression Policies~~ — ✅ erledigt (`6bf30be597a0`, Compression aus RLS-Gründen entfernt, siehe Migrationskette oben)
-2. **Quality-Flag** — Plausibilitätsprüfung im Normalizer (HR < 25 oder > 230 → `suspect`)
-3. **Echter Backfill-Lauf** — 12 Monate importieren, Stichprobenvergleich mit Garmin Connect
+2. ~~Quality-Flag~~ — ✅ erledigt (`ad8779b9f2f5`, Plausibilitätsprüfung im Normalizer, HR < 25 oder > 230 → `suspect`)
+3. **Echter Backfill-Lauf** — läuft (Stand 2026-09-09), siehe "Phase 1 Härtung — Real-Data-Verifikation" unten. `hr_intraday`/`sleep`/`stress`/`respiration` haben bereits ~4 Monate echte Daten (2026-04-30 bis 2026-09-07); `body_battery`/`hrv`/`spo2`/`daily_summary`/`activity_list`/`activity_fit` sind für den vollen 2-Jahres-Zeitraum (2024-09-19 bis 2026-09-09) neu angestoßen, noch nicht abgeschlossen. `wellness_daily_stats`/`hr_bucket_seconds_daily` (Dashboard-Basis) sind aktuell leer und müssen per `POST /api/metrics/recompute` (oder Dashboard-"Aktualisieren"-Button) neu befüllt werden, sobald genug Rohdaten da sind.
 
 ### Phase 2 — Fortschritt (Stand 2026-08-12)
 
@@ -588,6 +588,131 @@ im Whole-Branch-Review identifiziert und **bewusst nicht** in dieser Phase behob
 - **Die `/api/data/*`-Lese-API hat noch keinen Frontend-Konsumenten** — in dieser Phase bekam
   nur `/api/sync/*` eine UI; die Visualisierung dieser Daten ist explizit Aufgabe einer
   späteren Phase, nicht dieser Härtung.
+
+---
+
+### Phase 1 Härtung — Real-Data-Verifikation (Stand 2026-09-09)
+
+Nach dem formalen Abschluss des 7-Task-Härtungsplans (s.o., "ready to merge") lief eine
+**Session gegen einen echten, live verbundenen Garmin-Account** — genau der offene Punkt
+Nr. 3 aus der Liste oben ("Echter Backfill-Lauf"). Das deckte eine ganze Klasse von Bugs
+auf, die kein synthetischer Test finden konnte: **4 von 6 bis dahin getesteten
+Garmin-Normalizern (`hr_intraday`, `sleep`, `body_battery`, `hrv`) matchten die reale API
+überhaupt nicht** — `raw_payload` archivierte jedes Zeitfenster korrekt (Backfill lief ohne
+Fehler durch, `sync_state` zeigte `last_success_at`), aber `wellness_sample`/`sleep_session`
+blieben bei 0 Zeilen, weil der jeweilige Normalizer beim ersten Feldzugriff scheiterte und
+lautlos eine leere Liste zurückgab. Kein `raise`, kein Log, kein Testfehler — nur stille
+Daten-Leere. Commits: `099592f` (hr_intraday + sleep), `f68098f` (body_battery), `134c986`
+(hrv).
+
+**Konkrete Formfehler** (alle nur durch Abgleich mit echt archivierten `raw_payload`-Zeilen
+gefunden, nicht durch erneutes Raten):
+- `get_heart_rates()`: `heartRateValues` sind `[ts_ms, value]`-Paare (Liste), nicht
+  `{"timestamp": ..., "value": ...}`-Dicts.
+- `get_sleep_data()`: kein Top-Level-`sleepId` — die echte ID ist `dailySleepDTO.id` (int).
+  `sleepStart/EndTimestampGMT` sind Epoch-ms-Ints, keine ISO-Strings.
+- `get_body_battery()`: `bodyBatteryValuesArray`-Einträge sind 2-elementige
+  `[ts_ms, level]`-Paare (siehe `bodyBatteryValueDescriptorDTOList` im selben Payload),
+  nicht das angenommene 5-elementige `[startGMT_ms, endGMT_ms, status, startLocal_ms,
+  value]`.
+- `get_hrv_data()`: Felder heißen `hrvValue`/`readingTimeGMT`, nicht `hrv5MinAvg`/
+  `startTimeGMT` (letztere existieren in der echten API gar nicht).
+
+**Lehre (deckt sich mit der Metrics-Backend-/Dashboard-Frontend-Lektion oben):** Task-Reviews
+und synthetische Fixtures verifizieren nur, dass Code zu sich selbst konsistent ist — nicht,
+dass er zur echten externen API passt. Erst der reale Lauf gegen ein Live-Konto deckt das auf.
+Alle 4 Normalizer-Tests wurden gegen tatsächlich archivierte `raw_payload`-Shapes neu
+geschrieben, nicht neu geraten.
+
+**Fortsetzung in der Folge-Session (Stand 2026-09-09):** Ein gezielter Kurz-Backfill (3 Tage
+statt 2 Jahre) für die 4 damals noch ungetesteten Kinds (`spo2`/`daily_summary`/
+`activity_list`/`activity_fit`) — bewusst VOR dem vollen 2-Jahres-Lauf, um genau diese
+Fehlerklasse in Minuten statt Stunden zu finden — deckte 2 weitere echte Bugs auf, beide
+gefixt (Commit `e674648`):
+- **`spo2`**: `connector.py` rief `g.get_pulse_ox_data()` — existiert in der installierten
+  `garminconnect`-Version nicht mehr, umbenannt zu `get_spo2_data()`. Jedes Fenster scheiterte
+  schon beim Fetch (`AttributeError`), noch vor dem `raw_payload`-Archivieren. Der Normalizer
+  selbst (Feldnamen-Annahmen) wurde gegen die echte — für dieses Konto/Gerät aktuell leere —
+  Response verifiziert und ist korrekt.
+- **`activity_fit`**: `garmin-fit-sdk` nutzt für nicht auflösbare Developer-Felder die rohe
+  numerische Feld-ID (int) als Dict-Key (z. B. `140`, `107`). `records_to_json()` reichte
+  das ungeprüft durch, wodurch ein echter Aktivitäts-Record gemischte int/str-Keys bekam.
+  `payload_sha256()`s `json.dumps(sort_keys=True)` stürzte beim Key-Sortieren mit
+  `'<' not supported between instances of 'int' and 'str'` ab. Fix: alle Keys in
+  `records_to_json()` stringifizieren (nichts geht verloren, nur JSON-safe gemacht).
+- Neue Tests: `test_garmin_connector_kinds.py` nutzt `create_autospec(Garmin)`, um für jeden
+  `_ALL_KINDS`-Eintrag zu prüfen, dass die aufgerufene Methode auf der echten
+  `garminconnect.Garmin`-Klasse existiert — hätte die `spo2`-Umbenennung ohne Live-Konto
+  gefangen. `test_fit_decoder.py` deckt den gemischten-Keys-Crash direkt ab.
+
+**Bewährte Taktik für zukünftige Sessions:** Vor jedem vollen Mehrjahres-Backfill für einen
+noch nie gegen echte Daten getesteten Kind zuerst ein kurzes Zeitfenster (2-3 Tage) separat
+anstoßen (eigener Lock pro Kind, blockiert den großen Lauf nicht) — Bugs wie diese kosten so
+Minuten statt Stunden verschwendeter Backfill-Zeit.
+
+**Weitere Funde derselben Session:**
+- **`wellness_daily_stats`/`hr_bucket_seconds_daily` (Dashboard-Basis) waren komplett leer**,
+  obwohl `wellness_sample` bereits ~200k echte Zeilen hatte — nichts in der
+  Ingestion-Pipeline rief `recompute_wellness_daily_stats`/`recompute_hr_bucket_seconds_daily`
+  je auf (beide Funktionen existierten und waren isoliert getestet, hatten aber keinen
+  Aufrufer). Fix: `POST /api/metrics/recompute` (Commit `ba0dadd`), vom Dashboard-
+  "Aktualisieren"-Button aufgerufen.
+- **Cloudflare-IP-Ban-Vorfall**: wiederholtes manuelles Login-Testen löste einen
+  `Error 1015` (Rate-Limit-Sperre) auf `sso.garmin.com` aus. Ursache: `garminconnect`s
+  `Client.login()` probiert bis zu 5 Strategien pro Aufruf durch (mobile+cffi, mobile+
+  requests, widget+cffi, portal+cffi, portal+requests) und fällt bei jedem
+  Nicht-Credential-Fehler zur nächsten durch — ein Klick kann also bis zu 5 Requests an
+  Garmin auslösen. Fix (`32b2376`): auf die eine Strategie gehärtet, die ohnehin immer
+  verfügbar ist (`curl_cffi` ist Pflicht-Dependency) — mobile+cffi. **Für jede künftige
+  Session mit echtem Garmin-Login-Testen wichtig:** nicht wiederholt klicken/retriggern,
+  genau das hat den Ban ausgelöst. Passend dazu: Login-/Backfill-Buttons zeigen jetzt einen
+  Pending-State (`a6838ec`) und der Backfill-Throttle ist konfigurierbar (Default 1.5s,
+  `7cfadca`) statt hartkodierter 2.0s.
+- **`sync_state.backfill_complete_from`** ergänzt (`7cfadca`) — vorher konnte eine Anfrage
+  für einen ÄLTEREN Zeitraum als bereits synct nie greifen, weil `backfill_complete_to`
+  allein für den Short-Circuit-Check reichte. Migration `22f63d4a9f9b` +
+  `7c1b2e4f9a3d` (goal_table) lagen nach Sessionende ungewendet in der DB (Lock-Konflikt mit
+  dem noch laufenden Backfill-Kind-Prozess) — in dieser Folge-Session sauber angewendet,
+  nachdem kein Backfill mehr aktiv lief.
+- **Neues Goals-Feature** (`7cfadca`, `505fac7`): `goal`-Tabelle (RLS, gleiches Muster wie
+  `calendar_event`) + `/api/goals` CRUD + `/goals`-Seite. Nicht Teil des ursprünglichen
+  Härtungsplans, aus derselben Live-Testing-Session heraus ergänzt.
+- Neue Kontonav (Dropdown mit Garmin-/Calendar-Sync-Status + Trigger-Buttons + Logout),
+  Dashboard-"Aktualisieren" + Pro-Kachel-Datumswahl (`505fac7`), Backfill-Fortschrittsanzeige
+  in Prozent (`2e1de02`) — alles aus direktem Live-UX-Feedback während des Testens
+  ("kein Feedback, dass ich den Button gedrückt habe", "nur dass es läuft, aber keine
+  Prozente").
+
+**Wichtiges Betriebsdetail entdeckt:** `run_backfill()` committed erst NACH allen Fenstern
+eines Kinds in einer einzigen Transaktion (ein `session.commit()` erst nach dem `for job in
+jobs`-Loop in `_run_backfill_task`, `routers/sync.py`) — bei einem 2-Jahres-Lauf (720 Fenster
+× 1.5s Throttle, plus reale API-Latenz) hält das die Transaktion potenziell 30-60+ Minuten
+offen, und `SyncJob.windows_processed` (in-memory, `job_registry.py`) wird trotz des
+UI-Fortschrittsbalken-Commits `2e1de02` ebenfalls erst am Ende in einem Schritt gesetzt —
+während des Laufs zeigt die UI/`GET /api/sync/status` durchgehend 0 an, kein echter
+Live-Fortschritt. Bei einem Backend-Neustart/-Crash während eines Kinds geht dessen gesamter
+Fortschritt verloren (nichts committed) — **das ist die Ursache**, warum ein Reload den
+vorherigen Kind-Prozess "erwartbar" unterbrach (s. Sessionende-Notiz oben) und warum die
+`goal_table`-Migration blockierte, solange ein Kind lief. Kein Fix in dieser Session (würde
+den Ingestion-Layer umbauen, aus Scope) — nur dokumentiert, damit die nächste Session nicht
+erneut rätselt, warum der Fortschrittsbalken bei 0% hängt.
+
+**Taktische Konsequenz:** Migrationen/Backend-Neustarts nur anstoßen, wenn wirklich kein
+Backfill-Kind aktiv läuft (`GET /api/sync/status`, alle Jobs `done`/`failed`/`skipped`, kein
+`running`) — sonst geht der laufende Kind komplett verloren und muss neu starten.
+
+**Stand am Ende dieser Session:** Migrationen angewendet (DB jetzt auf `7c1b2e4f9a3d`,
+neuer Head — angewendet, bevor irgendein Backfill lief). Backend neu gestartet (lief nicht
+mehr, vorheriges Sessionende hatte den Prozess beendet). Ein initialer 2-Jahres-Backfill für
+`body_battery`/`hrv`/`spo2`/`daily_summary`/`activity_list`/`activity_fit` wurde angestoßen,
+dann bewusst per Backend-Neustart abgebrochen (nur `body_battery` war ~15 Min. angelaufen,
+noch nichts committed — s.o., günstiger Zeitpunkt für den Neustart), NACHDEM der gezielte
+3-Tage-Probe-Lauf (s.o.) die `spo2`/`activity_fit`-Bugs gefunden hatte — sonst hätte der
+große Lauf dieselben Bugs erst nach Stunden (an `spo2`s Position in `_ALL_KINDS`) erneut
+getroffen. Nach den Fixes (Commit `e674648`) wird der volle 2-Jahres-Backfill für alle 6
+Kinds erneut angestoßen. **Nächster Schritt:** Fortschritt prüfen (`GET /api/sync/status`,
+denk dran: bleibt bis Kind-Ende bei 0), nach Abschluss aller 6 Kinds `POST
+/api/metrics/recompute` aufrufen und das Dashboard gegen echte Zahlen sichtprüfen.
 
 ---
 
