@@ -3,12 +3,16 @@
 	import type { MetricResult } from '../types';
 	import type { ModuleDef } from '../modules';
 	import ConfidenceBadge from './ConfidenceBadge.svelte';
+	import InfoTooltip from './InfoTooltip.svelte';
 
 	let { result, module }: { result: MetricResult; module: ModuleDef } = $props();
 </script>
 
 <div class="tile value-tile">
-	<h3>{module.title}</h3>
+	<div class="tile-header">
+		<h3>{module.title}</h3>
+		<InfoTooltip text={module.description} />
+	</div>
 	{#if result.confidence === 'insufficient_data' || result.value === null}
 		<p class="empty">Nicht genug Daten</p>
 	{:else if module.fields}

@@ -21,6 +21,12 @@ describe('module registry', () => {
 		expect(new Set(ids).size).toBe(ids.length);
 	});
 
+	it('every module has a non-empty description for the tile info tooltip', () => {
+		for (const m of MODULES) {
+			expect(m.description.length).toBeGreaterThan(0);
+		}
+	});
+
 	it('moduleById finds a known module and returns undefined for unknown', () => {
 		expect(moduleById('trimp')?.title).toBe('Trainingsbelastung (TRIMP)');
 		expect(moduleById('nonexistent')).toBeUndefined();
