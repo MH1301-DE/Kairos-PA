@@ -30,7 +30,7 @@
 <div class="tile bar-tile">
 	<div class="tile-header">
 		<h3>{module.title}</h3>
-		<InfoTooltip text={module.description} />
+		<InfoTooltip lines={module.description} />
 	</div>
 	{#if result.confidence === 'insufficient_data' || option === null}
 		<p class="empty">Nicht genug Daten</p>
