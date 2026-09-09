@@ -696,9 +696,13 @@ während des Laufs zeigt die UI/`GET /api/sync/status` durchgehend 0 an, kein ec
 Live-Fortschritt. Bei einem Backend-Neustart/-Crash während eines Kinds geht dessen gesamter
 Fortschritt verloren (nichts committed) — **das ist die Ursache**, warum ein Reload den
 vorherigen Kind-Prozess "erwartbar" unterbrach (s. Sessionende-Notiz oben) und warum die
-`goal_table`-Migration blockierte, solange ein Kind lief. Kein Fix in dieser Session (würde
-den Ingestion-Layer umbauen, aus Scope) — nur dokumentiert, damit die nächste Session nicht
-erneut rätselt, warum der Fortschrittsbalken bei 0% hängt.
+`goal_table`-Migration blockierte, solange ein Kind lief.
+
+**Der `windows_processed`-Teil wurde in der Folge-Session gefixt** (Commit `7e309ea`,
+s. u.) — `run_backfill()` bekam einen `on_progress`-Callback, der nach jedem Fenster das
+in-memory `SyncJob.windows_processed` direkt setzt (kein DB-Commit nötig, unabhängig vom
+Transaktions-Problem). Das Transaktions-/Verlust-bei-Neustart-Verhalten selbst bleibt
+unverändert — nur die Fortschrittsanzeige während des Laufs ist jetzt live.
 
 **Taktische Konsequenz:** Migrationen/Backend-Neustarts nur anstoßen, wenn wirklich kein
 Backfill-Kind aktiv läuft (`GET /api/sync/status`, alle Jobs `done`/`failed`/`skipped`, kein
@@ -713,9 +717,117 @@ noch nichts committed — s.o., günstiger Zeitpunkt für den Neustart), NACHDEM
 3-Tage-Probe-Lauf (s.o.) die `spo2`/`activity_fit`-Bugs gefunden hatte — sonst hätte der
 große Lauf dieselben Bugs erst nach Stunden (an `spo2`s Position in `_ALL_KINDS`) erneut
 getroffen. Nach den Fixes (Commit `e674648`) wird der volle 2-Jahres-Backfill für alle 6
-Kinds erneut angestoßen. **Nächster Schritt:** Fortschritt prüfen (`GET /api/sync/status`,
-denk dran: bleibt bis Kind-Ende bei 0), nach Abschluss aller 6 Kinds `POST
-/api/metrics/recompute` aufrufen und das Dashboard gegen echte Zahlen sichtprüfen.
+Kinds erneut angestoßen.
+
+---
+
+### Phase 1 Härtung — Dashboard-/Sync-/Kalender-Fixes (Stand 2026-09-09, dieselbe Session)
+
+Nach den Normalizer-Fixes wurde der volle 2-Jahres-Backfill beobachtet, während parallel
+weiteres Live-Feedback einlief. Reihenfolge der Funde:
+
+**1. Dashboard-Kacheln uneinheitlich groß + leeres HF-Zonen-Diagramm** (Commit `b6dff74`):
+`.tile`/`.tile-error` hatten keine feste Höhe — Karten mit nur "Nicht genug Daten" waren
+sichtbar kürzer als Chart-Karten (220px feste ECharts-Höhe), was wie ein Flickenteppich
+aussah. Fix: `flex:1` + `min-height:320px` auf `.tile`, im ohnehin schon `display:flex`-
+Grid-Item `.tile-card`. Zweiter Fund an derselben Stelle: `hr_zone_distribution`s Backend-
+Variante gibt bei fehlenden Daten ein Dict mit allen Zonen auf `0.0` zurück (nicht `null`,
+Konfidenz `low` nicht `insufficient_data`) — `BarTile.svelte`s `value === null`-Check hat
+das nie erkannt und ein Balkendiagramm mit lauter Nullbalken gerendert statt "Nicht genug
+Daten". Fix nutzt `coverage_days === 0` (das Feld, das die Variante für genau diesen Fall
+schon setzt).
+
+**2. "Aktualisieren" hat jedes manuell gewählte "Stand"-Datum zurückgesetzt** (Commit
+`a042312`): `+page.server.ts`s `load()` holt jede Kachel immer für heute; der Client-Effect,
+der das mit dem lokalen Tile-State mischt, hat `asOf` bei jedem Rerun bedingungslos auf
+heute gesetzt — auch beim Rerun, den "Aktualisieren" auslöst. Fix: ein `manualAsOf`-Map
+(bewusst außerhalb von `$state`) merkt sich das zuletzt gewählte Datum pro Kachel. Erster
+Versuch dafür crashte mit `effect_update_depth_exceeded` (der Effect las den State, den er
+selbst gerade geschrieben hatte) — mit `untrack()` gelöst. Die Merge-Logik steckt jetzt in
+einer reinen, testbaren Funktion (`mergeTileAsOf`, `lib/dashboardTiles.ts`).
+
+**3. Sync-Fortschrittsbalken zeigten nur 0% und dann einen Sprung auf 100%** (Commit
+`7e309ea`): `run_backfill()` hatte schon `throttle`/`should_stop`-Callback-Hooks für genau
+diesen Zweck; `on_progress` nach demselben Muster ergänzt, ruft nach jedem Fenster
+`setattr(job, "windows_processed", n)` auf dem in-memory `SyncJob` — kein DB-Commit nötig,
+unabhängig vom oben dokumentierten Transaktions-Problem. Das Frontend (`sync/+page.svelte`)
+war dafür schon korrekt gebaut (pollt alle 2s, rendert `<progress>`) — es fehlten nur echte
+Zwischenwerte. Ruff fing dabei einen echten Closure-Bug (`B023`): die erste Version band
+`job` aus der `for job in jobs`-Schleife per Referenz statt per Default-Arg — in diesem
+konkreten Fall unschädlich (Callback läuft synchron innerhalb derselben Iteration), aber als
+Late-Binding-Falle trotzdem korrigiert.
+
+**4. Google-Kalender-Termine wurden nie angezeigt — echter Kalender-Sync lief noch NIE**
+(Commit `2a20969`): `sync_state` hatte 0 Zeilen für `google_calendar`, `calendar_event` war
+komplett leer, obwohl die Verbindung seit 2026-08-13 "active" war. Manuelles Triggern
+meldete "done", 0 Events, kein Fehler. Direkter Aufruf des Connectors gegen den echten
+Account zeigte die Ursache: Google liefert HTTP 200 mit
+`{"error": {"code": 403, "reason": "SERVICE_DISABLED"}, "items": []}` — **die Google
+Calendar API ist im verwendeten Google-Cloud-Projekt nicht aktiviert.** Das ist eine
+Infrastruktur-/Konfigurationslücke, kein Code-Fix — jemand mit Zugriff auf das Google-Cloud-
+Projekt muss die Calendar API unter
+`https://console.developers.google.com/apis/api/calendar-json.googleapis.com/overview?project=155201172735`
+aktivieren, danach ein paar Minuten warten (Google propagiert das nicht sofort) und den
+Kalender-Sync erneut anstoßen.
+
+Der eigentliche Code-Bug, der das *silent* gemacht hat: `GoogleCalendarClient.list_events()`
+wirft nur bei `>=500`; ein 4xx-mit-`error`-Body kommt unverändert durch. `create_event`s
+Aufrufstelle prüft explizit `"error" in created` (es gibt sogar einen `_raise_if_error()`-
+Helper dafür), aber nichts im Fetch-/Sync-Pfad hat je auf dieselbe Form bei `list_events`
+geprüft — der Sync "gelang" also mit 0 Events, immer, lautlos. Fix:
+`GoogleCalendarConnector.fetch()` ruft `_raise_if_error()` jetzt auch auf das
+Fetch-Ergebnis auf, sodass ein API-Fehler als fehlgeschlagener Sync-Job mit echter
+Google-Fehlermeldung sichtbar wird, statt als leerer Kalender.
+
+**Bewertung nach demselben Muster wie die Garmin-Normalizer-Funde:** eine Fehlerklasse
+("API-Antwort mit `error`-Key statt Exception") war an EINER Aufrufstelle (`create_event`)
+korrekt behandelt, an einer strukturell identischen zweiten (`list_events`) aber nicht — kein
+Test hat das gefangen, weil kein Test je den echten Fehler-Payload simuliert hat, bevor
+diese Session ihn gegen den realen Account gefunden hat.
+
+**5. Neue `/account`-Seite für Konto-Einstellungen** (Commit `6ebc84a`): Die bisherige
+Dropdown-Inline-Anzeige (Status + Bearbeiten-Link pro Verbindung) zieht auf eine eigene
+Seite um. `GET /api/connections` liefert jetzt zusätzlich `connected_at`, `last_ok_at`,
+`token_refreshed_at`, `reauth_since`. **Wichtig beim Bauen der Seite festgestellt:** von
+diesen vier ist nur `connected_at` tatsächlich irgendwo im Code geschrieben — `last_ok_at`,
+`token_refreshed_at` und `reauth_since` sind reine Schema-Spalten mit Doc-Kommentaren, die
+eine "proaktive Reauth-Warnung" beschreiben (s. Datenmodell-Abschnitt oben), aber KEIN
+Code-Pfad schreibt sie je, auch nicht der reauth_required-Status selbst (`Connection.status`
+wird im gesamten Code nur je auf `'active'` oder `'disabled'` gesetzt, nie auf
+`'reauth_required'`/`'error'`, obwohl der CHECK-Constraint das erlaubt). Die neue Seite
+zeigt deshalb bewusst nur `status` + `connected_at` — die drei toten Felder würden bei einer
+gesunden, aktiv genutzten Verbindung dauerhaft "nie" anzeigen und eher nach kaputt aussehen
+als informativ sein. Die eigentliche Reauth-Erkennung (Token-Refresh-Fehler erkennen,
+`status`/`reauth_since` entsprechend setzen) ist ein eigenes, noch offenes Ticket.
+
+**6. Performance-Falle in `activity_fit` gefunden, noch nicht gefixt:**
+`SqlCanonicalRepository.upsert_many()` (`src/kairos/repositories/canonical.py`) schreibt
+jeden `CanonicalRecord` einzeln (`await self._session.execute(stmt)` in einer
+`for record in records`-Schleife) — für `wellness_sample`/`sleep_session`/`daily_summary`
+unproblematisch (wenige hundert Zeilen/Tag), aber eine einzelne ~90-Minuten-Aktivität mit
+Sekunden-Auflösung erzeugt **21.733 `activity_record`-Zeilen** (real gemessen). Bei ~122
+Aktivitäten im 2-Jahres-Zeitraum summiert sich das zu Millionen einzelner Insert-Roundtrips.
+Direkt gemessen: `connector.fetch()` selbst ist schnell (0.15s ein aktivitätsloser Tag,
+1.68s ein Tag mit Aktivität → erwartete Gesamtlaufzeit für alle 720 Fenster ~23 Minuten,
+passend zu den anderen Kinds) — die tatsächliche Laufzeit lag bei über 70 Minuten. Die
+Differenz erklärt sich fast vollständig durch die Zeile-für-Zeile-DB-Schreiben. Bewusst
+NICHT während des laufenden Backfills angefasst (hätte den bereits >1h laufenden Kind erneut
+verworfen, s. Transaktions-Problem oben) — **nächster Schritt**: `upsert_many()` für
+`activity_record` auf einen echten Bulk-Insert umstellen (eine `execute()`-Aufruf mit
+Parameter-Liste statt N Aufrufen), sobald der aktuelle Lauf durch ist. Für inkrementelle
+Syncs (wenige neue Aktivitäten pro Tag) ist das nicht spürbar — nur für Mehrjahres-Backfills
+mit vielen historischen Aktivitäten relevant.
+
+**Stand am Ende dieser Session:** `activity_fit` lief zu Sessionende noch (>70 Min., s. o.).
+Migrationen/Backend liefen unverändert seit dem vorherigen Neustart. **Nächste Schritte, in
+dieser Reihenfolge:** (1) `activity_fit` fertig laufen lassen, NICHT währenddessen
+neustarten; (2) Backend neu starten, sobald `GET /api/sync/status` keinen `running`-Job mehr
+zeigt — bringt die Fixes aus #1-#4 oben live; (3) `POST /api/metrics/recompute` aufrufen und
+das Dashboard gegen echte Trainingsdaten sichtprüfen (TRIMP/CTL/ATL/TSB/ACWR/Monotonie/
+HF-Zonenverteilung hängen alle an `activity_record`, das erst nach `activity_fit` befüllt
+ist); (4) `upsert_many()`-Bulk-Insert-Fix (#6 oben); (5) Google Calendar API im Cloud-Projekt
+aktivieren (menschliche Aktion, kein Code) und `POST /api/sync/google_calendar/sync` erneut
+anstoßen, dann `/calendar` gegen die echten Termine der nächsten zwei Wochen prüfen.
 
 ---
 
