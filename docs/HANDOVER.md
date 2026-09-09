@@ -684,9 +684,12 @@ Minuten statt Stunden verschwendeter Backfill-Zeit.
   Prozente").
 
 **Wichtiges Betriebsdetail entdeckt:** `run_backfill()` committed erst NACH allen Fenstern
-eines Kinds in einer einzigen Transaktion (ein `session.commit()` erst nach dem `for job in
-jobs`-Loop in `_run_backfill_task`, `routers/sync.py`) — bei einem 2-Jahres-Lauf (720 Fenster
-× 1.5s Throttle, plus reale API-Latenz) hält das die Transaktion potenziell 30-60+ Minuten
+eines Kinds in einer einzigen Transaktion (`await session.commit()` steht in
+`_run_backfill_task`, `routers/sync.py`, direkt nach dem `run_backfill(...)`-Aufruf pro
+Kind innerhalb der `for job in jobs`-Schleife — also EIN Commit pro Kind, aber erst nachdem
+dieses Kind alle seine Fenster durchlaufen hat, nicht zwischendurch). Bei einem 2-Jahres-Lauf
+(720 Fenster × 1.5s Throttle, plus reale API-Latenz) hält das die Transaktion für dieses eine
+Kind potenziell 30-60+ Minuten
 offen, und `SyncJob.windows_processed` (in-memory, `job_registry.py`) wird trotz des
 UI-Fortschrittsbalken-Commits `2e1de02` ebenfalls erst am Ende in einem Schritt gesetzt —
 während des Laufs zeigt die UI/`GET /api/sync/status` durchgehend 0 an, kein echter
