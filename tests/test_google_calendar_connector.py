@@ -4,6 +4,8 @@ from datetime import UTC, datetime
 from unittest.mock import MagicMock
 from uuid import uuid4
 
+import pytest
+
 from kairos.connectors.google_calendar.connector import GoogleCalendarConnector
 from kairos.connectors.google_calendar.normalize import normalize_events
 from kairos.connectors.types import CanonicalRecord, Window
@@ -66,6 +68,24 @@ def test_connector_fetch_delegates_to_client() -> None:
 
     assert envelope.window == window
     mock_client.list_events.assert_called_once_with("primary", window.start, window.end, None)
+
+
+def test_connector_fetch_raises_on_google_error_response_instead_of_silently_empty() -> None:
+    # a disabled/unauthorized Calendar API on the Google Cloud project returns
+    # HTTP 200 with {"error": {...}, "items": []} -- not an exception. Before
+    # this check existed, that meant a sync "succeeded" with 0 events synced
+    # every single time, with no visible error anywhere -- found against a
+    # real account whose two-weeks-out appointments never showed up in Kairos.
+    mock_client = MagicMock()
+    mock_client.list_events.return_value = {
+        "error": {"code": 403, "message": "Google Calendar API has not been used..."},
+        "items": [],
+    }
+    connector = GoogleCalendarConnector(mock_client)
+    window = Window(start=datetime(2026, 1, 1, tzinfo=UTC), end=datetime(2026, 1, 8, tzinfo=UTC))
+
+    with pytest.raises(RuntimeError, match="Google Calendar API has not been used"):
+        connector.fetch(uuid4(), "events", window)
 
 
 def test_connector_write_back_creates_and_reports_result() -> None:

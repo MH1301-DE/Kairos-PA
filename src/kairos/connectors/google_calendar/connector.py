@@ -28,6 +28,12 @@ class GoogleCalendarConnector:
         payload: JSONValue = self._client.list_events(
             _DEFAULT_CALENDAR_ID, window.start, window.end, None
         )
+        # a 4xx from list_events (e.g. Calendar API disabled on the Google Cloud
+        # project) comes back as {"error": {...}, "items": []}, not an exception --
+        # unlike create_event's call site, nothing downstream checked for this, so
+        # the sync silently "succeeded" with 0 events every time. Raise here so it
+        # surfaces as a failed job instead.
+        _raise_if_error(payload)
         return RawPayloadEnvelope(window=window, payload=payload)
 
     def normalize(self, kind: str, payload: JSONValue) -> list[CanonicalRecord]:
