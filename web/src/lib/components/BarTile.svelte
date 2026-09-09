@@ -9,7 +9,12 @@
 	let { result, module }: { result: MetricResult; module: ModuleDef } = $props();
 
 	let option = $derived.by((): EChartsOption | null => {
-		if (result.value === null) return null;
+		// coverage_days=0 means the zone-seconds bucket was empty for as_of (e.g. no
+		// workout that day) -- the variant still returns a dict with every zone at 0.0
+		// instead of null, so value===null alone doesn't catch this. Without this check
+		// the chart renders axes/labels with every bar at zero height, which reads as
+		// "broken" rather than "no data".
+		if (result.value === null || result.coverage_days === 0) return null;
 		const dict = result.value as Record<string, number>;
 		const zones = Object.keys(dict).sort();
 		return {

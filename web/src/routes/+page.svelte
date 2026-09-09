@@ -137,9 +137,10 @@
 	}
 	.tile-loading {
 		display: flex;
+		flex: 1;
 		align-items: center;
 		justify-content: center;
-		min-height: 6rem;
+		min-height: 320px;
 		color: var(--color-text-muted);
 	}
 </style>
