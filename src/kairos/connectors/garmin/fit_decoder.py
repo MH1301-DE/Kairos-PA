@@ -21,10 +21,15 @@ def records_to_json(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for rec in records:
         row: dict[str, Any] = {}
         for k, v in rec.items():
+            # garmin_fit_sdk uses the raw numeric field id (int) as the dict key
+            # when it can't resolve a developer field to a name -- stringify so
+            # every key is str, otherwise json.dumps(sort_keys=True) later
+            # (payload_sha256) crashes comparing int < str during key sort.
+            key = str(k)
             if isinstance(v, datetime):
-                row[k] = v.isoformat()
+                row[key] = v.isoformat()
             elif isinstance(v, (int, float, str, bool, type(None))):
-                row[k] = v
+                row[key] = v
         result.append(row)
     return result
 

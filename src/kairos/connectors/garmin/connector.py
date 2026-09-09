@@ -38,7 +38,8 @@ class GarminConnector:
         elif kind == "respiration":
             payload = g.get_respiration_data(d0)
         elif kind == "spo2":
-            payload = g.get_pulse_ox_data(d0)
+            # get_pulse_ox_data was renamed to get_spo2_data in garminconnect >= 0.3.x
+            payload = g.get_spo2_data(d0)
         elif kind == "daily_summary":
             payload = g.get_stats(d0)
         elif kind == "activity_list":
