@@ -118,7 +118,17 @@ async def list_connections(
     ).scalars().all()
     return {
         "connections": [
-            {"connector": c.connector, "status": c.status, "external_account": c.external_account}
+            {
+                "connector": c.connector,
+                "status": c.status,
+                "external_account": c.external_account,
+                "connected_at": c.connected_at.isoformat(),
+                "last_ok_at": c.last_ok_at.isoformat() if c.last_ok_at else None,
+                "token_refreshed_at": c.token_refreshed_at.isoformat()
+                if c.token_refreshed_at
+                else None,
+                "reauth_since": c.reauth_since.isoformat() if c.reauth_since else None,
+            }
             for c in rows
         ]
     }

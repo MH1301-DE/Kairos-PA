@@ -86,15 +86,16 @@
 								<span class="badge" class:badge-ok={garminConnection?.status === 'active'}>
 									{garminConnection ? garminConnection.status : 'nicht verbunden'}
 								</span>
-								<a href={resolve('/onboarding')} class="menu-link">Bearbeiten</a>
 							</div>
 							<div class="menu-row">
 								<span>Google Kalender</span>
 								<span class="badge" class:badge-ok={calendarConnection?.status === 'active'}>
 									{calendarConnection ? calendarConnection.status : 'nicht verbunden'}
 								</span>
-								<a href="/auth/login" class="menu-link">Neu verbinden</a>
 							</div>
+							<a href={resolve('/account')} class="menu-link menu-status-link"
+								>Konto-Einstellungen</a
+							>
 						</div>
 
 						<div class="menu-section">

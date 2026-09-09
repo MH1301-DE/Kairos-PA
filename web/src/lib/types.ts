@@ -15,6 +15,10 @@ export interface ConnectionInfo {
 	connector: string;
 	status: string;
 	external_account: string | null;
+	connected_at: string;
+	last_ok_at: string | null;
+	token_refreshed_at: string | null;
+	reauth_since: string | null;
 }
 
 // mirrors src/kairos/ingestion/job_registry.py SyncJob.to_dict()
