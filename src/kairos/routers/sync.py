@@ -189,6 +189,11 @@ async def _run_backfill_task(
                         from_date=from_dt,
                         to_date=to_dt,
                         throttle_seconds=settings.garmin_backfill_throttle_seconds,
+                        # updates the in-memory job directly (no DB commit needed,
+                        # unlike the once-per-kind session.commit() below) so
+                        # GET /api/sync/status shows real progress mid-run instead
+                        # of 0 the entire time and then a jump to windows_total
+                        on_progress=lambda n, job=job: setattr(job, "windows_processed", n),
                     )
                     await session.commit()
                     job.status = "done"

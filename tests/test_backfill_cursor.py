@@ -139,6 +139,34 @@ async def test_run_backfill_decrements_cursor_until_from_date() -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_backfill_reports_progress_after_each_window() -> None:
+    # GET /api/sync/status reads SyncJob.windows_processed live, mid-run, from
+    # the in-memory job registry -- before on_progress existed, the caller only
+    # learned windows_processed once at the very end (BackfillResult), so a UI
+    # progress bar sat at 0 for the whole run and then jumped straight to the
+    # total instead of updating incrementally.
+    repo = StubSyncStateRepo()
+    service = _service(repo)
+    connector = StubConnector()
+    user_id = uuid4()
+
+    progress_calls: list[int] = []
+
+    result = await service.run_backfill(
+        connector=connector,
+        user_id=user_id,
+        kind="sleep",
+        from_date=datetime(2026, 8, 1, tzinfo=UTC),
+        to_date=datetime(2026, 8, 4, tzinfo=UTC),
+        step=timedelta(days=1),
+        on_progress=progress_calls.append,
+    )
+
+    assert progress_calls == [1, 2, 3]
+    assert result.windows_processed == 3
+
+
+@pytest.mark.asyncio
 async def test_run_backfill_can_stop_and_resume_from_cursor() -> None:
     repo = StubSyncStateRepo()
     service = _service(repo)

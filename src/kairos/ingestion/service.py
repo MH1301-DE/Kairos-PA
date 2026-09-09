@@ -141,6 +141,7 @@ class SyncService:
         throttle_seconds: float = 0.0,
         throttle: Callable[[], None] | None = None,
         should_stop: Callable[[], bool] | None = None,
+        on_progress: Callable[[int], None] | None = None,
     ) -> BackfillResult:
         if from_date >= to_date:
             return BackfillResult(windows_processed=0, completed=True, next_cursor=None)
@@ -185,6 +186,8 @@ class SyncService:
 
             cursor = window_start
             windows_processed += 1
+            if on_progress is not None:
+                on_progress(windows_processed)
 
             await self._sync_state_repo.set_backfill_cursor(
                 user_id=user_id,
