@@ -1,20 +1,14 @@
 <!-- web/src/routes/+page.svelte -->
 <script lang="ts">
 	import { invalidate } from '$app/navigation';
+	import { untrack } from 'svelte';
 	import MetricTile from '$lib/components/MetricTile.svelte';
 	import { moduleById } from '$lib/modules';
+	import { mergeTileAsOf, type TileState } from '$lib/dashboardTiles';
 	import type { MetricResult } from '$lib/types';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
-
-	interface TileState {
-		moduleId: string;
-		result: MetricResult | null;
-		error: string | null;
-		asOf: string;
-		loading: boolean;
-	}
 
 	function todayIso(): string {
 		return new Date().toISOString().slice(0, 10);
@@ -25,8 +19,24 @@
 	// changes (i.e. after the "Aktualisieren" button re-runs load())
 	let tiles = $state<TileState[]>([]);
 
+	// a user-picked "Stand" date, kept outside $state so reading it here doesn't
+	// make this effect depend on `tiles` itself (which it also writes to) --
+	// see mergeTileAsOf's doc comment for why this exists
+	const manualAsOf = new Map<string, string>();
+
 	$effect(() => {
-		tiles = data.tiles.map((t) => ({ ...t, asOf: todayIso(), loading: false }));
+		tiles = mergeTileAsOf(data.tiles, manualAsOf, todayIso());
+		// data.tiles is always today's snapshot -- any tile still pinned to an
+		// earlier date needs its own fetch, or it'd show today's data under
+		// yesterday's label. untrack() reads the just-assigned `tiles` (so
+		// refetchTile mutates the real reactive elements, not a disconnected
+		// copy) without making this effect depend on state it itself writes --
+		// that self-dependency is what caused an infinite update loop before.
+		untrack(() => {
+			for (const tile of tiles) {
+				if (tile.asOf !== todayIso()) refetchTile(tile);
+			}
+		});
 	});
 
 	let refreshing = $state(false);
@@ -49,6 +59,7 @@
 	async function refetchTile(tile: TileState) {
 		const module = moduleById(tile.moduleId);
 		if (!module) return;
+		manualAsOf.set(tile.moduleId, tile.asOf);
 		tile.loading = true;
 		try {
 			const resp = await fetch(
