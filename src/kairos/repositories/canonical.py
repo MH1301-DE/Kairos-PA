@@ -10,7 +10,14 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kairos.connectors.types import CanonicalRecord
-from kairos.db.models import Activity, ActivityRecord, DailySummary, MetricDef, SleepSession, WellnessSample
+from kairos.db.models import (
+    Activity,
+    ActivityRecord,
+    DailySummary,
+    MetricDef,
+    SleepSession,
+    WellnessSample,
+)
 
 
 class SqlCanonicalRepository:
@@ -30,6 +37,14 @@ class SqlCanonicalRepository:
     ) -> int:
         del connector_id
         written = 0
+        # activity_record is batched, not written one row at a time like the
+        # other types below -- a single ~1h activity at 1s resolution is
+        # ~7000+ rows, and this repo previously did 2 DB round-trips per row
+        # (an Activity.id lookup + the insert itself). Measured against a real
+        # 2-year backfill: ~3.3M total activity_record rows, ~2.4ms/round-trip
+        # -> over 2 hours just for writes on a run whose fetch+throttle time
+        # alone is ~23 minutes. Collected here and flushed once at the end.
+        activity_records: list[CanonicalRecord] = []
         for record in records:
             rt = record.record_type
             if rt == "wellness_sample":
@@ -42,11 +57,14 @@ class SqlCanonicalRepository:
                 await self._write_activity(user_id, record, raw_payload_id)
                 written += 1
             elif rt == "activity_record":
-                await self._write_activity_record(user_id, record, raw_payload_id)
-                written += 1
+                activity_records.append(record)
             elif rt == "daily_summary":
                 await self._write_daily_summary(user_id, record, raw_payload_id)
                 written += 1
+        if activity_records:
+            written += await self._write_activity_records_bulk(
+                user_id, activity_records, raw_payload_id
+            )
         return written
 
     # ── Writers ───────────────────────────────────────────────────────────────
@@ -135,39 +153,55 @@ class SqlCanonicalRepository:
         )
         await self._session.execute(stmt)
 
-    async def _write_activity_record(
-        self, user_id: UUID, record: CanonicalRecord, raw_payload_id: int
-    ) -> None:
-        if not isinstance(record.data, dict):
-            return
-        activity_ext_id = record.data.get("activity_external_id")
-        if not isinstance(activity_ext_id, str):
-            return
+    async def _write_activity_records_bulk(
+        self, user_id: UUID, records: list[CanonicalRecord], raw_payload_id: int
+    ) -> int:
+        ext_ids: set[str] = set()
+        for r in records:
+            if isinstance(r.data, dict):
+                ext_id = r.data.get("activity_external_id")
+                if isinstance(ext_id, str):
+                    ext_ids.add(ext_id)
+        if not ext_ids:
+            return 0
 
-        # look up internal activity.id by external_id
+        # one lookup for every activity referenced by this batch instead of
+        # one per row -- a single window's records typically span 1 activity
         result = await self._session.execute(
-            select(Activity.id).where(
+            select(Activity.external_id, Activity.id).where(
                 Activity.user_id == user_id,
-                Activity.external_id == activity_ext_id,
+                Activity.external_id.in_(ext_ids),
             )
         )
-        activity_pk = result.scalar_one_or_none()
-        if activity_pk is None:
-            return  # activity_list must run before activity_fit
+        activity_pk_by_ext_id: dict[str, int] = dict(result.tuples().all())
 
-        stmt = (
-            insert(ActivityRecord)
-            .values(
-                user_id=user_id,
-                activity_id=activity_pk,
-                recorded_at=record.occurred_at,
-                metric=record.data.get("metric"),
-                value=float(record.data.get("value", 0)),  # type: ignore[arg-type]
-                raw_payload_id=raw_payload_id,
+        rows = []
+        for r in records:
+            if not isinstance(r.data, dict):
+                continue
+            ext_id = r.data.get("activity_external_id")
+            activity_pk = activity_pk_by_ext_id.get(ext_id) if isinstance(ext_id, str) else None
+            if activity_pk is None:
+                continue  # activity_list must run before activity_fit
+            rows.append(
+                {
+                    "user_id": user_id,
+                    "activity_id": activity_pk,
+                    "recorded_at": r.occurred_at,
+                    "metric": r.data.get("metric"),
+                    "value": float(r.data.get("value", 0)),  # type: ignore[arg-type]
+                    "raw_payload_id": raw_payload_id,
+                }
             )
-            .on_conflict_do_nothing(constraint="uq_activity_record")
-        )
-        await self._session.execute(stmt)
+        if not rows:
+            return 0
+
+        # a bare insert() (no .values()) executed with a list of parameter
+        # dicts uses SQLAlchemy 2.0's insertmanyvalues -- one multi-row
+        # INSERT (chunked internally) instead of one round-trip per row
+        stmt = insert(ActivityRecord).on_conflict_do_nothing(constraint="uq_activity_record")
+        await self._session.execute(stmt, rows)
+        return len(rows)
 
     async def _write_daily_summary(
         self, user_id: UUID, record: CanonicalRecord, raw_payload_id: int

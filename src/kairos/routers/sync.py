@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import logging
+from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, cast
 from uuid import UUID
@@ -143,6 +144,17 @@ async def trigger_google_calendar_sync(
 
 # ── Background task ───────────────────────────────────────────────────────────
 
+
+def _make_on_progress(job: SyncJob) -> Callable[[int], None]:
+    # a plain lambda closing over the `for job in jobs` loop variable by
+    # reference triggered ruff's B023 (late-binding gotcha); binding `job` as
+    # this factory's parameter instead avoids that entirely, one call per job
+    def _on_progress(n: int) -> None:
+        job.windows_processed = n
+
+    return _on_progress
+
+
 async def _run_backfill_task(
     *,
     user_id: UUID,
@@ -193,7 +205,7 @@ async def _run_backfill_task(
                         # unlike the once-per-kind session.commit() below) so
                         # GET /api/sync/status shows real progress mid-run instead
                         # of 0 the entire time and then a jump to windows_total
-                        on_progress=lambda n, job=job: setattr(job, "windows_processed", n),
+                        on_progress=_make_on_progress(job),
                     )
                     await session.commit()
                     job.status = "done"
