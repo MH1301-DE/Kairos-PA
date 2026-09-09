@@ -2,18 +2,12 @@
 	import '../app.css';
 	import favicon from '$lib/assets/favicon.svg';
 	import { resolve } from '$app/paths';
-	import { enhance } from '$app/forms';
-	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import { pwaInfo } from 'virtual:pwa-info';
 	import type { LayoutData } from './$types';
 	import type { Snippet } from 'svelte';
 
 	let { data, children }: { data: LayoutData; children: Snippet } = $props();
-	// the menu's forms live in the layout but their actions are declared on
-	// the dashboard's +page.server.ts (SvelteKit only allows actions there) --
-	// page.form is how a layout observes a page-level action's result
-	let menuForm = $derived(page.form as { menuError?: string; menuTriggered?: string } | null);
 
 	// vite-plugin-pwa emits the manifest link tag as a raw HTML string
 	let webManifestLink = $derived(pwaInfo ? pwaInfo.webManifest.linkTag : '');
@@ -25,20 +19,11 @@
 		}
 	});
 
-	const ACTIVE_STATUSES = new Set(['queued', 'running']);
 	let garminConnection = $derived(data.connections.find((c) => c.connector === 'garmin'));
 	let calendarConnection = $derived(data.connections.find((c) => c.connector === 'google_calendar'));
-	let hasActiveGarminJob = $derived(
-		data.jobs.some((j) => j.connector === 'garmin' && ACTIVE_STATUSES.has(j.status))
-	);
-	let hasActiveCalendarJob = $derived(
-		data.jobs.some((j) => j.connector === 'google_calendar' && ACTIVE_STATUSES.has(j.status))
-	);
 
 	let menuOpen = $state(false);
 	let menuRoot: HTMLDivElement | undefined = $state();
-	let triggeringGarmin = $state(false);
-	let triggeringCalendar = $state(false);
 
 	function handleWindowClick(event: MouseEvent) {
 		if (menuOpen && menuRoot && !menuRoot.contains(event.target as Node)) {
@@ -100,56 +85,7 @@
 
 						<div class="menu-section">
 							<h3>Datenabgleich</h3>
-							<form
-								method="POST"
-								action="/?/triggerGarminBackfill"
-								use:enhance={() => {
-									triggeringGarmin = true;
-									return async ({ update }) => {
-										await update();
-										triggeringGarmin = false;
-									};
-								}}
-							>
-								<button
-									type="submit"
-									class="btn btn-secondary menu-action"
-									disabled={triggeringGarmin || hasActiveGarminJob}
-								>
-									{hasActiveGarminJob
-										? 'Garmin-Backfill läuft …'
-										: triggeringGarmin
-											? 'Startet …'
-											: 'Garmin-Backfill starten'}
-								</button>
-							</form>
-							<form
-								method="POST"
-								action="/?/triggerCalendarSync"
-								use:enhance={() => {
-									triggeringCalendar = true;
-									return async ({ update }) => {
-										await update();
-										triggeringCalendar = false;
-									};
-								}}
-							>
-								<button
-									type="submit"
-									class="btn btn-secondary menu-action"
-									disabled={triggeringCalendar || hasActiveCalendarJob}
-								>
-									{hasActiveCalendarJob
-										? 'Kalender-Sync läuft …'
-										: triggeringCalendar
-											? 'Startet …'
-											: 'Kalender synchronisieren'}
-								</button>
-							</form>
-							<a href={resolve('/sync')} class="menu-link menu-status-link">Sync-Status im Detail</a>
-							{#if menuForm?.menuError}
-								<p class="status-error">{menuForm.menuError}</p>
-							{/if}
+							<a href={resolve('/sync')} class="btn btn-secondary menu-action">Zur Sync-Seite</a>
 						</div>
 
 						<div class="menu-section">

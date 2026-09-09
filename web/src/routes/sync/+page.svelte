@@ -8,7 +8,6 @@
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 	let garminConnection = $derived(data.connections.find((c) => c.connector === 'garmin'));
-	let triggering = $state(false);
 
 	// polls while any job is queued/running; stops once every job is done/failed/skipped
 	const ACTIVE_STATUSES = new Set(['queued', 'running']);
@@ -20,6 +19,23 @@
 	let hasActiveGarminJob = $derived(
 		data.jobs.some((j) => j.connector === 'garmin' && ACTIVE_STATUSES.has(j.status))
 	);
+	let hasActiveCalendarJob = $derived(
+		data.jobs.some((j) => j.connector === 'google_calendar' && ACTIVE_STATUSES.has(j.status))
+	);
+
+	// single "Sync starten" dropdown for all connector triggers -- add a new
+	// form + button here (and a matching action in +page.server.ts) when a
+	// future service needs its own trigger, instead of one button per service
+	let syncMenuOpen = $state(false);
+	let syncMenuRoot: HTMLDivElement | undefined = $state();
+	let triggeringGarmin = $state(false);
+	let triggeringCalendar = $state(false);
+
+	function handleWindowClick(event: MouseEvent) {
+		if (syncMenuOpen && syncMenuRoot && !syncMenuRoot.contains(event.target as Node)) {
+			syncMenuOpen = false;
+		}
+	}
 
 	let pollHandle: ReturnType<typeof setInterval> | undefined;
 
@@ -46,30 +62,75 @@
 	});
 </script>
 
+<svelte:window onclick={handleWindowClick} />
+
 <div class="sync-header">
 	<h1>Sync-Status</h1>
 	{#if garminConnection}
-		<form
-			method="POST"
-			action="?/triggerBackfill"
-			use:enhance={() => {
-				triggering = true;
-				return async ({ update }) => {
-					await update();
-					triggering = false;
-				};
-			}}
-		>
-			<button type="submit" class="btn btn-primary" disabled={triggering || hasActiveGarminJob}>
-				{#if hasActiveGarminJob}
-					Backfill läuft …
-				{:else if triggering}
-					Startet …
-				{:else}
-					Backfill starten
-				{/if}
+		<div class="menu-root" bind:this={syncMenuRoot}>
+			<button
+				type="button"
+				class="btn btn-primary menu-trigger"
+				aria-expanded={syncMenuOpen}
+				onclick={() => (syncMenuOpen = !syncMenuOpen)}
+			>
+				Sync starten ▾
 			</button>
-		</form>
+			{#if syncMenuOpen}
+				<div class="menu-panel" role="menu">
+					<form
+						method="POST"
+						action="?/triggerBackfill"
+						use:enhance={() => {
+							triggeringGarmin = true;
+							return async ({ update }) => {
+								await update();
+								triggeringGarmin = false;
+							};
+						}}
+					>
+						<button
+							type="submit"
+							class="btn btn-secondary menu-action"
+							disabled={triggeringGarmin || hasActiveGarminJob}
+						>
+							{#if hasActiveGarminJob}
+								Garmin-Backfill läuft …
+							{:else if triggeringGarmin}
+								Startet …
+							{:else}
+								Garmin-Backfill starten
+							{/if}
+						</button>
+					</form>
+					<form
+						method="POST"
+						action="?/triggerCalendarSync"
+						use:enhance={() => {
+							triggeringCalendar = true;
+							return async ({ update }) => {
+								await update();
+								triggeringCalendar = false;
+							};
+						}}
+					>
+						<button
+							type="submit"
+							class="btn btn-secondary menu-action"
+							disabled={triggeringCalendar || hasActiveCalendarJob}
+						>
+							{#if hasActiveCalendarJob}
+								Kalender-Sync läuft …
+							{:else if triggeringCalendar}
+								Startet …
+							{:else}
+								Kalender synchronisieren
+							{/if}
+						</button>
+					</form>
+				</div>
+			{/if}
+		</div>
 	{/if}
 </div>
 
@@ -79,10 +140,6 @@
 		<a href={resolve('/onboarding')} class="btn btn-primary">Jetzt einrichten</a>
 	</div>
 {:else}
-	<p class="connection-line">
-		Garmin: <span class="figure">{garminConnection.status}</span>
-		({garminConnection.external_account})
-	</p>
 	{#if form?.triggerError}
 		<p class="status-error">{form.triggerError}</p>
 	{/if}
@@ -125,8 +182,33 @@
 		gap: var(--space-4);
 		margin-bottom: var(--space-4);
 	}
-	.connection-line {
-		color: var(--color-text-muted);
+	.menu-root {
+		position: relative;
+	}
+	.menu-trigger {
+		font-size: var(--text-sm);
+	}
+	.menu-panel {
+		position: absolute;
+		right: 0;
+		top: calc(100% + var(--space-2));
+		width: 16rem;
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md, 8px);
+		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+		padding: var(--space-3);
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-2);
+		z-index: 50;
+	}
+	.menu-action {
+		width: 100%;
+		text-align: left;
+	}
+	form:has(.menu-action) {
+		display: contents;
 	}
 	progress {
 		vertical-align: middle;

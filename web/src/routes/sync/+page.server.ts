@@ -29,6 +29,19 @@ export const actions: Actions = {
 		if (status !== 202) {
 			return { triggerError: `Backfill konnte nicht gestartet werden (${status}): ${data.detail ?? 'unbekannt'}` };
 		}
-		return { triggered: true };
+		return { triggered: 'garmin' };
+	},
+	triggerCalendarSync: async ({ fetch }) => {
+		const { status, data } = await apiPost<{ detail?: string }>(
+			fetch,
+			'/api/sync/google_calendar/sync',
+			{}
+		);
+		if (status !== 202) {
+			return {
+				triggerError: `Kalender-Sync konnte nicht gestartet werden (${status}): ${data.detail ?? 'unbekannt'}`
+			};
+		}
+		return { triggered: 'calendar' };
 	}
 };
