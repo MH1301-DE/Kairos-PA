@@ -46,7 +46,32 @@
 	});
 </script>
 
-<h1>Sync-Status</h1>
+<div class="sync-header">
+	<h1>Sync-Status</h1>
+	{#if garminConnection}
+		<form
+			method="POST"
+			action="?/triggerBackfill"
+			use:enhance={() => {
+				triggering = true;
+				return async ({ update }) => {
+					await update();
+					triggering = false;
+				};
+			}}
+		>
+			<button type="submit" class="btn btn-primary" disabled={triggering || hasActiveGarminJob}>
+				{#if hasActiveGarminJob}
+					Backfill läuft …
+				{:else if triggering}
+					Startet …
+				{:else}
+					Backfill starten
+				{/if}
+			</button>
+		</form>
+	{/if}
+</div>
 
 {#if !garminConnection}
 	<div class="tile">
@@ -58,32 +83,9 @@
 		Garmin: <span class="figure">{garminConnection.status}</span>
 		({garminConnection.external_account})
 	</p>
-
-	<form
-		method="POST"
-		action="?/triggerBackfill"
-		use:enhance={() => {
-			triggering = true;
-			return async ({ update }) => {
-				await update();
-				triggering = false;
-			};
-		}}
-		class="tile trigger-panel"
-	>
-		<button type="submit" class="btn btn-primary" disabled={triggering || hasActiveGarminJob}>
-			{#if hasActiveGarminJob}
-				Backfill läuft …
-			{:else if triggering}
-				Startet …
-			{:else}
-				Backfill starten
-			{/if}
-		</button>
-		{#if form?.triggerError}
-			<p class="status-error">{form.triggerError}</p>
-		{/if}
-	</form>
+	{#if form?.triggerError}
+		<p class="status-error">{form.triggerError}</p>
+	{/if}
 
 	<div class="tile">
 		<table>
@@ -116,14 +118,15 @@
 {/if}
 
 <style>
+	.sync-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--space-4);
+		margin-bottom: var(--space-4);
+	}
 	.connection-line {
 		color: var(--color-text-muted);
-	}
-	.trigger-panel {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-4);
-		align-items: flex-start;
 	}
 	progress {
 		vertical-align: middle;
