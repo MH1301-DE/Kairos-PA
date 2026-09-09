@@ -6,6 +6,7 @@
 	import EChartsBase from './EChartsBase.svelte';
 	import ConfidenceBadge from './ConfidenceBadge.svelte';
 	import InfoTooltip from './InfoTooltip.svelte';
+	import { gaugeAxisDecimals } from '../gaugeFormat';
 
 	let { result, module }: { result: MetricResult; module: ModuleDef } = $props();
 
@@ -16,12 +17,23 @@
 		if (spec.max === spec.min) return null;
 		const dict = result.value as Record<string, number>;
 		const value = dict[spec.valueKey];
+
+		// fewer ticks (4 splits, vs. ECharts' gauge default of 10) plus a
+		// step-size-aware decimal count -- see gaugeFormat.ts for why
+		const splitNumber = 4;
+		const decimals = gaugeAxisDecimals(spec.min, spec.max, splitNumber);
+
 		return {
 			series: [
 				{
 					type: 'gauge',
 					min: spec.min,
 					max: spec.max,
+					splitNumber,
+					axisLabel: {
+						fontSize: 10,
+						formatter: (v: number) => v.toFixed(decimals)
+					},
 					axisLine: {
 						lineStyle: {
 							width: 12,
