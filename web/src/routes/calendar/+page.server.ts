@@ -3,21 +3,34 @@ import type { PageServerLoad, Actions } from './$types';
 import { apiGet, apiPost, ApiError } from '$lib/api';
 import { redirect, fail } from '@sveltejs/kit';
 import type { CalendarEvent, FreeSlot } from '$lib/types';
+import { monthGridDays, nextDateKey } from '$lib/calendarGrid';
 
-function _range(): { from: string; to: string } {
-	const from = new Date();
-	const to = new Date(from.getTime() + 14 * 24 * 60 * 60 * 1000);
-	return { from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) };
+function parseMonth(searchParams: URLSearchParams): { year: number; month: number } {
+	const param = searchParams.get('month'); // "YYYY-MM"
+	if (param) {
+		const match = /^(\d{4})-(\d{2})$/.exec(param);
+		if (match) {
+			const year = Number(match[1]);
+			const month = Number(match[2]);
+			if (month >= 1 && month <= 12) return { year, month };
+		}
+	}
+	const now = new Date();
+	return { year: now.getFullYear(), month: now.getMonth() + 1 };
 }
 
-export const load: PageServerLoad = async ({ fetch }) => {
-	const { from, to } = _range();
+export const load: PageServerLoad = async ({ fetch, url }) => {
+	const { year, month } = parseMonth(url.searchParams);
+	const days = monthGridDays(year, month);
+	const from = days[0].date;
+	// the API's `to` is exclusive (start_at < to) -- one day past the last grid day
+	const to = nextDateKey(days[days.length - 1].date);
 	try {
 		const events = await apiGet<{ events: CalendarEvent[] }>(
 			fetch,
 			`/api/calendar/events?from=${from}&to=${to}`
 		);
-		return { events: events.events, from, to };
+		return { events: events.events, year, month, gridFrom: from, gridTo: to };
 	} catch (err) {
 		// stale/invalid session cookie: send the user back to login instead of a dead end
 		if (err instanceof ApiError && err.status === 401) redirect(302, '/auth/login');
@@ -26,10 +39,44 @@ export const load: PageServerLoad = async ({ fetch }) => {
 };
 
 export const actions: Actions = {
-	'propose-slots': async ({ request, fetch }) => {
+	create: async ({ request, fetch }) => {
+		const form = await request.formData();
+		const summary = String(form.get('summary') ?? '').trim();
+		const date = String(form.get('date') ?? '');
+		const startTime = String(form.get('start_time') ?? '');
+		const endTime = String(form.get('end_time') ?? '');
+		const description = String(form.get('description') ?? '').trim() || null;
+
+		if (!summary || !date || !startTime || !endTime) {
+			return fail(400, { createError: 'Titel, Datum sowie Start- und Endzeit sind Pflicht.' });
+		}
+		const start_at = new Date(`${date}T${startTime}`).toISOString();
+		const end_at = new Date(`${date}T${endTime}`).toISOString();
+		if (end_at <= start_at) {
+			return fail(400, { createError: 'Die Endzeit muss nach der Startzeit liegen.' });
+		}
+
+		const { status, data } = await apiPost<{ detail?: string }>(fetch, '/api/calendar/events', {
+			summary,
+			start_at,
+			end_at,
+			description
+		});
+		if (status === 401) redirect(302, '/auth/login');
+		if (status !== 201) {
+			return fail(status, {
+				createError: `Termin konnte nicht angelegt werden (${data.detail ?? status}).`
+			});
+		}
+		return { created: true };
+	},
+	'propose-slots': async ({ request, fetch, url }) => {
 		const form = await request.formData();
 		const durationMinutes = Number(form.get('duration_minutes'));
-		const { from, to } = _range();
+		const { year, month } = parseMonth(url.searchParams);
+		const days = monthGridDays(year, month);
+		const from = days[0].date;
+		const to = nextDateKey(days[days.length - 1].date);
 		try {
 			const result = await apiGet<{ slots: FreeSlot[] }>(
 				fetch,
