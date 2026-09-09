@@ -26,7 +26,10 @@ export interface ModuleDef {
 	moduleId: string;
 	variant: string;
 	title: string;
-	description: string;
+	// one entry per line in the tile's info tooltip -- a leading "Name: " is
+	// bolded automatically, so each sub-KPI (and the closing "Richtwerte" line)
+	// gets its own readable line instead of one dense paragraph
+	description: string[];
 	form: ChartForm;
 	fields?: ValueField[];
 	trendKey?: string;
@@ -69,30 +72,36 @@ export const MODULES: ModuleDef[] = [
 		moduleId: 'trimp',
 		variant: 'edwards',
 		title: 'Trainingsbelastung (TRIMP)',
-		description:
-			'Edwards-TRIMP: die Zeit in jeder Herzfrequenz-Zone (1–5) wird gewichtet ' +
-			'(Zone 5 zählt am stärksten) und aufsummiert. Höher = intensiveres oder ' +
-			'längeres Training an diesem Tag. 0 an einem Ruhetag ist normal.',
+		description: [
+			'TRIMP: gewichtete Trainingszeit in den 5 Herzfrequenz-Zonen (Edwards-Methode) — Zone 5 zählt am stärksten. 0 an einem Ruhetag ist normal.',
+			'Richtwerte je Einheit: niedrig < 50 · mittel 50–150 · hoch > 150'
+		],
 		form: 'value'
 	},
 	{
 		moduleId: 'hr_zone_distribution',
 		variant: 'percent_max',
 		title: 'HF-Zonenverteilung (heute)',
-		description:
-			'Sekunden in jeder der 5 Herzfrequenz-Zonen (bezogen auf deine geschätzte ' +
-			'maximale Herzfrequenz) — nur aus echten Trainingsaktivitäten des Tages, ' +
-			'nicht aus dem ganztägigen Ruhepuls. Ohne Training an diesem Tag leer.',
+		description: [
+			'Zone 1 (50–60 % HFmax): sehr leicht, aktive Erholung',
+			'Zone 2 (60–70 %): Grundlagenausdauer, locker',
+			'Zone 3 (70–80 %): mittlere Intensität, Tempo',
+			'Zone 4 (80–90 %): schwer, Schwellenbereich',
+			'Zone 5 (90–100 %): maximal, kurze Intervalle',
+			'Nur aus echten Trainingsaktivitäten des Tages, nicht aus dem ganztägigen Ruhepuls.'
+		],
 		form: 'bar'
 	},
 	{
 		moduleId: 'training_load',
 		variant: 'default',
 		title: 'CTL / ATL / TSB',
-		description:
-			'Banister-Modell: CTL (Fitness) ist ein 42-Tage-gleitender Schnitt deiner ' +
-			'Trainingsbelastung, ATL (Ermüdung) ein 7-Tage-Schnitt. TSB (Form) = CTL − ATL — ' +
-			'positiv heißt ausgeruht, stark negativ heißt hohe Ermüdung.',
+		description: [
+			'CTL (Fitness): 42-Tage-Schnitt deiner Trainingsbelastung — langfristige Form.',
+			'ATL (Ermüdung): 7-Tage-Schnitt deiner Trainingsbelastung — akute Müdigkeit.',
+			'TSB (Form): CTL minus ATL.',
+			'Richtwerte TSB: niedrig < -20 (Ermüdungsrisiko) · mittel -10 bis 5 · hoch > 5 (frisch)'
+		],
 		form: 'value',
 		fields: [
 			{ key: 'ctl', label: 'CTL (Fitness)' },
@@ -104,10 +113,10 @@ export const MODULES: ModuleDef[] = [
 		moduleId: 'acwr',
 		variant: 'default',
 		title: 'Belastungsverhältnis (ACWR)',
-		description:
-			'Acute:Chronic Workload Ratio — Belastung der letzten 7 Tage geteilt durch den ' +
-			'28-Tage-Schnitt. 0,8–1,3 gilt als Sweet Spot; über 1,5 als erhöhtes ' +
-			'Verletzungsrisiko durch zu schnellen Belastungsanstieg.',
+		description: [
+			'ACWR: Belastung der letzten 7 Tage geteilt durch den 28-Tage-Schnitt (Acute:Chronic Workload Ratio).',
+			'Richtwerte: niedrig < 0,8 (Untertraining) · mittel 0,8–1,3 (Sweet Spot) · hoch > 1,5 (Verletzungsrisiko)'
+		],
 		form: 'gauge',
 		gauge: acwrGauge
 	},
@@ -115,10 +124,11 @@ export const MODULES: ModuleDef[] = [
 		moduleId: 'monotony_strain',
 		variant: 'default',
 		title: 'Trainingsmonotonie',
-		description:
-			'Monotonie = Ø Belastung der letzten 7 Tage geteilt durch deren Streuung — hohe ' +
-			'Werte heißen wenig Abwechslung zwischen harten und leichten Tagen. ' +
-			'Strain = Gesamtbelastung × Monotonie, ein Maß für Übertrainings-Risiko.',
+		description: [
+			'Monotonie: Ø Belastung der letzten 7 Tage geteilt durch deren Streuung — hoch heißt wenig Abwechslung zwischen harten und leichten Tagen.',
+			'Strain: Gesamtbelastung mal Monotonie — Übertrainings-Risiko bei fehlender Erholung.',
+			'Richtwerte Monotonie: niedrig < 1,5 · mittel 1,5–2,0 · hoch > 2,0'
+		],
 		form: 'value',
 		fields: [
 			{ key: 'monotony', label: 'Monotonie' },
@@ -129,11 +139,11 @@ export const MODULES: ModuleDef[] = [
 		moduleId: 'hrv_baseline',
 		variant: 'default',
 		title: 'HRV-Baseline',
-		description:
-			'Vergleicht deinen heutigen morgendlichen HRV-Wert mit Mittelwert ± ' +
-			'Standardabweichung der letzten 60 Nächte. Deutlich unter der Baseline kann auf ' +
-			'unzureichende Erholung hindeuten. Braucht die heutige Nacht-Messung — die postet ' +
-			'oft erst am Morgen.',
+		description: [
+			'HRV-Baseline: heutiger morgendlicher HRV-Wert vs. Mittelwert ± Standardabweichung der letzten 60 Nächte.',
+			'Richtwerte: niedrig < Baseline−1 SD (evtl. unzureichende Erholung) · mittel im Band · hoch > Baseline+1 SD',
+			'Braucht die heutige Nacht-Messung — die postet oft erst am Morgen.'
+		],
 		form: 'gauge',
 		gauge: hrvBaselineGauge
 	},
@@ -141,10 +151,10 @@ export const MODULES: ModuleDef[] = [
 		moduleId: 'sleep_debt',
 		variant: 'default',
 		title: 'Schlafschuld',
-		description:
-			'Summe aus (Zielschlaf − tatsächlicher Schlaf) der letzten 7 Nächte. Negative ' +
-			'Werte bedeuten Schlafüberschuss, positive Werte ein Defizit gegenüber deinem ' +
-			'eingestellten Schlafziel.',
+		description: [
+			'Schlafschuld: Summe aus (Zielschlaf minus tatsächlicher Schlaf) der letzten 7 Nächte. Negative Werte heißen Schlafüberschuss.',
+			'Richtwerte: niedrig < 2 h · mittel 2–5 h · hoch > 5 h (Handlungsbedarf)'
+		],
 		form: 'value',
 		fields: undefined
 	},
@@ -152,10 +162,12 @@ export const MODULES: ModuleDef[] = [
 		moduleId: 'resting_hr_trend',
 		variant: 'default',
 		title: 'Ruhepuls-Trend',
-		description:
-			'Vergleicht den Ruhepuls-Schnitt der letzten 7 Tage mit dem Schnitt der ' +
-			'vorherigen 30 Tage. Ein spürbarer Anstieg kann ein früher Hinweis auf ' +
-			'Übertraining, Stress oder eine beginnende Erkältung sein.',
+		description: [
+			'7-Tage-Ø: aktueller Ruhepuls-Schnitt.',
+			'Vorherige 30 Tage-Ø: Vergleichswert davor.',
+			'Ein spürbarer Anstieg kann ein früher Hinweis auf Übertraining, Stress oder eine beginnende Erkältung sein.',
+			'Richtwerte Anstieg: niedrig < 2 bpm (normal) · mittel 2–5 bpm · hoch > 5 bpm'
+		],
 		form: 'value',
 		fields: [
 			{ key: 'recent_avg', label: '7-Tage-Ø', unit: 'bpm' },

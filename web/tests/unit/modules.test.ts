@@ -21,9 +21,12 @@ describe('module registry', () => {
 		expect(new Set(ids).size).toBe(ids.length);
 	});
 
-	it('every module has a non-empty description for the tile info tooltip', () => {
+	it('every module has a non-empty description, one non-empty line each, for the tile info tooltip', () => {
 		for (const m of MODULES) {
 			expect(m.description.length).toBeGreaterThan(0);
+			for (const line of m.description) {
+				expect(line.trim().length).toBeGreaterThan(0);
+			}
 		}
 	});
 
