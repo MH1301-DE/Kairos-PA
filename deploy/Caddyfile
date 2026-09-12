@@ -1,0 +1,17 @@
+# Reverse proxy. {$DOMAIN} comes from the .env used by docker compose.
+# Automatic HTTPS (Let's Encrypt) is Caddy's default for a real domain --
+# no extra directive needed. For local verification with DOMAIN=localhost,
+# Caddy falls back to its internal CA (self-signed) automatically.
+{$DOMAIN} {
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+
+	handle /auth/* {
+		reverse_proxy api:8000
+	}
+
+	handle {
+		reverse_proxy web:3000
+	}
+}
