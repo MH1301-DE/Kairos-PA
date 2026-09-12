@@ -386,6 +386,29 @@ class MetricDailyValue(Base):
     confidence: Mapped[str] = mapped_column(Text, nullable=False)
 
 
+class CustomMetricDefinition(Base):
+    __tablename__ = "custom_metric_definition"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app_user.id", ondelete="CASCADE"), nullable=False
+    )
+    code: Mapped[str] = mapped_column(Text, nullable=False)
+    display_name: Mapped[str] = mapped_column(Text, nullable=False)
+    expression: Mapped[str] = mapped_column(Text, nullable=False)
+    # 'agent' rows are written by CustomMetricRepository directly, never through the
+    # client-facing router -- same spoof-proofing pattern as agent_memory.source
+    created_by: Mapped[str] = mapped_column(Text, nullable=False, default="user")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "code", name="uq_custom_metric_definition"),
+        CheckConstraint(
+            "created_by IN ('user', 'agent')", name="custom_metric_definition_created_by_check"
+        ),
+    )
+
+
 class DailySummary(Base):
     __tablename__ = "daily_summary"
 
