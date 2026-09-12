@@ -102,7 +102,10 @@
 					/>
 				</label>
 				{#if tile.loading}
-					<div class="tile tile-loading"><p>Lädt …</p></div>
+					<div class="tile tile-loading">
+						<div class="skeleton skeleton-title"></div>
+						<div class="skeleton skeleton-body"></div>
+					</div>
 				{:else if tile.result}
 					<MetricTile result={tile.result} {module} />
 				{:else}
@@ -148,10 +151,16 @@
 	}
 	.tile-loading {
 		display: flex;
+		flex-direction: column;
 		flex: 1;
-		align-items: center;
-		justify-content: center;
+		gap: var(--space-3);
 		min-height: 320px;
-		color: var(--color-text-muted);
+	}
+	.skeleton-title {
+		width: 60%;
+		height: var(--text-lg);
+	}
+	.skeleton-body {
+		flex: 1;
 	}
 </style>

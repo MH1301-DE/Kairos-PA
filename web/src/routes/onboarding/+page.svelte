@@ -92,9 +92,9 @@
 		margin: 0;
 		padding: 0;
 	}
-	fieldset:disabled {
-		opacity: 0.75;
-	}
+	/* dimming itself now comes from app.css's global .btn:disabled/.field
+	   input:disabled -- fieldset[disabled] just needs to disable, not restyle,
+	   or the two rules would compound (0.75 * 0.5) into an over-faded button */
 	.status-pending {
 		color: var(--color-text-muted);
 		font-size: 0.9em;

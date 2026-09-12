@@ -25,6 +25,11 @@
 	let menuOpen = $state(false);
 	let menuRoot: HTMLDivElement | undefined = $state();
 
+	// below 640px, both the desktop popup and the nav links collapse into one
+	// full-screen drawer (see the .hamburger-btn below) instead of two separate
+	// triggers
+	let mobileMenuOpen = $state(false);
+
 	function handleWindowClick(event: MouseEvent) {
 		if (menuOpen && menuRoot && !menuRoot.contains(event.target as Node)) {
 			menuOpen = false;
@@ -32,9 +37,58 @@
 	}
 
 	function handleKeydown(event: KeyboardEvent) {
-		if (event.key === 'Escape') menuOpen = false;
+		if (event.key === 'Escape') {
+			menuOpen = false;
+			mobileMenuOpen = false;
+		}
 	}
+
+	const NAV_ITEMS = [
+		{ href: '/', label: 'Dashboard' },
+		{ href: '/calendar', label: 'Kalender' },
+		{ href: '/goals', label: 'Ziele' },
+		{ href: '/memory', label: 'Gedächtnis' },
+		{ href: '/chat', label: 'Chat' }
+	] as const;
 </script>
+
+{#snippet accountMenuContent()}
+	<div class="menu-section">
+		<h3>Verbindungen</h3>
+		<div class="menu-row">
+			<span>Garmin</span>
+			<span class="badge" class:badge-ok={garminConnection?.status === 'active'}>
+				{garminConnection ? garminConnection.status : 'nicht verbunden'}
+			</span>
+		</div>
+		<div class="menu-row">
+			<span>Google Kalender</span>
+			<span class="badge" class:badge-ok={calendarConnection?.status === 'active'}>
+				{calendarConnection ? calendarConnection.status : 'nicht verbunden'}
+			</span>
+		</div>
+		<a
+			href={resolve('/account')}
+			class="menu-link menu-status-link"
+			onclick={() => (mobileMenuOpen = false)}>Konto-Einstellungen</a
+		>
+	</div>
+
+	<div class="menu-section">
+		<h3>Datenabgleich</h3>
+		<a
+			href={resolve('/sync')}
+			class="btn btn-secondary menu-action"
+			onclick={() => (mobileMenuOpen = false)}>Zur Sync-Seite</a
+		>
+	</div>
+
+	<div class="menu-section">
+		<form method="POST" action="/auth/logout">
+			<button type="submit" class="btn btn-ghost menu-action">Abmelden</button>
+		</form>
+	</div>
+{/snippet}
 
 <svelte:window onclick={handleWindowClick} onkeydown={handleKeydown} />
 
@@ -48,11 +102,9 @@
 	<nav>
 		<a href={resolve('/')} class="wordmark">Kairos</a>
 		<div class="nav-links">
-			<a href={resolve('/')}>Dashboard</a>
-			<a href={resolve('/calendar')}>Kalender</a>
-			<a href={resolve('/goals')}>Ziele</a>
-			<a href={resolve('/memory')}>Gedächtnis</a>
-			<a href={resolve('/chat')}>Chat</a>
+			{#each NAV_ITEMS as item (item.href)}
+				<a href={resolve(item.href)}>{item.label}</a>
+			{/each}
 		</div>
 		{#if data.authenticated}
 			<div class="menu-root" bind:this={menuRoot}>
@@ -66,40 +118,45 @@
 				</button>
 				{#if menuOpen}
 					<div class="menu-panel" role="menu">
-						<div class="menu-section">
-							<h3>Verbindungen</h3>
-							<div class="menu-row">
-								<span>Garmin</span>
-								<span class="badge" class:badge-ok={garminConnection?.status === 'active'}>
-									{garminConnection ? garminConnection.status : 'nicht verbunden'}
-								</span>
-							</div>
-							<div class="menu-row">
-								<span>Google Kalender</span>
-								<span class="badge" class:badge-ok={calendarConnection?.status === 'active'}>
-									{calendarConnection ? calendarConnection.status : 'nicht verbunden'}
-								</span>
-							</div>
-							<a href={resolve('/account')} class="menu-link menu-status-link"
-								>Konto-Einstellungen</a
-							>
-						</div>
-
-						<div class="menu-section">
-							<h3>Datenabgleich</h3>
-							<a href={resolve('/sync')} class="btn btn-secondary menu-action">Zur Sync-Seite</a>
-						</div>
-
-						<div class="menu-section">
-							<form method="POST" action="/auth/logout">
-								<button type="submit" class="btn btn-ghost menu-action">Abmelden</button>
-							</form>
-						</div>
+						{@render accountMenuContent()}
 					</div>
 				{/if}
 			</div>
+			<button
+				type="button"
+				class="hamburger-btn"
+				aria-expanded={mobileMenuOpen}
+				aria-label="Menü öffnen"
+				onclick={() => (mobileMenuOpen = true)}
+			>
+				<span></span><span></span><span></span>
+			</button>
 		{/if}
 	</nav>
+
+	{#if mobileMenuOpen}
+		<div class="mobile-drawer" role="dialog" aria-modal="true">
+			<div class="mobile-drawer-header">
+				<span class="wordmark">Kairos</span>
+				<button
+					type="button"
+					class="btn btn-ghost"
+					aria-label="Menü schließen"
+					onclick={() => (mobileMenuOpen = false)}
+				>
+					✕
+				</button>
+			</div>
+			<div class="mobile-drawer-links">
+				{#each NAV_ITEMS as item (item.href)}
+					<a href={resolve(item.href)} onclick={() => (mobileMenuOpen = false)}>{item.label}</a>
+				{/each}
+			</div>
+			<div class="mobile-drawer-account">
+				{@render accountMenuContent()}
+			</div>
+		</div>
+	{/if}
 
 	<main>
 		{@render children()}
@@ -213,5 +270,88 @@
 		padding: var(--space-6);
 		max-width: 72rem;
 		margin: 0 auto;
+	}
+
+	/* hamburger trigger -- hidden by default, only shown below 640px */
+	.hamburger-btn {
+		display: none;
+		flex-direction: column;
+		justify-content: center;
+		align-items: center;
+		gap: 4px;
+		width: 44px;
+		height: 44px;
+		background: transparent;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm);
+		cursor: pointer;
+		padding: 0;
+	}
+	.hamburger-btn span {
+		display: block;
+		width: 18px;
+		height: 2px;
+		background: var(--color-text-muted);
+		border-radius: 1px;
+	}
+
+	.mobile-drawer {
+		display: none;
+	}
+
+	@media (max-width: 640px) {
+		nav {
+			gap: var(--space-4);
+			padding: var(--space-3) var(--space-4);
+		}
+		.nav-links,
+		.menu-root {
+			display: none;
+		}
+		.hamburger-btn {
+			display: flex;
+		}
+		.mobile-drawer {
+			display: flex;
+			flex-direction: column;
+			position: fixed;
+			inset: 0;
+			z-index: 100;
+			background: var(--color-bg);
+			padding: var(--space-4);
+			padding-top: max(var(--space-4), env(safe-area-inset-top));
+			padding-bottom: max(var(--space-4), env(safe-area-inset-bottom));
+			overflow-y: auto;
+		}
+		.mobile-drawer-header {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			margin-bottom: var(--space-6);
+		}
+		.mobile-drawer-links {
+			display: flex;
+			flex-direction: column;
+			gap: var(--space-1);
+			margin-bottom: var(--space-6);
+		}
+		.mobile-drawer-links a {
+			padding: var(--space-3) var(--space-2);
+			font-size: var(--text-lg);
+			color: var(--color-text);
+			border-radius: var(--radius-sm);
+		}
+		.mobile-drawer-links a:hover,
+		.mobile-drawer-links a:focus-visible {
+			background: var(--color-surface-raised);
+			text-decoration: none;
+		}
+		.mobile-drawer-account {
+			display: flex;
+			flex-direction: column;
+			gap: var(--space-4);
+			padding-top: var(--space-4);
+			border-top: 1px solid var(--color-border);
+		}
 	}
 </style>

@@ -212,7 +212,10 @@ a:focus-visible {
 
 .field input {
 	font: inherit;
-	font-size: var(--text-base);
+	/* fixed 16px, not a token: below this, iOS Safari auto-zooms on focus --
+	   a platform threshold, not a design choice, so it must never track
+	   --text-base if that token ever changes to something smaller again */
+	font-size: 16px;
 	color: var(--color-text);
 	background: var(--color-surface);
 	border: 1px solid var(--color-border);
@@ -226,6 +229,11 @@ a:focus-visible {
 
 .field input::placeholder {
 	color: var(--color-text-faint);
+}
+
+.field input:disabled {
+	opacity: 0.6;
+	cursor: not-allowed;
 }
 
 /* buttons */
@@ -244,6 +252,11 @@ a:focus-visible {
 
 .btn:active {
 	transform: translateY(1px);
+}
+
+.btn:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
 }
 
 .btn-primary {
@@ -305,8 +318,37 @@ tbody tr:hover {
 	background: var(--color-surface-raised);
 }
 
+/* pulsing placeholder for a loading tile -- used in place of plain "Lädt …" text */
+.skeleton {
+	background: linear-gradient(
+		90deg,
+		var(--color-surface-raised) 25%,
+		var(--color-border) 50%,
+		var(--color-surface-raised) 75%
+	);
+	background-size: 200% 100%;
+	animation: skeleton-shimmer 1.5s ease-in-out infinite;
+	border-radius: var(--radius-sm);
+}
+
+@keyframes skeleton-shimmer {
+	0% {
+		background-position: 200% 0;
+	}
+	100% {
+		background-position: -200% 0;
+	}
+}
+
+@media (max-width: 640px) {
+	main {
+		padding: var(--space-4);
+	}
+}
+
 @media (prefers-reduced-motion: reduce) {
 	* {
 		transition: none !important;
+		animation: none !important;
 	}
 }
