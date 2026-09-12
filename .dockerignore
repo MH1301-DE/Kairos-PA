@@ -1,0 +1,15 @@
+.venv
+web
+.git
+.github
+.claude
+.superpowers
+docs
+db
+__pycache__
+*.pyc
+.mypy_cache
+.ruff_cache
+.pytest_cache
+.env
+.env.example
