@@ -9,15 +9,12 @@ from kairos.agent import llm_client
 
 
 @pytest.mark.asyncio
-async def test_get_completion_raises_without_a_connection() -> None:
+async def test_get_completion_raises_without_a_deployment_api_key() -> None:
     session = MagicMock()
-    scalars_result = MagicMock()
-    scalars_result.first.return_value = None
-    execute_result = MagicMock()
-    execute_result.scalars.return_value = scalars_result
-    session.execute = AsyncMock(return_value=execute_result)
-
-    with pytest.raises(llm_client.NoLlmCredentialConfigured):
+    with (
+        patch.object(llm_client.settings, "llm_api_key", None),
+        pytest.raises(llm_client.NoLlmCredentialConfigured),
+    ):
         await llm_client.get_completion(
             session, user_id=uuid4(), messages=[{"role": "user", "content": "hi"}]
         )
@@ -30,11 +27,9 @@ async def test_get_completion_passes_model_key_messages_tools_through() -> None:
     fake_response = MagicMock()
 
     with (
+        patch.object(llm_client.settings, "llm_api_key", "sk-deployment-key"),
         patch.object(
             llm_client, "get_or_default_user_setting", new=AsyncMock(return_value=fake_setting)
-        ),
-        patch.object(
-            llm_client, "_load_llm_api_key", new=AsyncMock(return_value="decrypted-key-123")
         ),
         patch.object(
             llm_client.litellm, "completion", return_value=fake_response
@@ -54,5 +49,5 @@ async def test_get_completion_passes_model_key_messages_tools_through() -> None:
     assert call_kwargs["model"] == "anthropic/claude-sonnet-5"
     assert call_kwargs["messages"] == messages
     assert call_kwargs["tools"] == tools
-    assert call_kwargs["api_key"] == "decrypted-key-123"
+    assert call_kwargs["api_key"] == "sk-deployment-key"
     assert call_kwargs["stream"] is False

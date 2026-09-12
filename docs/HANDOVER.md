@@ -1010,15 +1010,19 @@ Plan nicht vorhersah:
   nur Imports/Konstruktion aller 13 Fälle verifiziert.
 
 **Bewusst offen gelassene Punkte, für einen Folge-Task:**
-- ~~Kein UI für einen selbst hinterlegten LLM-API-Key~~ — ✅ erledigt
-  (2026-09-12, Commit `7e12dc1`): `/account` hat jetzt eine dritte Karte
-  (Modell + API-Key, gleiches Verschlüsselungsmuster wie Garmin/Google).
-  Live-Smoke-Test gegen den echten Server fand dabei zwei weitere reale
-  500-statt-sauberer-Fehler-Lücken in `send_message` (kein Key konfiguriert;
-  ungültiger Key von litellm zurückgewiesen) — beide behoben (503/502).
-- `scripts/agent_eval_suite.py` real laufen lassen, jetzt wo ein Nutzer
-  selbst einen Key hinterlegen kann, und die 13/13-Abnahme tatsächlich
-  verifizieren.
+- ~~Kein UI für einen selbst hinterlegten LLM-API-Key~~ — zunächst als
+  Pro-Nutzer-Feature gebaut (Commit `7e12dc1`, 2026-09-12), dabei zwei
+  weitere reale 500-statt-sauberer-Fehler-Lücken in `send_message` gefunden
+  und behoben (kein Key konfiguriert; ungültiger Key von litellm
+  zurückgewiesen — beide jetzt 503/502). **Korrigiert** (2026-09-12, Commit
+  folgt): der Nutzer stellte klar, dass ein Kairos-Deployment sich **einen**
+  API-Key teilt (kein SaaS, 1-5 Nutzer) — die Pro-Nutzer-Verschlüsselung war
+  am falschen Betriebsmodell vorbei. Jetzt `Settings.llm_api_key`
+  (`LLM_API_KEY` in `.env`, gleiche Kategorie wie `KAIROS_KEK`/
+  `GOOGLE_CLIENT_SECRET`), `/account`-Formular durch einen Hinweistext
+  ersetzt. `user_setting.llm_model` bleibt pro Nutzer wählbar.
+- `scripts/agent_eval_suite.py` real laufen lassen, sobald `LLM_API_KEY` in
+  `.env` gesetzt ist, und die 13/13-Abnahme tatsächlich verifizieren.
 - Die drei vom Nutzer in dieser Session bestätigten Detailfragen sind
   umgesetzt (Dashboard bleibt Startseite, mehrere Konversationen, Default
   `anthropic/claude-sonnet-5`) — keine offenen Design-Fragen mehr für die

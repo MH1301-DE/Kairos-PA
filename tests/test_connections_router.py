@@ -106,32 +106,3 @@ async def test_list_connections_requires_auth() -> None:
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.get("/api/connections")
     assert resp.status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_llm_provider_connection_success_returns_201() -> None:
-    transport = ASGITransport(app=app)
-    with patch.object(connections_module, "_store_llm_connection", new=AsyncMock()) as mock_store:
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post(
-                "/api/connections/llm_provider",
-                json={"model": "anthropic/claude-sonnet-5", "api_key": "sk-test"},
-                cookies={"session_id": "valid"},
-            )
-    assert resp.status_code == 201
-    assert resp.json() == {"status": "connected"}
-    mock_store.assert_called_once()
-    call_args = mock_store.call_args.args
-    assert call_args[2] == "anthropic/claude-sonnet-5"
-    assert call_args[3] == "sk-test"
-
-
-@pytest.mark.asyncio
-async def test_llm_provider_connection_requires_auth() -> None:
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.post(
-            "/api/connections/llm_provider",
-            json={"model": "anthropic/claude-sonnet-5", "api_key": "sk-test"},
-        )
-    assert resp.status_code == 401

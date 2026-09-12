@@ -253,13 +253,17 @@ while True:
         messages.append(tool_result_message(call.id, result))
 ```
 
-`user_model_setting` kommt aus einer neuen Spalte `user_setting.llm_model`
-(z.B. `"anthropic/claude-sonnet-5"`) — der API-Key selbst liegt
-envelope-verschlüsselt in einer neuen `connection`-Zeile mit
-`connector='llm_provider'` (exakt dasselbe Credential-Muster wie Garmin/
-Google Calendar, `credentials_enc` über `kek_from_settings`/`wrap_dek`),
-statt eines Werts in `.env` — das erfüllt "beliebiger API-Key pro Nutzer
-einsetzbar" wörtlich, nicht nur pro Deployment.
+`user_model_setting` kommt aus einer bestehenden Spalte `user_setting.llm_model`
+(z.B. `"anthropic/claude-sonnet-5"`, per Nutzer wählbar). Der API-Key selbst
+ist **nicht** pro Nutzer — Kairos ist kein SaaS-Produkt, ein Deployment hat
+eine Handvoll Nutzer, die sich einen Anbieter/Key teilen (Korrektur vom
+2026-09-12, ersetzt eine frühere Version dieser Spec, die den Key fälschlich
+als per-Nutzer-`connection`-Zeile envelope-verschlüsselt hatte — technisch
+funktionierend, aber am falschen Betriebsmodell vorbei). Der Key liegt als
+`Settings.llm_api_key` (`LLM_API_KEY` in `.env`, gleiche Kategorie wie
+`GOOGLE_CLIENT_SECRET`/`KAIROS_KEK`), von der Person konfiguriert, die den
+Server betreibt — "beliebiger API-Key einsetzbar" heißt pro Deployment
+pluggable (jeder litellm-Anbieter), nicht pro Nutzer.
 
 ### Core-Tools als statische Konstante, keine Registry-Tabelle
 

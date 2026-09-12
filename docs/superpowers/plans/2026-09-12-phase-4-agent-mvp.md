@@ -320,6 +320,17 @@ web/tests/unit/chat-types.test.ts                                  new (or folde
 
 ### Task 4: LLM provider wiring (litellm + per-user credential)
 
+> **Korrektur (2026-09-12, nach der ersten Ausführung dieses Tasks):** der Key
+> ist **nicht** pro Nutzer — ein Kairos-Deployment teilt sich einen API-Key
+> (`Settings.llm_api_key`, `LLM_API_KEY` in `.env`), `user_setting.llm_model`
+> bleibt aber pro Nutzer wählbar. Der ursprüngliche Task-Text unten (per-User-
+> `connection`-Zeile, envelope-verschlüsselt) beschreibt die erste, falsche
+> Umsetzung — als historischer Kontext stehen gelassen, nicht als aktuelle
+> Anleitung. Tatsächlicher Stand: `src/kairos/agent/llm_client.py` liest
+> `settings.llm_api_key` direkt, keine `connection`-Zeile, keine
+> Verschlüsselung nötig (kein Nutzer-Geheimnis, ein Deployment-Geheimnis wie
+> `KAIROS_KEK`/`GOOGLE_CLIENT_SECRET`).
+
 **Files:**
 - Create: `alembic/versions/<rev>_llm_model_setting.py`, `src/kairos/agent/__init__.py`,
   `src/kairos/agent/llm_client.py`

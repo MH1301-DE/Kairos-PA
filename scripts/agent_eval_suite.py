@@ -17,15 +17,14 @@ in §8 genannten Metriken und für sich allein schon aussagekräftig.
 Verwendung:
     .venv/Scripts/python scripts/agent_eval_suite.py
 
-Voraussetzung: eine `connection`-Zeile mit connector='llm_provider' für den
-Testnutzer (siehe seed_test_data() unten) -- ohne die bricht der Lauf mit
-NoLlmCredentialConfigured ab. Ein API-Key wird interaktiv abgefragt.
+Voraussetzung: LLM_API_KEY in .env gesetzt (ein Key pro Deployment, siehe
+Settings.llm_api_key) -- ohne den bricht der Lauf mit
+NoLlmCredentialConfigured ab.
 """
 
 from __future__ import annotations
 
 import asyncio
-import getpass
 import sys
 import uuid
 from dataclasses import dataclass, field
@@ -38,7 +37,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from kairos.agent import dispatcher as dispatcher_module
 from kairos.agent.dispatcher import ToolCall, dispatch
 from kairos.agent.orchestrator import run_turn
-from kairos.auth.crypto import encrypt, generate_dek, kek_from_settings, wrap_dek
 from kairos.config import settings
 from kairos.db.session import async_session_factory
 from kairos.repositories.conversation import ConversationRepository
@@ -117,7 +115,7 @@ async def _insert_user(session: AsyncSession, user_id: UUID) -> None:
     )
 
 
-async def seed_test_data(session: AsyncSession, user_id: UUID, api_key: str) -> None:
+async def seed_test_data(session: AsyncSession, user_id: UUID) -> None:
     await _insert_user(session, user_id)
     await session.execute(
         text("INSERT INTO user_setting (user_id, hr_max_override) VALUES (:uid, 190)"),
@@ -179,23 +177,6 @@ async def seed_test_data(session: AsyncSession, user_id: UUID, api_key: str) -> 
             "target_date": today + timedelta(days=60),
         },
     )
-
-    # llm_provider credential -- envelope-encrypted, same pattern as Garmin/Google
-    kek = kek_from_settings(settings.kairos_kek)
-    dek = generate_dek()
-    dek_wrapped = wrap_dek(dek, kek)
-    await session.execute(
-        text("UPDATE app_user SET dek_wrapped = :dek_wrapped WHERE id = :uid"),
-        {"dek_wrapped": dek_wrapped, "uid": str(user_id)},
-    )
-    credentials_enc = encrypt(api_key.encode(), dek)
-    await session.execute(
-        text(
-            "INSERT INTO connection (id, user_id, connector, status, config, credentials_enc) "
-            "VALUES (:id, :uid, 'llm_provider', 'active', '{}'::jsonb, :enc)"
-        ),
-        {"id": str(uuid.uuid4()), "uid": str(user_id), "enc": credentials_enc},
-    )
     await session.commit()
 
 
@@ -228,14 +209,13 @@ async def run_eval_case(
 
 async def main() -> None:
     print("Phase-4-MVP Eval-Suite -- macht echte, kostenpflichtige LLM-Calls.")
-    api_key = getpass.getpass("LLM-API-Key (z.B. Anthropic): ")
-    if not api_key:
-        sys.exit("Kein API-Key eingegeben, Abbruch.")
+    if not settings.llm_api_key:
+        sys.exit("LLM_API_KEY ist in .env nicht gesetzt, Abbruch.")
 
     user_id = uuid.uuid4()
     async with async_session_factory() as session:
         print("Seede Testdatensatz (60 Tage Trainingsdaten) ...")
-        await seed_test_data(session, user_id, api_key)
+        await seed_test_data(session, user_id)
 
         conv_repo = ConversationRepository(session=session)
         conversation = await conv_repo.create(user_id=user_id, title="Eval")

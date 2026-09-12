@@ -11,7 +11,7 @@ from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from kairos.auth.crypto import encrypt, generate_dek, kek_from_settings, unwrap_dek, wrap_dek
+from kairos.auth.crypto import encrypt, kek_from_settings, unwrap_dek
 from kairos.auth.deps import current_user
 from kairos.config import settings
 from kairos.connectors.garmin.client import (
@@ -21,7 +21,7 @@ from kairos.connectors.garmin.client import (
     NeedsMfaToken,
     UpstreamUnavailable,
 )
-from kairos.db.models import AppUser, Connection, UserSetting
+from kairos.db.models import AppUser, Connection
 from kairos.db.rls import install_rls_listener
 from kairos.db.session import get_session
 
@@ -104,78 +104,6 @@ async def _store_connection(
         )
     )
     await session.execute(stmt)
-
-
-class LlmProviderConnectionRequest(BaseModel):
-    model: str
-    api_key: str
-
-
-@router.post("/llm_provider", status_code=201)
-async def connect_llm_provider(
-    req: LlmProviderConnectionRequest,
-    user: dict[str, Any] = Depends(current_user),
-    session: AsyncSession = Depends(get_session),
-) -> dict[str, Any]:
-    user_id = UUID(user["user_id"])
-    install_rls_listener(session, user_id)
-    await _store_llm_connection(session, user_id, req.model, req.api_key)
-    await session.commit()
-    return {"status": "connected"}
-
-
-async def _store_llm_connection(
-    session: AsyncSession, user_id: UUID, model: str, api_key: str
-) -> None:
-    user_row = (
-        await session.execute(select(AppUser).where(AppUser.id == user_id))
-    ).scalar_one()
-    kek = kek_from_settings(settings.kairos_kek)
-    # unlike Garmin/Google (always reached only after a DEK already exists from
-    # login), a user could set an LLM key before ever connecting anything else
-    if user_row.dek_wrapped is None:
-        dek = generate_dek()
-        user_row.dek_wrapped = wrap_dek(dek, kek)
-    else:
-        dek = unwrap_dek(user_row.dek_wrapped, kek)
-    credentials_enc = encrypt(api_key.encode(), dek)
-
-    # external_account doubles as the model name here (matches Garmin's use of
-    # the field for the account email) -- re-entering a different model disables
-    # the old row instead of leaving two "active" llm_provider connections
-    await session.execute(
-        update(Connection)
-        .where(
-            Connection.user_id == user_id,
-            Connection.connector == "llm_provider",
-            Connection.external_account.is_distinct_from(model),
-        )
-        .values(status="disabled")
-    )
-    stmt = (
-        insert(Connection)
-        .values(
-            user_id=user_id,
-            connector="llm_provider",
-            external_account=model,
-            status="active",
-            credentials_enc=credentials_enc,
-        )
-        .on_conflict_do_update(
-            constraint="uq_connection",
-            set_={"status": "active", "credentials_enc": credentials_enc},
-        )
-    )
-    await session.execute(stmt)
-
-    # keep user_setting.llm_model in sync -- get_completion() reads it separately
-    # from the connection row, the two must agree on which model the key is for
-    setting_stmt = (
-        insert(UserSetting)
-        .values(user_id=user_id, llm_model=model)
-        .on_conflict_do_update(index_elements=[UserSetting.user_id], set_={"llm_model": model})
-    )
-    await session.execute(setting_stmt)
 
 
 @router.get("")

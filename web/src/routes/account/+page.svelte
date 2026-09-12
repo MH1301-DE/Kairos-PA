@@ -1,14 +1,10 @@
 <!-- web/src/routes/account/+page.svelte -->
 <script lang="ts">
-	import { enhance } from '$app/forms';
 	import { resolve } from '$app/paths';
 	import type { ConnectionInfo } from '$lib/types';
-	import type { ActionData, PageData } from './$types';
+	import type { PageData } from './$types';
 
-	let { data, form }: { data: PageData; form: ActionData } = $props();
-
-	let llmConnection = $derived(data.connections.find((c) => c.connector === 'llm_provider'));
-	let submittingLlm = $state(false);
+	let { data }: { data: PageData } = $props();
 
 	interface ConnectorMeta {
 		id: string;
@@ -88,60 +84,12 @@
 </div>
 
 <h2 class="section-title">Chat-Assistent</h2>
-<div class="tile llm-card">
-	<div class="connector-header">
-		<h3>LLM-Anbieter</h3>
-		<span class="badge" class:badge-ok={llmConnection?.status === 'active'}>
-			{llmConnection ? 'aktiv' : 'nicht eingerichtet'}
-		</span>
-	</div>
-	{#if llmConnection}
-		<p class="empty">Aktuelles Modell: <span class="figure">{llmConnection.external_account}</span></p>
-	{:else}
-		<p class="empty">
-			Ohne eigenen API-Key kann der Chat (/chat) noch nicht antworten.
-		</p>
-	{/if}
-
-	<form
-		method="POST"
-		action="?/connectLlm"
-		use:enhance={() => {
-			submittingLlm = true;
-			return async ({ update }) => {
-				await update();
-				submittingLlm = false;
-			};
-		}}
-		class="llm-form"
-	>
-		<fieldset disabled={submittingLlm}>
-			<label class="field">
-				Modell
-				<input
-					type="text"
-					name="model"
-					value={llmConnection?.external_account ?? 'anthropic/claude-sonnet-5'}
-					placeholder="anthropic/claude-sonnet-5"
-					required
-				/>
-			</label>
-			<label class="field">
-				API-Key
-				<!-- never pre-filled: the server does not echo the key back -->
-				<input type="password" name="api_key" required />
-			</label>
-			{#if form?.llmError}
-				<p class="status-error">{form.llmError}</p>
-			{/if}
-			{#if form?.llmSuccess}
-				<p class="status-success">Gespeichert.</p>
-			{/if}
-			<button type="submit" class="btn btn-primary">
-				{submittingLlm ? 'Speichert …' : llmConnection ? 'Aktualisieren' : 'Verbinden'}
-			</button>
-		</fieldset>
-	</form>
+<div class="tile llm-note">
+	<p>
+		Der LLM-Anbieter gilt für die gesamte Kairos-Installation, nicht pro Konto — wird von
+		der Person eingerichtet, die den Server betreibt (<code>LLM_API_KEY</code> in
+		<code>.env</code>).
+	</p>
 </div>
 
 <style>
@@ -189,25 +137,14 @@
 		font-size: var(--text-lg);
 		margin: var(--space-6) 0 var(--space-3);
 	}
-	.llm-card {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-4);
-		max-width: 24rem;
+	.llm-note {
+		max-width: 32rem;
+		color: var(--color-text-muted);
 	}
-	.connector-header h3 {
-		font-size: var(--text-lg);
-		margin: 0;
-	}
-	.llm-form fieldset {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-4);
-		border: none;
-		margin: 0;
-		padding: 0;
-	}
-	.llm-form fieldset:disabled {
-		opacity: 0.75;
+	.llm-note code {
+		font-family: var(--font-mono);
+		background: var(--color-surface-raised);
+		padding: 0.1rem 0.3rem;
+		border-radius: var(--radius-sm);
 	}
 </style>

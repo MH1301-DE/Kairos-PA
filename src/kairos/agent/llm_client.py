@@ -5,17 +5,14 @@ from typing import Any
 from uuid import UUID
 
 import litellm
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from kairos.auth.crypto import decrypt, kek_from_settings, unwrap_dek
 from kairos.config import settings
-from kairos.db.models import AppUser, Connection
 from kairos.repositories.user_setting import get_or_default_user_setting
 
 
 class NoLlmCredentialConfigured(Exception):
-    """No connection row with connector='llm_provider' exists for this user yet."""
+    """settings.llm_api_key is unset -- no LLM_API_KEY in the deployment's .env."""
 
 
 async def get_completion(
@@ -25,8 +22,13 @@ async def get_completion(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]] | None = None,
 ) -> litellm.types.utils.ModelResponse:
+    # one Kairos deployment = one LLM API key, shared across every user of this
+    # instance -- not a per-user credential like Garmin/Google Calendar (see
+    # Settings.llm_api_key). Each user can still pick their own model.
+    if not settings.llm_api_key:
+        raise NoLlmCredentialConfigured("LLM_API_KEY is not configured for this deployment")
+
     setting = await get_or_default_user_setting(session, user_id=user_id)
-    api_key = await _load_llm_api_key(session, user_id=user_id)
 
     # litellm.completion is a synchronous, blocking call -- keep it off the event
     # loop, same pattern as GarminConnectBackend's blocking calls elsewhere
@@ -35,33 +37,7 @@ async def get_completion(
         model=setting.llm_model,
         messages=messages,
         tools=tools,
-        api_key=api_key,
+        api_key=settings.llm_api_key,
         stream=False,
     )
     return response  # type: ignore[no-any-return]
-
-
-async def _load_llm_api_key(session: AsyncSession, *, user_id: UUID) -> str:
-    # first() not scalar_one_or_none(): pre-existing duplicate rows must not raise
-    # here, mirrors the same reasoning in routers/sync.py's _build_garmin_client
-    conn_row = (
-        await session.execute(
-            select(Connection).where(
-                Connection.user_id == user_id,
-                Connection.connector == "llm_provider",
-                Connection.status.in_(["active", "reauth_required"]),
-            ).order_by(Connection.connected_at.desc(), Connection.id.desc())
-        )
-    ).scalars().first()
-    if conn_row is None or conn_row.credentials_enc is None:
-        raise NoLlmCredentialConfigured(f"No llm_provider connection for user {user_id}")
-
-    user_row = (
-        await session.execute(select(AppUser).where(AppUser.id == user_id))
-    ).scalar_one_or_none()
-    if user_row is None or user_row.dek_wrapped is None:
-        raise NoLlmCredentialConfigured(f"User {user_id} has no wrapped DEK")
-
-    kek = kek_from_settings(settings.kairos_kek)
-    dek = unwrap_dek(user_row.dek_wrapped, kek)
-    return decrypt(conn_row.credentials_enc, dek).decode()
