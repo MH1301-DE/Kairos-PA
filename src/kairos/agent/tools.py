@@ -9,17 +9,25 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from kairos.calendar.free_time import BusyBlock, CalendarPrefs, compute_free_blocks
+from kairos.calendar.free_time import BusyBlock, CalendarPrefs, FreeBlock, compute_free_blocks
 from kairos.db.models import MetricDailyValue
 from kairos.metrics.bootstrap import build_default_registry
+from kairos.metrics.variants.edwards_trimp_variant import edwards_daily_load_series
+from kairos.planning.algorithm import generate_plan_blocks
 from kairos.repositories.calendar_event import CalendarEventRepository
 from kairos.repositories.memory import SqlMemoryRepository
+from kairos.repositories.plan import PlanRepository
 from kairos.routers.calendar import (
     CreateEventRequest,
     _create_calendar_event,
     _delete_calendar_event,
     _load_prefs,
 )
+
+_WORKOUT_LABELS: dict[str, str] = {
+    "long_run": "Long Run", "hard": "Intervalle/Tempo", "easy": "Lockerer Lauf", "rest": "Ruhetag",
+}
+_STRESS_KEYWORDS = ("stress", "krank", "müde", "muede", "erkält", "erkaeltet")
 
 # Hardcap per docs/03-agent-design.md §4.5 -- a tool result never dumps a raw
 # time series beyond this, the caller re-queries with a narrower window instead
@@ -244,6 +252,186 @@ async def delete_calendar_event_handler(
     return _envelope(f"Termin {event_id} gelöscht.", {"event_id": event_id})
 
 
+async def _free_blocks_by_day(
+    session: AsyncSession, user_id: UUID, start: date, end: date
+) -> dict[date, list[FreeBlock]]:
+    """One compute_free_blocks() call per day, sharing a single events fetch
+    for the whole range instead of one query per day."""
+    prefs_row = await _load_prefs(session, user_id)
+    prefs = CalendarPrefs(
+        work_hours_start=prefs_row["work_hours_start"],
+        work_hours_end=prefs_row["work_hours_end"],
+        buffer_minutes=prefs_row["calendar_buffer_minutes"],
+        min_free_minutes=0,  # the planning algorithm applies its own thresholds
+    )
+    range_start = datetime(start.year, start.month, start.day, tzinfo=UTC)
+    range_end = datetime(end.year, end.month, end.day, tzinfo=UTC) + timedelta(days=1)
+    repo = CalendarEventRepository(session)
+    events = await repo.list_between(user_id, range_start, range_end)
+
+    result: dict[date, list[FreeBlock]] = {}
+    day = start
+    while day <= end:
+        day_start = datetime(day.year, day.month, day.day, tzinfo=UTC)
+        day_end = day_start + timedelta(days=1)
+        busy = [
+            BusyBlock(start=e.start_at, end=e.end_at)
+            for e in events
+            if e.start_at < day_end and e.end_at > day_start
+        ]
+        result[day] = compute_free_blocks(busy, day_start, day_end, prefs)
+        day += timedelta(days=1)
+    return result
+
+
+async def _current_ctl(session: AsyncSession, user_id: UUID, as_of: date) -> float:
+    registry = build_default_registry()
+    result = await registry.get("training_load", "default").compute(
+        session, user_id=user_id, as_of=as_of
+    )
+    if result.confidence != "insufficient_data" and isinstance(result.value, dict):
+        ctl = result.value.get("ctl")
+        if isinstance(ctl, int | float):
+            return float(ctl)
+    # a brand-new user with no training history yet still gets a (conservative,
+    # all-easy-leaning) plan rather than a hard failure
+    return 0.0
+
+
+async def plan_propose_handler(
+    session: AsyncSession, *, user_id: UUID, weeks: int, goal_date: str | None = None
+) -> dict[str, Any]:
+    start = date.today()
+    end = start + timedelta(weeks=weeks) - timedelta(days=1)
+    goal = date.fromisoformat(goal_date) if goal_date else None
+
+    free_blocks = await _free_blocks_by_day(session, user_id, start, end)
+    current_ctl = await _current_ctl(session, user_id, start)
+    planned = generate_plan_blocks(
+        start=start, end=end, goal_date=goal, free_blocks_by_day=free_blocks,
+        current_ctl=current_ctl,
+    )
+
+    repo = PlanRepository(session=session)
+    plan = await repo.create_draft(
+        user_id=user_id, title=f"Trainingsplan ab {start.isoformat()}", start_date=start,
+        end_date=end, goal_date=goal, blocks=planned,
+    )
+    await session.commit()
+
+    lines = [
+        f"{b.day.isoformat()}: {_WORKOUT_LABELS[b.workout_type]}"
+        + (f" (TRIMP ~{b.target_trimp:.0f})" if b.target_trimp else "")
+        for b in planned
+    ]
+    return _envelope(
+        f"Entwurf für {weeks} Wochen erstellt ({len(planned)} Tage). Noch nicht im Kalender --"
+        " zum Bestätigen plan_commit aufrufen.",
+        {"plan_id": str(plan.id), "blocks": lines},
+    )
+
+
+async def plan_commit_handler(
+    session: AsyncSession, *, user_id: UUID, plan_id: str
+) -> dict[str, Any]:
+    plan_uuid = UUID(plan_id)
+    repo = PlanRepository(session=session)
+    blocks = await repo.list_blocks(user_id=user_id, plan_id=plan_uuid)
+
+    event_ids_by_block_id: dict[UUID, str] = {}
+    for block in blocks:
+        if block.workout_type == "rest" or block.calendar_event_id is not None:
+            continue
+        summary = _WORKOUT_LABELS[block.workout_type]
+        if block.target_trimp:
+            summary += f" (TRIMP ~{block.target_trimp:.0f})"
+        req = CreateEventRequest(
+            summary=summary,
+            start_at=datetime(block.day.year, block.day.month, block.day.day, 7, 0, tzinfo=UTC),
+            end_at=datetime(block.day.year, block.day.month, block.day.day, 8, 0, tzinfo=UTC),
+        )
+        created = await _create_calendar_event(session, user_id, req)
+        event_ids_by_block_id[block.id] = created["id"]
+
+    await repo.commit(
+        user_id=user_id, plan_id=plan_uuid, event_ids_by_block_id=event_ids_by_block_id
+    )
+    await session.commit()
+    return _envelope(
+        f"Plan bestätigt, {len(event_ids_by_block_id)} Termine angelegt.",
+        {"plan_id": plan_id, "events_created": len(event_ids_by_block_id)},
+    )
+
+
+async def plan_adjust_handler(
+    session: AsyncSession, *, user_id: UUID, plan_id: str, reason: str
+) -> dict[str, Any]:
+    # 0.7 for stress/illness-flavored reasons, else a conservative 0.85 default
+    multiplier = 0.7 if any(kw in reason.lower() for kw in _STRESS_KEYWORDS) else 0.85
+    plan_uuid = UUID(plan_id)
+    repo = PlanRepository(session=session)
+    blocks = await repo.list_blocks(user_id=user_id, plan_id=plan_uuid)
+
+    today = date.today()
+    adjusted = 0
+    for block in blocks:
+        if block.status != "planned" or block.day < today or block.target_trimp is None:
+            continue
+        block.target_trimp = block.target_trimp * multiplier
+        adjusted += 1
+        # NOTE: does not rename already-committed calendar events -- the
+        # calendar API has no PATCH/update endpoint (Phase 3 deliberately
+        # built only POST+DELETE, see docs/HANDOVER.md), so a committed
+        # event's title keeps showing the pre-adjustment TRIMP estimate.
+        # The plan data itself (and plan_progress's comparison) reflects the
+        # adjustment correctly regardless.
+    await session.commit()
+    return _envelope(
+        f"{adjusted} künftige Blöcke angepasst (Faktor {multiplier}, Grund: \"{reason}\").",
+        {"plan_id": plan_id, "adjusted_blocks": adjusted, "multiplier": multiplier},
+    )
+
+
+async def plan_progress_handler(
+    session: AsyncSession, *, user_id: UUID, plan_id: str | None = None
+) -> dict[str, Any]:
+    repo = PlanRepository(session=session)
+    plan = (
+        await repo.get(user_id=user_id, plan_id=UUID(plan_id))
+        if plan_id
+        else await repo.get_active_for_user(user_id=user_id)
+    )
+    if plan is None:
+        return _envelope("Kein aktiver Plan gefunden.", {"plan_id": None})
+
+    today = date.today()
+    week_start = today - timedelta(days=today.weekday())
+    week_end = week_start + timedelta(days=6)
+
+    blocks = await repo.list_blocks(user_id=user_id, plan_id=plan.id)
+    week_blocks = [b for b in blocks if week_start <= b.day <= week_end]
+    planned_total = sum(b.target_trimp or 0.0 for b in week_blocks)
+
+    load = await edwards_daily_load_series(
+        session, user_id=user_id, end_day=min(today, week_end),
+        days=(min(today, week_end) - week_start).days + 1,
+    )
+    actual_total = sum(load.series.values())
+
+    days = [
+        {
+            "day": b.day.isoformat(), "workout_type": b.workout_type,
+            "planned_trimp": b.target_trimp, "actual_trimp": load.series.get(b.day),
+        }
+        for b in week_blocks
+    ]
+    return _envelope(
+        f"Diese Woche: geplant {planned_total:.0f} TRIMP, tatsächlich {actual_total:.0f} TRIMP.",
+        {"plan_id": str(plan.id), "planned_total": planned_total, "actual_total": actual_total,
+         "days": days},
+    )
+
+
 CORE_TOOLS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="query_health", risk_class="read", requires_confirmation=False,
@@ -349,6 +537,49 @@ CORE_TOOLS: tuple[ToolSpec, ...] = (
             "required": ["event_id"],
         },
         handler=delete_calendar_event_handler,
+    ),
+    ToolSpec(
+        name="plan_propose", risk_class="read", requires_confirmation=False,
+        json_schema={
+            "type": "object",
+            "properties": {
+                "weeks": {"type": "integer", "description": "Planungsdauer in Wochen"},
+                "goal_date": {"type": "string", "description": "ISO-Datum, optional (Renntag)"},
+            },
+            "required": ["weeks"],
+        },
+        handler=plan_propose_handler,
+    ),
+    ToolSpec(
+        name="plan_commit", risk_class="write", requires_confirmation=True,
+        json_schema={
+            "type": "object",
+            "properties": {"plan_id": {"type": "string"}},
+            "required": ["plan_id"],
+        },
+        handler=plan_commit_handler,
+    ),
+    ToolSpec(
+        name="plan_adjust", risk_class="write", requires_confirmation=True,
+        json_schema={
+            "type": "object",
+            "properties": {
+                "plan_id": {"type": "string"},
+                "reason": {"type": "string", "description": "z.B. 'viel Stress nächste Woche'"},
+            },
+            "required": ["plan_id", "reason"],
+        },
+        handler=plan_adjust_handler,
+    ),
+    ToolSpec(
+        name="plan_progress", risk_class="read", requires_confirmation=False,
+        json_schema={
+            "type": "object",
+            "properties": {
+                "plan_id": {"type": "string", "description": "optional, sonst aktiver Plan"},
+            },
+        },
+        handler=plan_progress_handler,
     ),
 )
 

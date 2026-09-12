@@ -137,3 +137,41 @@ async def test_dispatch_raises_on_unknown_tool(monkeypatch: pytest.MonkeyPatch) 
             object(), user_id=uuid4(),  # type: ignore[arg-type]
             tool_call=ToolCall(name="not_a_tool", arguments={}), pending_confirmation=False,
         )
+
+
+# The tests below use the REAL CORE_TOOLS registration (not a monkeypatched
+# fake spec) -- unlike the tests above, these catch an actual mistake in how
+# plan_commit/plan_adjust are registered in tools.py (e.g. someone flipping
+# requires_confirmation=False by accident), not just the dispatcher's own logic.
+
+
+@pytest.mark.asyncio
+async def test_real_plan_commit_requires_confirmation() -> None:
+    result = await dispatch(
+        object(), user_id=uuid4(),  # type: ignore[arg-type]
+        tool_call=ToolCall(name="plan_commit", arguments={"plan_id": str(uuid4())}),
+        pending_confirmation=False,
+    )
+    assert isinstance(result, Proposal)
+    assert result.tool_name == "plan_commit"
+
+
+@pytest.mark.asyncio
+async def test_real_plan_adjust_requires_confirmation() -> None:
+    result = await dispatch(
+        object(), user_id=uuid4(),  # type: ignore[arg-type]
+        tool_call=ToolCall(
+            name="plan_adjust", arguments={"plan_id": str(uuid4()), "reason": "Stress"}
+        ),
+        pending_confirmation=False,
+    )
+    assert isinstance(result, Proposal)
+    assert result.tool_name == "plan_adjust"
+
+
+@pytest.mark.asyncio
+async def test_real_plan_propose_and_progress_are_read_class() -> None:
+    from kairos.agent.tools import TOOLS_BY_NAME
+
+    assert TOOLS_BY_NAME["plan_propose"].risk_class == "read"
+    assert TOOLS_BY_NAME["plan_progress"].risk_class == "read"

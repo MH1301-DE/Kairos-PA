@@ -45,7 +45,11 @@ def test_core_tools_have_the_expected_risk_classes() -> None:
     assert risk_by_name["remember"] == ("write", False)
     assert risk_by_name["propose_calendar_event"] == ("write", True)
     assert risk_by_name["delete_calendar_event"] == ("destructive", True)
-    assert len(CORE_TOOLS) == 8
+    assert risk_by_name["plan_propose"] == ("read", False)
+    assert risk_by_name["plan_commit"] == ("write", True)
+    assert risk_by_name["plan_adjust"] == ("write", True)
+    assert risk_by_name["plan_progress"] == ("read", False)
+    assert len(CORE_TOOLS) == 12
     assert set(TOOLS_BY_NAME) == {t.name for t in CORE_TOOLS}
 
 
