@@ -197,11 +197,11 @@ async def _run_backfill_task(
     async with async_session_factory() as session:
         install_rls_listener(session, user_id)
 
-        garmin = await _build_garmin_client(session, user_id)
+        garmin, garmin_error = await _build_garmin_client(session, user_id)
         if garmin is None:
             for job in jobs:
                 job.status = "failed"
-                job.error = "No active Garmin connection or decryption failed"
+                job.error = garmin_error or "No active Garmin connection or decryption failed"
                 job.finished_at = datetime.now(UTC).isoformat()
             return
 
@@ -249,7 +249,9 @@ async def _run_backfill_task(
                     job.finished_at = datetime.now(UTC).isoformat()
 
 
-async def _build_garmin_client(session: AsyncSession, user_id: UUID) -> object | None:
+async def _build_garmin_client(
+    session: AsyncSession, user_id: UUID
+) -> tuple[object | None, str | None]:
     try:
         # first() not scalar_one_or_none(): pre-existing duplicate rows must not raise here,
         # the bare except below would turn that into an opaque "no connection" failure
@@ -264,12 +266,12 @@ async def _build_garmin_client(session: AsyncSession, user_id: UUID) -> object |
         if conn_row is None:
             # info, not warning: the user simply has not connected Garmin yet
             logger.info("No active Garmin connection for user %s", user_id)
-            return None
+            return None, "No active Garmin connection or decryption failed"
         if conn_row.credentials_enc is None:
             logger.warning(
                 "Garmin connection %s for user %s has no stored credentials", conn_row.id, user_id
             )
-            return None
+            return None, "No active Garmin connection or decryption failed"
 
         user_row = (await session.execute(
             select(AppUser).where(AppUser.id == user_id)
@@ -277,10 +279,10 @@ async def _build_garmin_client(session: AsyncSession, user_id: UUID) -> object |
 
         if user_row is None:
             logger.warning("No app_user row for user %s while building Garmin client", user_id)
-            return None
+            return None, "No active Garmin connection or decryption failed"
         if user_row.dek_wrapped is None:
             logger.warning("User %s has no wrapped DEK — cannot decrypt Garmin tokens", user_id)
-            return None
+            return None, "No active Garmin connection or decryption failed"
 
         kek = kek_from_settings(settings.kairos_kek)
         dek = unwrap_dek(user_row.dek_wrapped, kek)
@@ -288,11 +290,38 @@ async def _build_garmin_client(session: AsyncSession, user_id: UUID) -> object |
 
         gc = importlib.import_module("garminconnect")
         garmin = cast(Any, gc.Garmin())
-        await asyncio.to_thread(garmin.login, token_json)
-        return garmin  # type: ignore[no-any-return]
+        try:
+            await asyncio.to_thread(garmin.login, token_json)
+        except gc.GarminConnectAuthenticationError as exc:
+            # Garmin rejected the stored token outright (expired/revoked session) --
+            # distinct from the generic except below, this needs the user to
+            # reconnect via POST /api/connections/garmin, not just a retry
+            _mark_reauth_required(conn_row, str(exc))
+            await session.commit()
+            logger.warning("Garmin token rejected for user %s: %s", user_id, exc)
+            return None, "Garmin-Sitzung abgelaufen — bitte unter Konto & Sync neu verbinden"
+
+        _mark_connection_healthy(conn_row)
+        await session.commit()
+        return garmin, None
     except Exception as exc:
         logger.warning("Garmin client build failed for user %s: %s", user_id, exc)
-        return None
+        return None, "No active Garmin connection or decryption failed"
+
+
+def _mark_reauth_required(conn_row: Connection, error: str) -> None:
+    conn_row.status = "reauth_required"
+    conn_row.last_error = error
+    # set once, when the connection first breaks -- not bumped on every retry
+    if conn_row.reauth_since is None:
+        conn_row.reauth_since = datetime.now(UTC)
+
+
+def _mark_connection_healthy(conn_row: Connection) -> None:
+    conn_row.status = "active"
+    conn_row.last_error = None
+    conn_row.reauth_since = None
+    conn_row.last_ok_at = datetime.now(UTC)
 
 
 async def _run_calendar_sync_task(

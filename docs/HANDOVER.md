@@ -802,6 +802,37 @@ gesunden, aktiv genutzten Verbindung dauerhaft "nie" anzeigen und eher nach kapu
 als informativ sein. Die eigentliche Reauth-Erkennung (Token-Refresh-Fehler erkennen,
 `status`/`reauth_since` entsprechend setzen) ist ein eigenes, noch offenes Ticket.
 
+**Update (2026-09-12): Reauth-Ticket umgesetzt.** Auslöser: ein echter Live-Fund während
+dieser Session — der Nutzer meldete "Garmin-Backfill funktioniert nicht", die UI zeigte
+"Garmin: active", das Log aber `Garmin client build failed ...: Failed to retrieve social
+profile` (`GarminConnectAuthenticationError` von garminconnect — abgelaufener,
+zurückgewiesener Token, ~1 Monat alt). Kairos setzte den Status nie auf `reauth_required`
+um, also blieb die UI dauerhaft "active" trotz kaputter Verbindung.
+- `src/kairos/routers/sync.py`: `_build_garmin_client` fängt `GarminConnectAuthenticationError`
+  jetzt gezielt ab (nicht mehr nur den generischen `except Exception`-Fallback), setzt
+  `status='reauth_required'` + `last_error` + `reauth_since` (nur beim ersten Auftreten
+  gesetzt, nicht bei jedem Retry neu gestempelt) und committet das sofort — unabhängig vom
+  weiteren Job-Ausgang. Bei erfolgreichem Login (auch mit dem alten Token, falls Garmin sich
+  erholt) wird die Verbindung symmetrisch wieder auf `active` zurückgesetzt
+  (`reauth_since`/`last_error` geleert, `last_ok_at` gesetzt). Rückgabetyp geändert zu
+  `tuple[object | None, str | None]`, damit der Backfill-Job bei einer echten
+  Token-Ablehnung eine klare deutsche Fehlermeldung bekommt statt der generischen
+  "No active Garmin connection or decryption failed".
+- `src/kairos/routers/connections.py`: `_store_connection` (der eigentliche Reconnect-Endpunkt
+  `POST /api/connections/garmin`) leert `reauth_since`/`last_error` und setzt `last_ok_at`
+  beim `ON CONFLICT DO UPDATE` — das ist der Moment, den der `reauth_since`-Spaltenkommentar
+  als "cleared on successful re-login" beschreibt.
+- Frontend brauchte **keine Änderung** — `web/src/routes/account/+page.svelte` hatte
+  `STATUS_LABELS['reauth_required'] = 'Neuanmeldung nötig'` bereits vorbereitet, nur der
+  Backend-Wert kam nie an.
+- 4 neue Tests in `tests/test_connections_integration.py` (reauth_required wird gesetzt,
+  `reauth_since` wird bei wiederholtem Fehlschlag nicht neu gestempelt, erfolgreicher Login
+  setzt zurück, Reconnect über `_store_connection` löscht den Reauth-Zustand) + bestehender
+  Test auf den neuen Tupel-Rückgabetyp angepasst. Alle 299 Tests grün, `ruff`/`mypy --strict`
+  auf den geänderten Dateien sauber.
+- Der eigentliche Nutzer-Fix: Garmin unter `/onboarding` neu verbinden (E-Mail/Passwort) --
+  das überschreibt den Connection-Eintrag mit einem frischen Token.
+
 **6. Performance-Falle in `activity_fit` gefunden, noch nicht gefixt:**
 `SqlCanonicalRepository.upsert_many()` (`src/kairos/repositories/canonical.py`) schreibt
 jeden `CanonicalRecord` einzeln (`await self._session.execute(stmt)` in einer
@@ -1159,5 +1190,6 @@ Alle Tests grün (295 gesamt, u.a. 5 neue Handler-Tests, 3 neue
 Dispatcher-Bestätigungstests gegen die echten `TOOLS_BY_NAME`-Einträge statt
 Fake-Specs, 1 neuer Integrationstest `plan_propose`→`plan_commit` gegen eine
 echte DB mit gemocktem Google-Calendar-Client), `ruff`/`mypy --strict` auf
-`src` grün. Referenzfragen 13/15 aus `scripts/agent_eval_suite.py` sind noch
-nicht zurück in `CASES` aufgenommen — laut Plan optional, kein Hard-Requirement.
+`src` grün. Referenzfragen 13/15 sind inzwischen zurück in
+`scripts/agent_eval_suite.py`s `CASES` (alle 15 jetzt drin) — noch nicht live
+gelaufen, da `LLM_API_KEY` noch nicht gesetzt war.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -89,6 +90,7 @@ async def _store_connection(
         .values(status="disabled")
     )
 
+    now = datetime.now(UTC)
     stmt = (
         insert(Connection)
         .values(
@@ -97,10 +99,20 @@ async def _store_connection(
             external_account=email,
             status="active",
             credentials_enc=credentials_enc,
+            last_ok_at=now,
         )
         .on_conflict_do_update(
             constraint="uq_connection",
-            set_={"status": "active", "credentials_enc": credentials_enc},
+            # clears reauth_required/last_error left over from a previous session
+            # expiry -- this is exactly the "successful re-login" moment that
+            # reauth_since's column comment says clears it
+            set_={
+                "status": "active",
+                "credentials_enc": credentials_enc,
+                "reauth_since": None,
+                "last_error": None,
+                "last_ok_at": now,
+            },
         )
     )
     await session.execute(stmt)

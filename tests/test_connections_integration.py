@@ -101,6 +101,25 @@ class _FakeGarmin:
         self.login_token = token_json
 
 
+class _FakeAuthError(Exception):
+    pass
+
+
+class _RejectingGarmin:
+    def login(self, token_json: str) -> None:
+        raise _FakeAuthError("Failed to retrieve social profile")
+
+
+async def _connection_row(session: AsyncSession, user_id: UUID) -> Connection:
+    return (
+        await session.execute(
+            select(Connection).where(
+                Connection.user_id == user_id, Connection.connector == "garmin"
+            )
+        )
+    ).scalar_one()
+
+
 @pytest.mark.asyncio
 async def test_build_garmin_client_picks_newest_of_duplicate_connections(
     session: AsyncSession,
@@ -141,7 +160,158 @@ async def test_build_garmin_client_picks_newest_of_duplicate_connections(
         ),
     )
 
-    client = await sync_module._build_garmin_client(session, user_id)
+    client, error = await sync_module._build_garmin_client(session, user_id)
 
     assert client is fake
+    assert error is None
     assert fake.login_token == '{"token":"NEW"}'
+
+
+@pytest.mark.asyncio
+async def test_build_garmin_client_marks_reauth_required_on_auth_rejection(
+    session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id = uuid4()
+    dek = await _insert_user(session, user_id, "reauth@test.com", "sub-reauth")
+    session.add(
+        Connection(
+            user_id=user_id,
+            connector="garmin",
+            external_account="reauth@garmin.com",
+            status="active",
+            credentials_enc=encrypt(b'{"token":"STALE"}', dek),
+        )
+    )
+    await session.commit()
+
+    monkeypatch.setattr(
+        sync_module,
+        "importlib",
+        types.SimpleNamespace(
+            import_module=lambda name: types.SimpleNamespace(
+                Garmin=lambda: _RejectingGarmin(),
+                GarminConnectAuthenticationError=_FakeAuthError,
+            )
+        ),
+    )
+
+    client, error = await sync_module._build_garmin_client(session, user_id)
+    await session.commit()
+
+    assert client is None
+    assert error == "Garmin-Sitzung abgelaufen — bitte unter Konto & Sync neu verbinden"
+
+    row = await _connection_row(session, user_id)
+    assert row.status == "reauth_required"
+    assert row.last_error == "Failed to retrieve social profile"
+    assert row.reauth_since is not None
+
+
+@pytest.mark.asyncio
+async def test_build_garmin_client_does_not_bump_existing_reauth_since(
+    session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id = uuid4()
+    dek = await _insert_user(session, user_id, "reauth-again@test.com", "sub-reauth-again")
+    first_broken_at = datetime(2026, 1, 1, tzinfo=UTC)
+    session.add(
+        Connection(
+            user_id=user_id,
+            connector="garmin",
+            external_account="reauth-again@garmin.com",
+            status="reauth_required",
+            credentials_enc=encrypt(b'{"token":"STALE"}', dek),
+            reauth_since=first_broken_at,
+        )
+    )
+    await session.commit()
+
+    monkeypatch.setattr(
+        sync_module,
+        "importlib",
+        types.SimpleNamespace(
+            import_module=lambda name: types.SimpleNamespace(
+                Garmin=lambda: _RejectingGarmin(),
+                GarminConnectAuthenticationError=_FakeAuthError,
+            )
+        ),
+    )
+
+    await sync_module._build_garmin_client(session, user_id)
+    await session.commit()
+
+    row = await _connection_row(session, user_id)
+    assert row.reauth_since == first_broken_at
+
+
+@pytest.mark.asyncio
+async def test_build_garmin_client_clears_reauth_required_on_successful_login(
+    session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id = uuid4()
+    dek = await _insert_user(session, user_id, "recovered@test.com", "sub-recovered")
+    session.add(
+        Connection(
+            user_id=user_id,
+            connector="garmin",
+            external_account="recovered@garmin.com",
+            status="reauth_required",
+            credentials_enc=encrypt(b'{"token":"OK-NOW"}', dek),
+            reauth_since=datetime(2026, 1, 1, tzinfo=UTC),
+            last_error="Failed to retrieve social profile",
+        )
+    )
+    await session.commit()
+
+    fake = _FakeGarmin()
+    monkeypatch.setattr(
+        sync_module,
+        "importlib",
+        types.SimpleNamespace(
+            import_module=lambda name: types.SimpleNamespace(Garmin=lambda: fake)
+        ),
+    )
+
+    client, error = await sync_module._build_garmin_client(session, user_id)
+    await session.commit()
+
+    assert client is fake
+    assert error is None
+
+    row = await _connection_row(session, user_id)
+    assert row.status == "active"
+    assert row.reauth_since is None
+    assert row.last_error is None
+    assert row.last_ok_at is not None
+
+
+@pytest.mark.asyncio
+async def test_reconnect_clears_reauth_required_state(session: AsyncSession) -> None:
+    user_id = uuid4()
+    await _insert_user(session, user_id, "reconnect-clears@test.com", "sub-reconnect-clears")
+
+    await _store_connection(session, user_id, "same2@garmin.com", '{"token":"1"}')
+    await session.commit()
+
+    row = await _connection_row(session, user_id)
+    row.status = "reauth_required"
+    row.reauth_since = datetime(2026, 1, 1, tzinfo=UTC)
+    row.last_error = "Failed to retrieve social profile"
+    await session.commit()
+
+    await _store_connection(session, user_id, "same2@garmin.com", '{"token":"2"}')
+    await session.commit()
+    # the ORM's identity map still holds `row`'s in-memory attributes from the
+    # manual mutation above (expire_on_commit=False) -- _store_connection's
+    # INSERT..ON CONFLICT is raw Core SQL and doesn't touch it, so force a
+    # real reload instead of getting the stale cached object back
+    session.expire_all()
+
+    refreshed = await _connection_row(session, user_id)
+    assert refreshed.status == "active"
+    assert refreshed.reauth_since is None
+    assert refreshed.last_error is None
+    assert refreshed.last_ok_at is not None
