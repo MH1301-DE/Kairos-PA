@@ -1010,9 +1010,15 @@ Plan nicht vorhersah:
   nur Imports/Konstruktion aller 13 Fälle verifiziert.
 
 **Bewusst offen gelassene Punkte, für einen Folge-Task:**
-- Kein UI für einen selbst hinterlegten LLM-API-Key (s.o., Task 4).
-- `scripts/agent_eval_suite.py` real laufen lassen, sobald ein API-Key
-  verfügbar ist, und die 13/13-Abnahme tatsächlich verifizieren.
+- ~~Kein UI für einen selbst hinterlegten LLM-API-Key~~ — ✅ erledigt
+  (2026-09-12, Commit `7e12dc1`): `/account` hat jetzt eine dritte Karte
+  (Modell + API-Key, gleiches Verschlüsselungsmuster wie Garmin/Google).
+  Live-Smoke-Test gegen den echten Server fand dabei zwei weitere reale
+  500-statt-sauberer-Fehler-Lücken in `send_message` (kein Key konfiguriert;
+  ungültiger Key von litellm zurückgewiesen) — beide behoben (503/502).
+- `scripts/agent_eval_suite.py` real laufen lassen, jetzt wo ein Nutzer
+  selbst einen Key hinterlegen kann, und die 13/13-Abnahme tatsächlich
+  verifizieren.
 - Die drei vom Nutzer in dieser Session bestätigten Detailfragen sind
   umgesetzt (Dashboard bleibt Startseite, mehrere Konversationen, Default
   `anthropic/claude-sonnet-5`) — keine offenen Design-Fragen mehr für die
