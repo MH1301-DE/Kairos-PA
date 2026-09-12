@@ -103,3 +103,9 @@ export interface ToolResult {
 	data: unknown;
 	meta: Record<string, unknown>;
 }
+
+export interface DashboardTileLayout {
+	module_id: string;
+	position: number;
+	visible: boolean;
+}

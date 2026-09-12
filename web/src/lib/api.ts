@@ -15,7 +15,7 @@ export async function apiGet<T>(fetchFn: typeof fetch, path: string): Promise<T>
 }
 
 async function apiRequest<T>(
-	method: 'POST' | 'PATCH' | 'DELETE',
+	method: 'POST' | 'PUT' | 'PATCH' | 'DELETE',
 	fetchFn: typeof fetch,
 	path: string,
 	body?: unknown
@@ -43,6 +43,14 @@ export async function apiPost<T>(
 	body: unknown
 ): Promise<{ status: number; data: T }> {
 	return apiRequest<T>('POST', fetchFn, path, body);
+}
+
+export async function apiPut<T>(
+	fetchFn: typeof fetch,
+	path: string,
+	body: unknown
+): Promise<{ status: number; data: T }> {
+	return apiRequest<T>('PUT', fetchFn, path, body);
 }
 
 export async function apiPatch<T>(

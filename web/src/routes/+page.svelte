@@ -1,14 +1,18 @@
 <!-- web/src/routes/+page.svelte -->
 <script lang="ts">
 	import { invalidate } from '$app/navigation';
+	import { enhance } from '$app/forms';
 	import { untrack } from 'svelte';
+	import { flip } from 'svelte/animate';
+	import { dndzone } from 'svelte-dnd-action';
 	import MetricTile from '$lib/components/MetricTile.svelte';
-	import { moduleById } from '$lib/modules';
+	import { MODULES, moduleById } from '$lib/modules';
 	import { mergeTileAsOf, type TileState } from '$lib/dashboardTiles';
+	import { orderModules } from '$lib/dashboardLayout';
 	import type { MetricResult } from '$lib/types';
-	import type { PageData } from './$types';
+	import type { ActionData, PageData } from './$types';
 
-	let { data }: { data: PageData } = $props();
+	let { data, form }: { data: PageData; form: ActionData } = $props();
 
 	function todayIso(): string {
 		return new Date().toISOString().slice(0, 10);
@@ -37,6 +41,17 @@
 				if (tile.asOf !== todayIso()) refetchTile(tile);
 			}
 		});
+	});
+
+	// personalized order/visibility (Kacheln personalisieren) -- reorders and
+	// filters the same `tiles` state above, no separate data fetch
+	let visibleTiles = $derived.by(() => {
+		const orderedIds = orderModules(MODULES, data.layout)
+			.filter((t) => t.visible)
+			.map((t) => t.module.moduleId);
+		return orderedIds
+			.map((id) => tiles.find((t) => t.moduleId === id))
+			.filter((t): t is TileState => t !== undefined);
 	});
 
 	let refreshing = $state(false);
@@ -78,46 +93,133 @@
 			tile.loading = false;
 		}
 	}
+
+	// -- Kachel-Personalisierung ("Anpassen") --
+
+	interface EditItem {
+		id: string;
+		visible: boolean;
+	}
+
+	let editMode = $state(false);
+	let editItems = $state<EditItem[]>([]);
+	let savingLayout = $state(false);
+
+	function enterEditMode() {
+		editItems = orderModules(MODULES, data.layout).map((t) => ({
+			id: t.module.moduleId,
+			visible: t.visible
+		}));
+		editMode = true;
+	}
+
+	function handleDndConsider(e: CustomEvent<{ items: EditItem[] }>) {
+		editItems = e.detail.items;
+	}
+	function handleDndFinalize(e: CustomEvent<{ items: EditItem[] }>) {
+		editItems = e.detail.items;
+	}
+
+	function layoutPayload(): string {
+		return JSON.stringify(
+			editItems.map((item, i) => ({ module_id: item.id, position: i, visible: item.visible }))
+		);
+	}
 </script>
 
 <div class="dashboard-header">
 	<h1>Dashboard</h1>
-	<button type="button" class="btn btn-secondary" onclick={refreshAll} disabled={refreshing}>
-		{refreshing ? 'Aktualisiert …' : '↻ Aktualisieren'}
-	</button>
+	{#if !editMode}
+		<div class="header-actions">
+			<button type="button" class="btn btn-ghost" onclick={enterEditMode}>Anpassen</button>
+			<button type="button" class="btn btn-secondary" onclick={refreshAll} disabled={refreshing}>
+				{refreshing ? 'Aktualisiert …' : '↻ Aktualisieren'}
+			</button>
+		</div>
+	{/if}
 </div>
 
-<div class="tile-grid">
-	{#each tiles as tile (tile.moduleId)}
-		{@const module = moduleById(tile.moduleId)}
-		{#if module}
-			<div class="tile-card">
-				<label class="as-of-picker">
-					Stand
-					<input
-						type="date"
-						bind:value={tile.asOf}
-						max={todayIso()}
-						onchange={() => refetchTile(tile)}
-					/>
-				</label>
-				{#if tile.loading}
-					<div class="tile tile-loading">
-						<div class="skeleton skeleton-title"></div>
-						<div class="skeleton skeleton-body"></div>
-					</div>
-				{:else if tile.result}
-					<MetricTile result={tile.result} {module} />
-				{:else}
-					<div class="tile-error">
-						<h3>{module.title}</h3>
-						<p>{tile.error}</p>
-					</div>
-				{/if}
-			</div>
+{#if editMode}
+	<form
+		method="POST"
+		action="?/saveLayout"
+		use:enhance={() => {
+			savingLayout = true;
+			return async ({ update }) => {
+				await update();
+				savingLayout = false;
+				editMode = false;
+			};
+		}}
+	>
+		<input type="hidden" name="layout" value={layoutPayload()} />
+		<p class="edit-hint">Ziehen zum Sortieren, Häkchen zum Ein-/Ausblenden.</p>
+		<div
+			class="tile-grid edit-grid"
+			use:dndzone={{ items: editItems, flipDurationMs: 200 }}
+			onconsider={handleDndConsider}
+			onfinalize={handleDndFinalize}
+		>
+			{#each editItems as item (item.id)}
+				<div
+					class="edit-tile"
+					class:edit-tile-hidden={!item.visible}
+					animate:flip={{ duration: 200 }}
+				>
+					<span class="drag-handle" aria-label="Ziehen zum Sortieren">⠿</span>
+					<span class="edit-tile-title">{moduleById(item.id)?.title ?? item.id}</span>
+					<label class="visibility-toggle">
+						<input type="checkbox" bind:checked={item.visible} />
+						sichtbar
+					</label>
+				</div>
+			{/each}
+		</div>
+		{#if form?.layoutError}
+			<p class="status-error">{form.layoutError}</p>
 		{/if}
-	{/each}
-</div>
+		<div class="edit-actions">
+			<button type="submit" class="btn btn-primary" disabled={savingLayout}>
+				{savingLayout ? 'Speichert …' : 'Speichern'}
+			</button>
+			<button type="button" class="btn btn-ghost" onclick={() => (editMode = false)}>
+				Abbrechen
+			</button>
+		</div>
+	</form>
+{:else}
+	<div class="tile-grid">
+		{#each visibleTiles as tile (tile.moduleId)}
+			{@const module = moduleById(tile.moduleId)}
+			{#if module}
+				<div class="tile-card">
+					<label class="as-of-picker">
+						Stand
+						<input
+							type="date"
+							bind:value={tile.asOf}
+							max={todayIso()}
+							onchange={() => refetchTile(tile)}
+						/>
+					</label>
+					{#if tile.loading}
+						<div class="tile tile-loading">
+							<div class="skeleton skeleton-title"></div>
+							<div class="skeleton skeleton-body"></div>
+						</div>
+					{:else if tile.result}
+						<MetricTile result={tile.result} {module} />
+					{:else}
+						<div class="tile-error">
+							<h3>{module.title}</h3>
+							<p>{tile.error}</p>
+						</div>
+					{/if}
+				</div>
+			{/if}
+		{/each}
+	</div>
+{/if}
 
 <style>
 	.dashboard-header {
@@ -126,6 +228,10 @@
 		justify-content: space-between;
 		gap: var(--space-4);
 		margin-bottom: var(--space-4);
+	}
+	.header-actions {
+		display: flex;
+		gap: var(--space-2);
 	}
 	.tile-grid {
 		display: grid;
@@ -162,5 +268,49 @@
 	}
 	.skeleton-body {
 		flex: 1;
+	}
+
+	.edit-hint {
+		color: var(--color-text-muted);
+		font-size: var(--text-sm);
+	}
+	.edit-grid {
+		grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+	}
+	.edit-tile {
+		display: flex;
+		align-items: center;
+		gap: var(--space-3);
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md, 8px);
+		padding: var(--space-3);
+		cursor: grab;
+	}
+	.edit-tile-hidden {
+		opacity: 0.5;
+	}
+	.drag-handle {
+		color: var(--color-text-faint);
+		touch-action: none;
+		font-size: var(--text-lg);
+		line-height: 1;
+	}
+	.edit-tile-title {
+		flex: 1;
+		font-size: var(--text-sm);
+	}
+	.visibility-toggle {
+		display: flex;
+		align-items: center;
+		gap: var(--space-1);
+		font-size: var(--text-xs);
+		color: var(--color-text-muted);
+		white-space: nowrap;
+	}
+	.edit-actions {
+		display: flex;
+		gap: var(--space-2);
+		margin-top: var(--space-4);
 	}
 </style>

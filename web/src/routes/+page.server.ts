@@ -1,8 +1,8 @@
-import type { PageServerLoad } from './$types';
-import { redirect } from '@sveltejs/kit';
-import { apiGet, ApiError } from '$lib/api';
+import type { Actions, PageServerLoad } from './$types';
+import { redirect, fail } from '@sveltejs/kit';
+import { apiGet, apiPut, ApiError } from '$lib/api';
 import { MODULES } from '$lib/modules';
-import type { MetricResult } from '$lib/types';
+import type { DashboardTileLayout, MetricResult } from '$lib/types';
 
 export const load: PageServerLoad = async ({ fetch, depends }) => {
 	depends('dashboard:tiles');
@@ -26,9 +26,38 @@ export const load: PageServerLoad = async ({ fetch, depends }) => {
 				}
 			})
 		);
-		return { tiles: results };
+		const { tiles: layout } = await apiGet<{ tiles: DashboardTileLayout[] }>(
+			fetch,
+			'/api/dashboard/layout'
+		);
+		return { tiles: results, layout };
 	} catch (err) {
 		if (err instanceof ApiError && err.status === 401) redirect(302, '/auth/login');
 		throw err;
+	}
+};
+
+export const actions: Actions = {
+	saveLayout: async ({ request, fetch }) => {
+		const form = await request.formData();
+		const raw = String(form.get('layout') ?? '[]');
+		let tiles: DashboardTileLayout[];
+		try {
+			tiles = JSON.parse(raw);
+		} catch {
+			return fail(400, { layoutError: 'Ungültiges Layout.' });
+		}
+		const { status, data } = await apiPut<{ detail?: string }>(
+			fetch,
+			'/api/dashboard/layout',
+			{ tiles }
+		);
+		if (status === 401) redirect(302, '/auth/login');
+		if (status !== 200) {
+			return fail(status, {
+				layoutError: `Layout konnte nicht gespeichert werden (${status}): ${data.detail ?? 'unbekannt'}`
+			});
+		}
+		return { layoutSaved: true };
 	}
 };
