@@ -943,9 +943,32 @@ LLM-Provider (litellm), Eval-Gate-Aufteilung (13/13, Fragen 13+15 nach Phase
 korrigiert), Gedächtnis-Schreibpfad und Tool-Sicherheitsgrenzen (letztere
 zwei bereits implementiert, siehe oben). Drei Detailfragen sind in der Spec
 selbst noch offen ("Offene Detailfragen" am Ende) — vor der Task-Planung zu
-klären, nicht mehr Teil des Brainstormings selbst. **Nächster Schritt:**
-`superpowers:writing-plans` (oder gleichwertig) auf Basis dieser Spec einen
-Task-Plan erzeugen, gleiches Muster wie Phase 2/3.
+klären, nicht mehr Teil des Brainstormings selbst — inzwischen ebenfalls
+beantwortet (Dashboard bleibt Startseite, mehrere dauerhafte
+Konversationen, Default-Modell `anthropic/claude-sonnet-5`).
+
+**Task-Plan fertig (2026-09-12):**
+`docs/superpowers/plans/2026-09-12-phase-4-agent-mvp.md`, 11 Tasks. Weder
+`superpowers:brainstorming` noch `superpowers:writing-plans` waren in der
+Session verfügbar (`Unknown skill`, obwohl unter
+`~/.claude/plugins/cache/claude-plugins-official/superpowers/6.2.0/`
+vorhanden) — der Plan wurde daher freihändig geschrieben, am Muster von
+`docs/superpowers/plans/2026-08-13-phase-3-kalender.md` orientiert, aber
+mit geringerer Code-Dichte pro Task (keine vollständig ausgeschriebenen
+Dateien mehr für Stellen, die ein bestehendes Repo-Muster 1:1 spiegeln —
+nur noch als "mirror X" referenziert). Falls eine künftige Session
+`subagent-driven-development` nutzen will, prüfen, ob das Plugin dann
+verfügbar ist; falls nicht, Tasks direkt der Reihe nach abarbeiten (Plan
+funktioniert auch so, siehe Hinweis im Plan-Header).
+
+Zwei vom Agenten unabhängige Arbeitspakete (Task 1: Tages-Zeitreihe für
+abgeleitete Formel-Metriken, Task 2: Custom-Metriken mit sicherer
+Formel-Auswertung über `simpleeval`) sind bewusst zuerst eingeplant, weil
+`query_health`/`analyze_records` darauf aufbauen. Bekannte, offen
+dokumentierte Lücke: kein UI, über das ein Nutzer selbst einen
+LLM-API-Key hinterlegt (Task 4) — für den Eval-Lauf (Task 11) muss eine
+`connection`-Zeile händisch eingefügt werden, gleiches Muster wie
+`smoke_seed.py` aus dieser Session.
 
 **Fortsetzung des Brainstormings (2026-09-12): Gedächtnis- und Tool-Sicherheitsentscheidungen.**
 Der Nutzer hat im Dialog vier konkrete Fragen zum künftigen Tool-/Memory-Layer beantwortet
