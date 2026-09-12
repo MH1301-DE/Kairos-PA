@@ -112,6 +112,47 @@ GIT_SHA=<previous-sha> docker compose up -d --build
 # Bei DB-Migration: alembic downgrade -1
 ```
 
+### 3.4 Boot up / Boot down / Reboot
+
+Keine zusätzliche Abstraktionsschicht (kein eigenes systemd-Unit um Compose
+herum) -- Docker Compose selbst deckt alle drei Fälle ab.
+
+**Boot up** (Stack hochfahren, z. B. nach Erstinstallation oder manuellem
+Stop):
+```bash
+cd /opt/kairos/deploy
+docker compose up -d
+```
+Ein Befehl -- `migrate` läuft automatisch als One-Shot-Container vor `api`
+(`depends_on: {condition: service_completed_successfully}`).
+
+**Boot down** (Stack sauber stoppen, Daten bleiben erhalten):
+```bash
+cd /opt/kairos/deploy
+docker compose down
+```
+Postgres-/Redis-Volumes (`pgdata`, `redisdata`) überleben das -- nur
+`docker compose down -v` löscht auch Volumes, absichtlich ein separater,
+selten gebrauchter Befehl.
+
+**Reboot** (Server-Neustart, geplant oder ungeplant): läuft **automatisch**,
+kein manueller Schritt nötig, sofern beim Ersteinrichten zwei Dinge
+sichergestellt sind:
+
+1. Jeder Service hat `restart: unless-stopped` (bereits Standard in
+   `deploy/docker-compose.yml`) -- jeder Container fährt nach einem
+   Docker-Daemon-Neustart automatisch wieder hoch.
+2. Der Docker-Daemon selbst startet beim Booten. Bei einer
+   `get.docker.com`-Installation auf Ubuntu ist das bereits Standard
+   (`systemctl is-enabled docker` sollte `enabled` zeigen); falls nicht:
+   ```bash
+   sudo systemctl enable docker
+   ```
+
+Ein `docker compose down` (bewusstes Stoppen) übersteht einen Reboot
+**nicht** wieder hoch -- das ist Absicht: ein bewusst gestoppter Stack soll
+nicht durch einen Server-Neustart überraschend wieder anlaufen.
+
 ---
 
 ## 4. Backup & Wiederherstellung
@@ -232,7 +273,9 @@ Phase 0 — Fundament
   □ https://{domain}/healthz → HTTP 200
   □ Erster Nutzer (Betreiber) anlegt: Google-Login testen
   □ Backup-Job manuell auslösen, Restore auf frischer VM durchführen
+    (noch nicht gebaut, siehe §4 -- braucht erst ein Backup-Ziel)
   □ Uptime-Kuma-Alerts konfigurieren
+    (noch nicht gebaut, siehe deploy/docker-compose.yml "Zielbild"-Block)
 
 Phase 1 — Garmin
   □ Garmin-Verbindung im Onboarding herstellen
