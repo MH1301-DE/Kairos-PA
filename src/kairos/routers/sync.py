@@ -37,6 +37,13 @@ router = APIRouter(prefix="/api/sync", tags=["sync"])
 
 _DEFAULT_BACKFILL_MONTHS = 24
 
+# minimum time between two backfill/sync triggers per (user, connector) -- guards
+# against rapid re-triggering causing repeated Garmin logins (a real incident once
+# tripped Garmin's Cloudflare bot-detection and locked the account out); a future
+# agent tool calls this same endpoint, so the cooldown protects it too
+_GARMIN_BACKFILL_COOLDOWN_SECONDS = 300.0
+_GOOGLE_CALENDAR_SYNC_COOLDOWN_SECONDS = 60.0
+
 # activity_fit must run after activity_list (FK dependency on activity.id)
 _ALL_KINDS: tuple[str, ...] = (
     "hr_intraday", "sleep", "stress", "body_battery",
@@ -61,6 +68,17 @@ async def trigger_garmin_backfill(
     registry: SyncJobRegistry = Depends(get_registry),
 ) -> dict[str, Any]:
     user_id = UUID(user["user_id"])
+
+    cooldown_remaining = registry.seconds_until_trigger_allowed(
+        user_id, "garmin", _GARMIN_BACKFILL_COOLDOWN_SECONDS
+    )
+    if cooldown_remaining > 0:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Bitte {int(cooldown_remaining) + 1}s warten, bevor erneut synchronisiert wird",
+            headers={"Retry-After": str(int(cooldown_remaining) + 1)},
+        )
+
     to_dt = _to_utc_midnight(req.to_date or date.today())
     from_dt = _to_utc_midnight(
         req.from_date or date.today() - timedelta(days=_DEFAULT_BACKFILL_MONTHS * 30)
@@ -73,6 +91,8 @@ async def trigger_garmin_backfill(
     queued = [k for k in kinds if not registry.is_locked(user_id, "garmin", k)]
     if not queued:
         raise HTTPException(status_code=409, detail="All requested kinds are already running")
+
+    registry.record_trigger(user_id, "garmin")
 
     # SyncService.run_backfill windows one calendar day at a time (its `step`
     # default) -- matches this count so the UI can show windows_processed as
@@ -119,6 +139,16 @@ async def trigger_google_calendar_sync(
     if registry.is_locked(user_id, "google_calendar", "events"):
         raise HTTPException(status_code=409, detail="Sync already running")
 
+    cooldown_remaining = registry.seconds_until_trigger_allowed(
+        user_id, "google_calendar", _GOOGLE_CALENDAR_SYNC_COOLDOWN_SECONDS
+    )
+    if cooldown_remaining > 0:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Bitte {int(cooldown_remaining) + 1}s warten, bevor erneut synchronisiert wird",
+            headers={"Retry-After": str(int(cooldown_remaining) + 1)},
+        )
+
     from_dt = _to_utc_midnight(date.today() - timedelta(days=7))
     to_dt = _to_utc_midnight(date.today() + timedelta(days=83))
 
@@ -129,6 +159,7 @@ async def trigger_google_calendar_sync(
         from_date=from_dt.date().isoformat(),
         to_date=to_dt.date().isoformat(),
     )
+    registry.record_trigger(user_id, "google_calendar")
 
     background_tasks.add_task(
         _run_calendar_sync_task,

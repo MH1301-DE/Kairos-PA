@@ -223,3 +223,83 @@ async def test_delete_event_returns_404_for_missing_event() -> None:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.delete(f"/api/calendar/events/{uuid4()}")
     assert response.status_code == 404
+
+
+def _fake_calendar_event(source: str) -> MagicMock:
+    event = MagicMock()
+    event.id = uuid4()
+    event.calendar_id = "primary"
+    event.external_id = "google-event-1"
+    event.connector = "google_calendar"
+    event.summary = "Zahnarzt"
+    event.start_at = datetime(2026, 3, 1, 9, 0, tzinfo=UTC)
+    event.source = source
+    return event
+
+
+@pytest.mark.asyncio
+async def test_delete_external_event_without_confirm_returns_409() -> None:
+    """A real, Google-synced event must never be deleted without an explicit
+    confirmation -- enforced server-side so a future agent tool can't bypass it
+    by skipping the frontend's confirm() dialog."""
+    with (
+        patch(
+            "kairos.routers.calendar.CalendarEventRepository.get_by_id",
+            new=AsyncMock(return_value=_fake_calendar_event("external")),
+        ),
+        patch(
+            "kairos.routers.calendar.CalendarEventRepository.mark_deleted",
+            new=AsyncMock(),
+        ) as mock_mark_deleted,
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.delete(f"/api/calendar/events/{uuid4()}")
+    assert response.status_code == 409
+    assert response.json()["detail"]["needs_confirmation"] is True
+    mock_mark_deleted.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_delete_external_event_with_confirm_succeeds() -> None:
+    with (
+        patch(
+            "kairos.routers.calendar.CalendarEventRepository.get_by_id",
+            new=AsyncMock(return_value=_fake_calendar_event("external")),
+        ),
+        patch(
+            "kairos.routers.calendar._build_google_calendar_client",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "kairos.routers.calendar.CalendarEventRepository.mark_deleted",
+            new=AsyncMock(),
+        ) as mock_mark_deleted,
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.delete(f"/api/calendar/events/{uuid4()}?confirm=true")
+    assert response.status_code == 204
+    mock_mark_deleted.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_delete_kairos_event_needs_no_confirmation() -> None:
+    """Kairos' own proposed events are low-risk (not the user's real synced
+    calendar) and delete on a single click, same as before this change."""
+    with (
+        patch(
+            "kairos.routers.calendar.CalendarEventRepository.get_by_id",
+            new=AsyncMock(return_value=_fake_calendar_event("kairos")),
+        ),
+        patch(
+            "kairos.routers.calendar._build_google_calendar_client",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "kairos.routers.calendar.CalendarEventRepository.mark_deleted",
+            new=AsyncMock(),
+        ) as mock_mark_deleted,
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.delete(f"/api/calendar/events/{uuid4()}")
+    assert response.status_code == 204
+    mock_mark_deleted.assert_called_once()

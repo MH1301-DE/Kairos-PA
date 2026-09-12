@@ -79,3 +79,62 @@ async def test_google_calendar_sync_has_no_windows_total() -> None:
                 cookies={"session_id": "valid"},
             )
     assert resp.json()["jobs"][0]["windows_total"] is None
+
+
+@pytest.fixture
+def _fixed_session_user(monkeypatch: pytest.MonkeyPatch) -> str:
+    # the module-level _stub_session fixture mints a fresh random user_id on every
+    # call, which is fine for tests that only ever issue one request -- but the
+    # rate-limit tests below issue two requests and need them to land on the same
+    # user_id, so this pins it instead
+    fixed_user_id = str(uuid4())
+
+    async def _fake_get_session(session_id: str) -> dict[str, str] | None:
+        if session_id == "valid":
+            return {"user_id": fixed_user_id}
+        return None
+
+    import kairos.auth.deps as _deps
+
+    monkeypatch.setattr(_deps, "get_session", _fake_get_session)
+    return fixed_user_id
+
+
+@pytest.mark.asyncio
+async def test_garmin_backfill_rejects_rapid_retrigger(_fixed_session_user: str) -> None:
+    """A second backfill trigger within the cooldown window must 429 before
+    ever building a Garmin client -- repeated logins from rapid re-triggering
+    once tripped a real Cloudflare lockout on the account."""
+    transport = ASGITransport(app=app)
+    with patch.object(sync_module, "_run_backfill_task", new=AsyncMock()):
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            first = await client.post(
+                "/api/sync/garmin/backfill",
+                json={"kinds": ["hr_intraday"]},
+                cookies={"session_id": "valid"},
+            )
+            second = await client.post(
+                "/api/sync/garmin/backfill",
+                json={"kinds": ["sleep"]},
+                cookies={"session_id": "valid"},
+            )
+    assert first.status_code == 202
+    assert second.status_code == 429
+    assert "Retry-After" in second.headers
+
+
+@pytest.mark.asyncio
+async def test_google_calendar_sync_rejects_rapid_retrigger(_fixed_session_user: str) -> None:
+    transport = ASGITransport(app=app)
+    with patch.object(sync_module, "_run_calendar_sync_task", new=AsyncMock()):
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            first = await client.post(
+                "/api/sync/google_calendar/sync",
+                cookies={"session_id": "valid"},
+            )
+            second = await client.post(
+                "/api/sync/google_calendar/sync",
+                cookies={"session_id": "valid"},
+            )
+    assert first.status_code == 202
+    assert second.status_code == 429

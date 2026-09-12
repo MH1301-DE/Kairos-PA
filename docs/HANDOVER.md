@@ -933,3 +933,43 @@ beantwortet**. Nächster Schritt: die Scope-Frage erneut stellen bzw. die Antwor
   Gegenmaßnahmen (externe Inhalte immer als Daten markiert, nie als Anweisung), Gesundheits-
   Leitplanken (keine Diagnosen, keine Medikation, keine Kalorienziele ohne Nachfrage).
 - Kontextbudget-Zielwert bereits definiert: Median-Input < 15.000 Tokens/Turn, Hardcap 40.000.
+
+**Fortsetzung des Brainstormings (2026-09-12): Gedächtnis- und Tool-Sicherheitsentscheidungen.**
+Der Nutzer hat im Dialog vier konkrete Fragen zum künftigen Tool-/Memory-Layer beantwortet
+(noch bevor Orchestrator/LLM-Anbindung existieren) — diese Entscheidungen sind bereits
+umgesetzt, nicht nur geplant:
+
+1. **Gedächtnis-Schreiben braucht keine Vorab-Bestätigung** (Option B statt des ursprünglich
+   in `03-agent-design.md` skizzierten Vorschlag-Bestätigungs-Musters wie bei Kalenderterminen):
+   der Agent speichert automatisch, zeigt aber danach sichtbar einen Hinweis mit
+   Rückgängig-Option im Chat — nichts läuft still im Hintergrund. Umgesetzt: `agent_memory`-
+   Tabelle (Migration `9f3d6a1b2c48`, RLS wie `goal`), `src/kairos/repositories/memory.py`,
+   `src/kairos/routers/memory.py` (`GET/POST /api/memory`, `PATCH`/`DELETE /api/memory/{id}`),
+   Frontend `/memory`-Seite (Liste, Bearbeiten, Löschen, "von dir"/"von Kairos"-Badge).
+   **Noch offen:** das automatische Schreiben durch den Agenten selbst sowie der sichtbare
+   Undo-Chip im Chat — beides braucht die noch nicht existierende Chat-Oberfläche/den
+   Orchestrator. Ein künftiger Agent-Tool-Layer ruft für "sich merken" einfach
+   `SqlMemoryRepository.create(..., source="agent")` intern auf (nicht über den
+   client-facing Router, der `source` immer auf `"user"` erzwingt).
+2. **Voller Zugriff mit drei Ausnahmen** (nicht die ursprünglich vorgeschlagenen vier — der
+   Nutzer hat Ausnahme 1 explizit abgelehnt):
+   - Backfill/Sync darf der Agent auslösen, aber rate-limitiert: `SyncJobRegistry` hat jetzt
+     einen In-Memory-Cooldown pro (user_id, connector) — 5 Min für Garmin-Backfill, 1 Min für
+     Google-Kalender-Sync (`_GARMIN_BACKFILL_COOLDOWN_SECONDS`/
+     `_GOOGLE_CALENDAR_SYNC_COOLDOWN_SECONDS` in `routers/sync.py`), greift vor jedem
+     Verbindungsaufbau als 429 mit `Retry-After`. Schützt vor einer Wiederholung des realen
+     Cloudflare-Lockout-Vorfalls durch wiederholte Garmin-Logins.
+   - **Verbindungen trennen bleibt dem Agenten verboten** — es existiert aktuell ohnehin kein
+     Disconnect-Endpoint; falls einer gebaut wird, darf er nie als Agent-Tool exponiert werden.
+   - Löschen fremder (`source='external'`) Kalendertermine braucht eine explizite Bestätigung
+     — serverseitig erzwungen (`DELETE /api/calendar/events/{id}?confirm=true`, sonst 409 mit
+     `needs_confirmation`), nicht nur im Frontend, damit ein künftiges Agent-Tool das nicht
+     umgehen kann. Kairos-eigene Termine (`source='kairos'`) löschen weiterhin ohne Rückfrage.
+     Frontend zeigt für externe Termine einen `confirm()`-Dialog vor dem Löschen.
+3. Alle Tests (211, inkl. 6 neuer für Memory-CRUD/RLS, 2 für die Rate-Limiter, 3 für die
+   Lösch-Bestätigung), `ruff`, `mypy --strict`, `npm run check` (492 Dateien) und `eslint`
+   grün. Browser-Klicktest der neuen `/memory`-Seite und des Bestätigungsdialogs war in dieser
+   Session **nicht möglich** (echtes Google-OAuth-Login nicht automatisierbar, und das
+   Browser-Tool blockiert das Setzen von Session-Cookies per JS als Sicherheitsgrenze) — nur
+   über die API-Integrationstests und `svelte-check` gegen dieselben Komponenten/Props
+   verifiziert, kein echter Klick-Durchlauf.

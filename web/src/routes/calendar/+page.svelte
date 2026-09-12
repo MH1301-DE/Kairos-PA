@@ -74,6 +74,23 @@
 	}
 
 	const MAX_CHIPS_PER_DAY = 3;
+
+	// external (real Google Calendar) events need an explicit confirmation before
+	// deletion -- the backend enforces this independently (?confirm=true), this
+	// dialog is just the human-facing prompt. Kairos' own proposed events are
+	// low-risk and delete on a single click, same as before.
+	function confirmExternalDelete(event: CalendarEvent) {
+		return ({ cancel }: { cancel: () => void }) => {
+			if (
+				event.source === 'external' &&
+				!window.confirm(
+					`"${event.summary ?? '(ohne Titel)'}" ist ein echter Termin aus deinem Google-Kalender. Wirklich löschen?`
+				)
+			) {
+				cancel();
+			}
+		};
+	}
 </script>
 
 <h1>Kalender</h1>
@@ -136,8 +153,9 @@
 				<li class="event-row">
 					<span class="event-time figure">{eventTime(event)}</span>
 					<span class="event-summary">{event.summary ?? '(ohne Titel)'}</span>
-					<form method="POST" action="?/delete" use:enhance>
+					<form method="POST" action="?/delete" use:enhance={confirmExternalDelete(event)}>
 						<input type="hidden" name="event_id" value={event.id} />
+						<input type="hidden" name="confirm" value="true" />
 						<button type="submit" class="btn btn-ghost">Löschen</button>
 					</form>
 				</li>

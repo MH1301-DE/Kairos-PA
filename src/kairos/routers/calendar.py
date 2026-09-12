@@ -132,6 +132,7 @@ async def create_event(
 @router.delete("/events/{event_id}", status_code=204)
 async def delete_event(
     event_id: UUID,
+    confirm: bool = Query(default=False),
     user: dict[str, Any] = Depends(current_user),
     session: AsyncSession = Depends(get_session),
 ) -> None:
@@ -141,6 +142,21 @@ async def delete_event(
     event = await repo.get_by_id(user_id, event_id)
     if event is None:
         raise HTTPException(status_code=404, detail="event_not_found")
+
+    # events synced in from the user's real Google Calendar need an explicit
+    # confirmation, both from a human accidentally misclicking and from a
+    # future agent tool -- enforced here so the API itself can't be bypassed,
+    # not just the frontend's confirm() dialog. Kairos' own proposed events
+    # carry no such risk and delete immediately, same as before.
+    if event.source == "external" and not confirm:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "needs_confirmation": True,
+                "summary": event.summary,
+                "start_at": event.start_at.isoformat(),
+            },
+        )
 
     client = await _build_google_calendar_client(session, user_id)
     if client is not None:

@@ -66,3 +66,11 @@ export interface Goal {
 	created_at: string;
 	updated_at: string;
 }
+
+export interface MemoryEntry {
+	id: string;
+	content: string;
+	source: 'user' | 'agent';
+	created_at: string;
+	updated_at: string;
+}

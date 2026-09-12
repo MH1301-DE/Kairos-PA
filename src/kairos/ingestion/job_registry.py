@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -49,6 +50,11 @@ class SyncJobRegistry:
         self._jobs: dict[str, SyncJob] = {}
         # prevents duplicate concurrent runs for the same (user, connector, kind)
         self._locks: dict[tuple[UUID, str, str], asyncio.Lock] = {}
+        # trigger cooldown per (user, connector) -- repeated Garmin login attempts
+        # from rapid re-triggering caused a real Cloudflare account lockout once,
+        # so this is checked before any connector client is built, not just before
+        # the actual sync work runs
+        self._last_triggered_monotonic: dict[tuple[UUID, str], float] = {}
 
     def create_jobs(
         self,
@@ -87,6 +93,19 @@ class SyncJobRegistry:
     def is_locked(self, user_id: UUID, connector: str, kind: str) -> bool:
         lock = self._locks.get((user_id, connector, kind))
         return lock is not None and lock.locked()
+
+    def seconds_until_trigger_allowed(
+        self, user_id: UUID, connector: str, cooldown_seconds: float
+    ) -> float:
+        """0.0 if a new trigger is allowed now, else the remaining cooldown in seconds."""
+        last = self._last_triggered_monotonic.get((user_id, connector))
+        if last is None:
+            return 0.0
+        remaining = cooldown_seconds - (time.monotonic() - last)
+        return max(0.0, remaining)
+
+    def record_trigger(self, user_id: UUID, connector: str) -> None:
+        self._last_triggered_monotonic[(user_id, connector)] = time.monotonic()
 
 
 _registry = SyncJobRegistry()

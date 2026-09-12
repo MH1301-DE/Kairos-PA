@@ -410,3 +410,22 @@ class Goal(Base):
     __table_args__ = (
         CheckConstraint("status IN ('active', 'completed', 'abandoned')", name="goal_status_check"),
     )
+
+
+class AgentMemory(Base):
+    __tablename__ = "agent_memory"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app_user.id", ondelete="CASCADE"), nullable=False
+    )
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    # 'agent' entries are auto-written (shown with an undo affordance when written);
+    # 'user' entries were added/edited by hand on the memory management page
+    source: Mapped[str] = mapped_column(Text, nullable=False, default="user")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("source IN ('user', 'agent')", name="agent_memory_source_check"),
+    )

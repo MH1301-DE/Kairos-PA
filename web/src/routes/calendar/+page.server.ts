@@ -109,7 +109,11 @@ export const actions: Actions = {
 	delete: async ({ request, fetch }) => {
 		const form = await request.formData();
 		const eventId = String(form.get('event_id'));
-		const resp = await fetch(`/api/calendar/events/${eventId}`, {
+		// the confirm() dialog in +page.svelte already gated this for external
+		// events before the form was submitted -- confirm=true here just carries
+		// that decision through to the API, which enforces it independently
+		const confirm = String(form.get('confirm') ?? 'false');
+		const resp = await fetch(`/api/calendar/events/${eventId}?confirm=${confirm}`, {
 			method: 'DELETE',
 			credentials: 'include'
 		});

@@ -51,6 +51,7 @@
 			<a href={resolve('/')}>Dashboard</a>
 			<a href={resolve('/calendar')}>Kalender</a>
 			<a href={resolve('/goals')}>Ziele</a>
+			<a href={resolve('/memory')}>Gedächtnis</a>
 		</div>
 		{#if data.authenticated}
 			<div class="menu-root" bind:this={menuRoot}>
