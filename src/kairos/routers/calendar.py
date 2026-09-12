@@ -93,7 +93,30 @@ async def create_event(
 ) -> dict[str, Any]:
     user_id = UUID(user["user_id"])
     install_rls_listener(session, user_id)
+    return await _create_calendar_event(session, user_id, req)
 
+
+@router.delete("/events/{event_id}", status_code=204)
+async def delete_event(
+    event_id: UUID,
+    confirm: bool = Query(default=False),
+    user: dict[str, Any] = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    user_id = UUID(user["user_id"])
+    install_rls_listener(session, user_id)
+    await _delete_calendar_event(session, user_id, event_id, confirm)
+
+
+# plain functions (not FastAPI endpoints) so src/kairos/agent/tools.py's
+# propose_calendar_event/delete_calendar_event handlers can call the exact same
+# logic instead of duplicating it -- no behavior change from the router's point
+# of view, both endpoints above just forward into these unchanged.
+
+
+async def _create_calendar_event(
+    session: AsyncSession, user_id: UUID, req: CreateEventRequest
+) -> dict[str, Any]:
     client = await _build_google_calendar_client(session, user_id)
     if client is None:
         raise HTTPException(status_code=503, detail="no_active_google_calendar_connection")
@@ -129,15 +152,9 @@ async def create_event(
     return _event_to_dict(row)
 
 
-@router.delete("/events/{event_id}", status_code=204)
-async def delete_event(
-    event_id: UUID,
-    confirm: bool = Query(default=False),
-    user: dict[str, Any] = Depends(current_user),
-    session: AsyncSession = Depends(get_session),
+async def _delete_calendar_event(
+    session: AsyncSession, user_id: UUID, event_id: UUID, confirm: bool
 ) -> None:
-    user_id = UUID(user["user_id"])
-    install_rls_listener(session, user_id)
     repo = CalendarEventRepository(session)
     event = await repo.get_by_id(user_id, event_id)
     if event is None:
