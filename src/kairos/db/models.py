@@ -470,6 +470,53 @@ class UserDashboardTile(Base):
     visible: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
 
+class Plan(Base):
+    __tablename__ = "plan"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app_user.id", ondelete="CASCADE"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    goal_date: Mapped[date | None] = mapped_column(Date)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="draft")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("status IN ('draft', 'committed', 'abandoned')", name="plan_status_check"),
+    )
+
+
+class PlanBlock(Base):
+    __tablename__ = "plan_block"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    plan_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plan.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app_user.id", ondelete="CASCADE"), nullable=False
+    )
+    day: Mapped[date] = mapped_column(Date, nullable=False)
+    workout_type: Mapped[str] = mapped_column(Text, nullable=False)
+    target_trimp: Mapped[float | None] = mapped_column(Float)
+    calendar_event_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("calendar_event.id", ondelete="SET NULL")
+    )
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="planned")
+
+    __table_args__ = (
+        CheckConstraint(
+            "workout_type IN ('long_run', 'hard', 'easy', 'rest')",
+            name="plan_block_workout_type_check",
+        ),
+        CheckConstraint("status IN ('planned', 'done', 'skipped')", name="plan_block_status_check"),
+    )
+
+
 class DailySummary(Base):
     __tablename__ = "daily_summary"
 
