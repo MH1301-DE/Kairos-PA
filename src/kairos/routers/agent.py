@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kairos.agent.dispatcher import Proposal, ToolCall, dispatch
+from kairos.agent.llm_client import NoLlmCredentialConfigured
 from kairos.agent.orchestrator import run_turn
 from kairos.auth.deps import current_user
 from kairos.db.rls import install_rls_listener
@@ -112,9 +113,12 @@ async def send_message(
     if conversation.title is None:
         conversation.title = req.content[:_TITLE_MAX_LEN]
 
-    result = await run_turn(
-        session, user_id=user_id, conversation_id=conversation_id, user_message=req.content
-    )
+    try:
+        result = await run_turn(
+            session, user_id=user_id, conversation_id=conversation_id, user_message=req.content
+        )
+    except NoLlmCredentialConfigured as exc:
+        raise HTTPException(status_code=503, detail="no_llm_provider_configured") from exc
     await session.commit()
     return {
         "reply": result.reply_text,

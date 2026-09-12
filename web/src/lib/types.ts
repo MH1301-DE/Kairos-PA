@@ -74,3 +74,32 @@ export interface MemoryEntry {
 	created_at: string;
 	updated_at: string;
 }
+
+export interface Conversation {
+	id: string;
+	title: string | null;
+	updated_at: string;
+}
+
+// tool_calls mirrors ConversationRepository.append_message's tool_calls shape:
+// [{id, name, arguments}], arguments is a JSON string
+export interface ChatMessage {
+	id: string;
+	role: 'user' | 'assistant' | 'tool';
+	content: string | null;
+	tool_calls: { id: string; name: string; arguments: string }[] | null;
+	created_at: string;
+}
+
+export interface Proposal {
+	tool_name: string;
+	arguments: Record<string, unknown>;
+	summary: string;
+}
+
+// the tool result shape from src/kairos/agent/tools.py's _envelope()
+export interface ToolResult {
+	summary: string;
+	data: unknown;
+	meta: Record<string, unknown>;
+}

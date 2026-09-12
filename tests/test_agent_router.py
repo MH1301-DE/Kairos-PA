@@ -137,6 +137,29 @@ async def test_send_message_404_for_unknown_conversation(authed_client: AsyncCli
 
 
 @pytest.mark.asyncio
+async def test_send_message_returns_503_without_an_llm_credential(
+    authed_client: AsyncClient,
+) -> None:
+    """Regression test: found via a live smoke test against a user with no
+    connection row -- run_turn's NoLlmCredentialConfigured must surface as a
+    clean 503, not an unhandled 500."""
+    create_resp = await authed_client.post("/api/agent/conversations", json={})
+    conversation_id = create_resp.json()["id"]
+
+    from kairos.agent.llm_client import NoLlmCredentialConfigured
+
+    with patch(
+        "kairos.routers.agent.run_turn",
+        new=AsyncMock(side_effect=NoLlmCredentialConfigured("no key")),
+    ):
+        resp = await authed_client.post(
+            f"/api/agent/conversations/{conversation_id}/messages", json={"content": "Hi"}
+        )
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == "no_llm_provider_configured"
+
+
+@pytest.mark.asyncio
 async def test_confirm_executes_the_tool_and_returns_its_result(
     authed_client: AsyncClient,
 ) -> None:
