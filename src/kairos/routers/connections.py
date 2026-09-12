@@ -8,7 +8,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,6 +44,28 @@ async def connect_garmin(
     user_id = UUID(user["user_id"])
     install_rls_listener(session, user_id)
 
+    # Once any Garmin account has ever been connected for this Kairos user, switching
+    # to a different one is permanently refused -- health data (activity, wellness_*)
+    # is keyed only by user_id, not by which Garmin external_account produced it, so a
+    # switch would silently blend a different person's physiological history into this
+    # user's metrics with no way to separate it afterward. Checked before touching
+    # Garmin at all, so a doomed request never spends any of the rate-limited login
+    # budget on Garmin's API.
+    existing_accounts = (
+        await session.execute(
+            select(Connection.external_account).where(
+                Connection.user_id == user_id, Connection.connector == "garmin"
+            )
+        )
+    ).scalars().all()
+    await session.rollback()
+    if existing_accounts and any(
+        a is None or a.lower() != req.email.lower() for a in existing_accounts
+    ):
+        raise HTTPException(
+            status_code=409, detail="different_garmin_account_already_connected"
+        )
+
     client = GarminClient(GarminConnectBackend())
     try:
         # client.login() performs blocking HTTP calls to Garmin; keep it off the event loop
@@ -77,19 +99,10 @@ async def _store_connection(
     dek = unwrap_dek(user_row.dek_wrapped, kek)  # type: ignore[arg-type]
     credentials_enc = encrypt(token_json.encode(), dek)
 
-    # uq_connection includes external_account, so re-onboarding with another Garmin account
-    # would insert a second active row and make the sync-side lookup ambiguous
-    await session.execute(
-        update(Connection)
-        .where(
-            Connection.user_id == user_id,
-            Connection.connector == "garmin",
-            # IS DISTINCT FROM, so legacy rows with a NULL external_account are caught too
-            Connection.external_account.is_distinct_from(email),
-        )
-        .values(status="disabled")
-    )
-
+    # connect_garmin already refuses a different external_account before this is ever
+    # called (see the check there), so this is always either a first-time connect or a
+    # reconnect of the same account -- a plain upsert, no "disable the other account"
+    # step needed.
     now = datetime.now(UTC)
     stmt = (
         insert(Connection)

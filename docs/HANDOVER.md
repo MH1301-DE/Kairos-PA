@@ -833,6 +833,38 @@ um, also blieb die UI dauerhaft "active" trotz kaputter Verbindung.
 - Der eigentliche Nutzer-Fix: Garmin unter `/onboarding` neu verbinden (E-Mail/Passwort) --
   das überschreibt den Connection-Eintrag mit einem frischen Token.
 
+**Update (2026-09-12): Garmin-Kontowechsel jetzt hart blockiert.** Zweiter Live-Fund in
+derselben Sitzung: der Nutzer fragte, wie ein Wechsel auf ein anderes Garmin-Konto
+gehandhabt wird -- Antwort vorher: **gar nicht verhindert**. `activity`/`wellness_sample`/
+`wellness_daily_stats` hängen ausschließlich am Kairos-`user_id`, nirgends an der Garmin-
+`external_account` -- ein Kontowechsel hätte die Gesundheitsdaten einer anderen Person
+stillschweigend in dieselben Tabellen gemischt, mit CTL/ATL/HRV-Baseline-Verfälschung als
+Folge. Nutzerentscheidung: **hart blockieren, dauerhaft**, sobald einmal ein Konto verbunden
+wurde.
+- `src/kairos/routers/connections.py`: `connect_garmin` prüft jetzt **vor** jedem
+  Garmin-Login, ob für diesen Nutzer bereits eine `connection`-Zeile mit einem anderen
+  `external_account` existiert (case-insensitiv verglichen, `NULL` zählt als "anders") --
+  wenn ja, `409 Conflict` mit `detail="different_garmin_account_already_connected"`, **bevor**
+  überhaupt ein Login-Versuch bei Garmin stattfindet (spart das rate-limitierte
+  Login-Budget für einen ohnehin zum Scheitern verurteilten Request). Der Status der
+  existierenden Verbindung spielt keine Rolle -- auch `disabled`/`reauth_required` blockiert,
+  da die Daten trotzdem schon da sein können.
+- Die alte "andere Konten deaktivieren"-Logik in `_store_connection` ist jetzt tot (der
+  Router lässt eine andere E-Mail gar nicht mehr bis dorthin durchkommen) und wurde entfernt
+  -- `_store_connection` ist jetzt ein reines Upsert für dieselbe (oder erste) E-Mail.
+- `web/src/routes/onboarding/+page.server.ts`: neuer `409`-Fall mit erklärendem Text.
+- Beim Testen einen echten, bisher unbemerkten Bug in `tests/test_connections_router.py`
+  gefunden: die alten Tests (`mfa_required`/`invalid_credentials`/`upstream_unavailable`)
+  liefen über den **echten** App-Connection-Pool (`kairos.db.session.engine`) statt über die
+  isolierte Testcontainer-Session, weil ihr Code-Pfad vorher nie eine DB-Query auslöste --
+  die neue Konto-Prüfung tut das jetzt schon, und legte damit eine Pool/RLS-Listener-
+  Fragilität offen (`InterfaceError: another operation is in progress` bei nachfolgenden
+  Tests). Fix: alle Garmin-Connect-Tests in dieser Datei auf das `authed_client`/`session`-
+  Fixture-Muster aus `test_dashboard_router.py` umgestellt (echte, isolierte Testcontainer-DB
+  statt geteiltem App-Pool) -- korrekter isoliert, nicht nur ein Workaround.
+- 4 neue + 1 entfernter (jetzt obsoleter) Test, alle 302 Tests grün, `ruff`/`mypy --strict`
+  sauber.
+
 **6. Performance-Falle in `activity_fit` gefunden, noch nicht gefixt:**
 `SqlCanonicalRepository.upsert_many()` (`src/kairos/repositories/canonical.py`) schreibt
 jeden `CanonicalRecord` einzeln (`await self._session.execute(stmt)` in einer

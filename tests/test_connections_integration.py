@@ -38,38 +38,6 @@ async def _insert_user(session: AsyncSession, user_id: UUID, email: str, sub: st
 
 
 @pytest.mark.asyncio
-async def test_reonboarding_other_garmin_account_disables_previous_connection(
-    session: AsyncSession,
-) -> None:
-    user_id = uuid4()
-    await _insert_user(session, user_id, "reonboard@test.com", "sub-reonboard")
-
-    await _store_connection(session, user_id, "account-a@garmin.com", '{"token":"A"}')
-    await session.commit()
-    await _store_connection(session, user_id, "account-b@garmin.com", '{"token":"B"}')
-    await session.commit()
-
-    rows = (
-        await session.execute(
-            select(Connection)
-            .where(Connection.user_id == user_id, Connection.connector == "garmin")
-            .order_by(Connection.external_account)
-        )
-    ).scalars().all()
-
-    assert len(rows) == 2
-    by_account = {r.external_account: r.status for r in rows}
-    assert by_account == {
-        "account-a@garmin.com": "disabled",
-        "account-b@garmin.com": "active",
-    }
-
-    active = [r for r in rows if r.status == "active"]
-    assert len(active) == 1
-    assert active[0].external_account == "account-b@garmin.com"
-
-
-@pytest.mark.asyncio
 async def test_reconnecting_same_garmin_account_keeps_single_active_row(
     session: AsyncSession,
 ) -> None:

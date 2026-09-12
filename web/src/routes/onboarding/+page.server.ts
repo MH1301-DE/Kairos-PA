@@ -24,6 +24,14 @@ export const actions: Actions = {
 		if (status === 401) {
 			return { error: 'E-Mail oder Passwort falsch.', email };
 		}
+		if (status === 409) {
+			return {
+				error:
+					'Es ist bereits ein anderes Garmin-Konto verbunden. Ein Kontowechsel wird nicht ' +
+					'unterstützt, da bereits Gesundheitsdaten für das verbundene Konto gespeichert sind.',
+				email
+			};
+		}
 		if (status === 503) {
 			return {
 				error: 'Garmin ist gerade nicht erreichbar. Bitte später erneut versuchen.',
