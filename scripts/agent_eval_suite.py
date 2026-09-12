@@ -1,7 +1,8 @@
 """
-Manuelles Eval-Skript: die 13 Phase-4-MVP-Referenzfragen (Fragen 13 und 15 sind
-Phase 5, siehe docs/superpowers/specs/2026-09-12-phase-4-agent-mvp-design.md)
-gegen einen festen Testdatensatz, mit echten LLM-Calls.
+Manuelles Eval-Skript: alle 15 Referenzfragen aus docs/00-vision-und-scope.md §5
+(13 und 15 kamen mit Phase 5 Planung dazu, siehe
+docs/superpowers/specs/2026-09-12-phase-5-planning-design.md) gegen einen
+festen Testdatensatz, mit echten LLM-Calls.
 
 Kein pytest-Test und nicht Teil der CI -- macht echte, kostenpflichtige
 API-Calls (siehe docs/03-agent-design.md §8 "Evaluierung").
@@ -61,7 +62,7 @@ class EvalResult:
         return any(t in self.tools_called for t in self.case.expected_tools)
 
 
-# Referenzfragen aus docs/00-vision-und-scope.md §5 -- 13 und 15 ausgenommen
+# Referenzfragen aus docs/00-vision-und-scope.md §5, alle 15
 CASES: tuple[EvalCase, ...] = (
     EvalCase(1, "Wie erholt bin ich heute?", ("query_health",)),
     EvalCase(
@@ -99,8 +100,15 @@ CASES: tuple[EvalCase, ...] = (
         ("recall", "query_health"),
     ),
     EvalCase(
+        13, "Erstell mir einen Trainingsplan für die nächsten 3 Wochen.", ("plan_propose",)
+    ),
+    EvalCase(
         14, "Ich habe nächste Woche viel Stress. Wie passe ich das Training an?",
         ("query_health",),
+    ),
+    EvalCase(
+        15, "Was habe ich diese Woche schon trainiert und was fehlt noch laut Plan?",
+        ("plan_progress",),
     ),
 )
 
