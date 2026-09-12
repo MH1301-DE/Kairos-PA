@@ -970,6 +970,62 @@ LLM-API-Key hinterlegt (Task 4) — für den Eval-Lauf (Task 11) muss eine
 `connection`-Zeile händisch eingefügt werden, gleiches Muster wie
 `smoke_seed.py` aus dieser Session.
 
+**Alle 11 Tasks umgesetzt, reviewed, committed (2026-09-12).** Autonome
+Session (Nutzer explizit: "Führe die Tasks nacheinander durch, führe Tests
+nach jedem Task aus und commit dann. Fange dann automatisch mit dem
+nächsten Task an") — kein Rückfrage-Stop zwischen den Tasks, jeder Task
+einzeln committed mit Tests+`ruff`+`mypy --strict` grün davor. Tests
+211 → 272 (61 neue). `docs/superpowers/plans/2026-09-12-phase-4-agent-mvp.md`
+zeigt den Ausgangsstand jedes Tasks; hier nur Abweichungen/Funde, die der
+Plan nicht vorhersah:
+
+- **Task 3:** `func.now()` liefert innerhalb einer Transaktion für jeden
+  Insert denselben Wert — `ORDER BY created_at` für `conversation_message`
+  wäre nicht deterministisch gewesen (ein Chat-Turn hängt mehrere Nachrichten
+  in einer Transaktion an, bevor committed wird). Gefunden beim Schreiben des
+  ersten Integrationstests, nicht erst in Produktion. Fix: `BigInteger
+  IDENTITY`-Spalte `seq` als echter Sortierschlüssel.
+- **Task 8:** litellms `Message.tool_calls`-Typ lässt theoretisch auch
+  "custom tool calls" (kein `.function`-Attribut) zu — `mypy --strict` fing
+  das ab, bevor es zur Laufzeit ein Problem geworden wäre. Außerdem beim
+  Bau des Orchestrators selbst gefunden: `conversation_message` hatte keine
+  Spalte, um festzuhalten, zu welchem `tool_call` eine `role='tool'`-Nachricht
+  gehört — ein späterer Turn hätte beim History-Replay fehlerhafte
+  Tool/Assistant-Paare an die LLM-API zurückgespielt (die meisten Provider
+  lehnen das ab). Migration `1d9489995959` (`tool_call_id`-Spalte) noch vor
+  dem Orchestrator-Code selbst nachgezogen.
+- **Task 10:** Live-Smoke-Test gegen echte (nicht gemockte) Dev-Server per
+  `curl` fand einen echten Bug — `send_message` ohne konfigurierten
+  LLM-API-Key crashte mit rohem 500 statt einer sauberen Fehlermeldung.
+  Fix: `NoLlmCredentialConfigured` wird jetzt zu 503
+  `no_llm_provider_configured`. Echter Browser-Klick-Test war nicht möglich
+  (Google-OAuth nicht automatisierbar, Cookie-Injection vom Browser-Tool
+  blockiert) — `curl` gegen dieselben ungemockten Endpunkte war die
+  stärkste verfügbare Alternative.
+- **Task 11:** Die im Plan vorgesehene volle "Zahlen-Assertion per Regex aus
+  der Prosa-Antwort" (`docs/03-agent-design.md` §8) wurde bewusst auf
+  Tool-Selection-Accuracy reduziert — ein eigenes NLP-Extraktions-Subsystem
+  hätte den Task-Umfang gesprengt. Das Skript wurde nicht live gegen einen
+  echten LLM-Anbieter gelaufen (kein API-Key in dieser Session verfügbar) —
+  nur Imports/Konstruktion aller 13 Fälle verifiziert.
+
+**Bewusst offen gelassene Punkte, für einen Folge-Task:**
+- Kein UI für einen selbst hinterlegten LLM-API-Key (s.o., Task 4).
+- `scripts/agent_eval_suite.py` real laufen lassen, sobald ein API-Key
+  verfügbar ist, und die 13/13-Abnahme tatsächlich verifizieren.
+- Die drei vom Nutzer in dieser Session bestätigten Detailfragen sind
+  umgesetzt (Dashboard bleibt Startseite, mehrere Konversationen, Default
+  `anthropic/claude-sonnet-5`) — keine offenen Design-Fragen mehr für die
+  MVP-Phase.
+- Phase 5 (Planung & Proaktivität, Referenzfragen 13+15) ist noch nicht
+  spezifiziert — nächster sinnvoller Design-Spec-Zyklus, sobald die MVP-Phase
+  im echten Gebrauch validiert wurde.
+
+**Nächster Schritt:** Diese Session arbeitete bereits direkt auf `main`
+(kein Feature-Branch, kein Worktree mehr seit dem Merge von
+`worktree-phase-1-haertung`), also kein separater Merge-Schritt nötig. Push
+nach `origin` noch nicht erfolgt, nicht ohne erneute Nutzer-Bestätigung.
+
 **Fortsetzung des Brainstormings (2026-09-12): Gedächtnis- und Tool-Sicherheitsentscheidungen.**
 Der Nutzer hat im Dialog vier konkrete Fragen zum künftigen Tool-/Memory-Layer beantwortet
 (noch bevor Orchestrator/LLM-Anbindung existieren) — diese Entscheidungen sind bereits
