@@ -15,7 +15,7 @@ x-app-base: &app-base
   env_file: [.env]
   environment:
     DATABASE_URL: postgresql+asyncpg://kairos:${POSTGRES_PASSWORD}@postgres:5432/kairos
-    REDIS_URL: redis://redis:6379/0
+    REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
     KAIROS_KEK: ${KAIROS_KEK}          # Master Key — NIE in der DB, NIE im Repo
   depends_on:
     postgres: {condition: service_healthy}
@@ -43,11 +43,11 @@ services:
     image: kairos-web:${GIT_SHA:-dev}
     restart: unless-stopped
     environment:
-      PUBLIC_API_URL: https://${DOMAIN}/api
-      PUBLIC_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      PORT: "3000"
+      ORIGIN: https://${DOMAIN}   # required by SvelteKit's form-action CSRF check
     networks: [internal]
 
-  # ------------------------------------------------------- API & Worker
+  # --------------------------------------------------------------- API
   api:
     <<: *app-base
     command: uvicorn kairos.api:app --host 0.0.0.0 --port 8000
@@ -60,15 +60,6 @@ services:
       migrate:  {condition: service_completed_successfully}
       postgres: {condition: service_healthy}
       redis:    {condition: service_started}
-
-  worker:
-    <<: *app-base
-    command: arq kairos.jobs.WorkerSettings
-    deploy: {replicas: 1}
-
-  scheduler:
-    <<: *app-base
-    command: python -m kairos.scheduler
 
   # Migrationen laufen als One-Shot VOR dem App-Start, nie beim Applikationsstart
   migrate:
@@ -103,33 +94,53 @@ services:
     volumes: [redisdata:/data]
     networks: [internal]
 
-  # Optional. Alternative: Bind-Mount für FIT-/Raw-Objekte.
-  minio:
-    image: minio/minio
-    restart: unless-stopped
-    command: server /data
-    environment:
-      MINIO_ROOT_USER: ${MINIO_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD}
-    volumes: [miniodata:/data]
-    networks: [internal]
-
-  # -------------------------------------------------------- Backup / Ops
-  backup:
-    build: {context: ./backup}
-    restart: unless-stopped
-    env_file: [.env]
-    volumes:
-      - miniodata:/srv/minio:ro
-    networks: [internal]
-    # Läuft täglich 02:00: pg_dump + restic, verschlüsselt an zweiten Ort.
-    # WICHTIG: Der KAIROS_KEK gehört NICHT in dieses Backup.
-
-  uptime:
-    image: louislam/uptime-kuma:1
-    restart: unless-stopped
-    volumes: [uptimedata:/app/data]
-    networks: [internal]
+  # =====================================================================
+  # Zielbild laut docs/07-deployment-und-betrieb.md §1 -- noch nicht gebaut.
+  # Siehe docs/superpowers/specs/2026-09-12-boot-lifecycle-design.md
+  # "Bewusst nicht Teil dieser Spec" für die Begründung je Service:
+  #   - worker/scheduler: keine Jobqueue im Code (arq ist keine Dependency,
+  #     kairos.jobs/kairos.scheduler existieren nicht).
+  #   - minio: kein Object-Storage-Code, FIT-Rohdaten werden nicht abgelegt.
+  #   - backup: braucht erst eine Nutzerentscheidung zum Backup-Ziel
+  #     (zweiter Standort/Anbieter, docs/07 §4.1).
+  #   - uptime: eigenes künftiges Monitoring-Thema, baut auf /healthz auf.
+  # Nicht kommentarlos löschen -- spätere Specs bauen auf dieser Skizze auf.
+  #
+  # worker:
+  #   <<: *app-base
+  #   command: arq kairos.jobs.WorkerSettings
+  #   deploy: {replicas: 1}
+  #
+  # scheduler:
+  #   <<: *app-base
+  #   command: python -m kairos.scheduler
+  #
+  # minio:
+  #   image: minio/minio
+  #   restart: unless-stopped
+  #   command: server /data
+  #   environment:
+  #     MINIO_ROOT_USER: ${MINIO_USER}
+  #     MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD}
+  #   volumes: [miniodata:/data]
+  #   networks: [internal]
+  #
+  # backup:
+  #   build: {context: ./backup}
+  #   restart: unless-stopped
+  #   env_file: [.env]
+  #   volumes:
+  #     - miniodata:/srv/minio:ro
+  #   networks: [internal]
+  #   # Läuft täglich 02:00: pg_dump + restic, verschlüsselt an zweiten Ort.
+  #   # WICHTIG: Der KAIROS_KEK gehört NICHT in dieses Backup.
+  #
+  # uptime:
+  #   image: louislam/uptime-kuma:1
+  #   restart: unless-stopped
+  #   volumes: [uptimedata:/app/data]
+  #   networks: [internal]
+  # =====================================================================
 
 networks:
   edge:
@@ -139,7 +150,6 @@ networks:
 volumes:
   pgdata:
   redisdata:
-  miniodata:
   caddy_data:
   caddy_config:
-  uptimedata:
+  # miniodata, uptimedata: siehe "Zielbild, noch nicht gebaut" oben.

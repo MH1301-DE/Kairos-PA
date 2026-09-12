@@ -18,6 +18,11 @@ RUN pip install --no-cache-dir .
 
 FROM python:3.12-slim AS runtime
 
+# curl is used by the compose healthcheck (deploy/docker-compose.yml)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN groupadd --system kairos && useradd --system --gid kairos --create-home kairos
 
 COPY --from=builder /opt/venv /opt/venv
