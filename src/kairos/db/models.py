@@ -10,6 +10,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Identity,
     Integer,
     LargeBinary,
     SmallInteger,
@@ -405,6 +406,49 @@ class CustomMetricDefinition(Base):
         UniqueConstraint("user_id", "code", name="uq_custom_metric_definition"),
         CheckConstraint(
             "created_by IN ('user', 'agent')", name="custom_metric_definition_created_by_check"
+        ),
+    )
+
+
+class Conversation(Base):
+    __tablename__ = "conversation"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app_user.id", ondelete="CASCADE"), nullable=False
+    )
+    # first user message, truncated -- used as the label in the conversation list
+    title: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ConversationMessage(Base):
+    __tablename__ = "conversation_message"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # ordering key -- see the migration for why created_at alone isn't deterministic
+    seq: Mapped[int] = mapped_column(
+        BigInteger, Identity(always=False), nullable=False, unique=True
+    )
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("conversation.id", ondelete="CASCADE"), nullable=False
+    )
+    # redundant to conversation.user_id, but needed directly here so this table's
+    # own RLS policy doesn't need a subquery/join
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app_user.id", ondelete="CASCADE"), nullable=False
+    )
+    role: Mapped[str] = mapped_column(Text, nullable=False)
+    # plain text for user/assistant; JSON tool-result payload (as text) for role='tool'
+    content: Mapped[str | None] = mapped_column(Text)
+    # tool calls the model requested this turn, if any -- null for role='user'/'tool'
+    tool_calls: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "role IN ('user', 'assistant', 'tool')", name="conversation_message_role_check"
         ),
     )
 
