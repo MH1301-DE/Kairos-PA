@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from typing import Any
 from uuid import UUID
 
+import openai
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +18,8 @@ from kairos.auth.deps import current_user
 from kairos.db.rls import install_rls_listener
 from kairos.db.session import get_session
 from kairos.repositories.conversation import ConversationRepository
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/agent/conversations", tags=["agent"])
 
@@ -119,6 +123,12 @@ async def send_message(
         )
     except NoLlmCredentialConfigured as exc:
         raise HTTPException(status_code=503, detail="no_llm_provider_configured") from exc
+    except openai.OpenAIError as exc:
+        # litellm normalizes every provider's errors onto the openai.* hierarchy
+        # (AuthenticationError, RateLimitError, APIConnectionError, ...) -- a
+        # wrong/expired key or an upstream outage must not surface as a raw 500
+        logger.warning("LLM call failed for user %s: %s", user_id, exc)
+        raise HTTPException(status_code=502, detail="llm_provider_error") from exc
     await session.commit()
     return {
         "reply": result.reply_text,

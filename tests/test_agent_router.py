@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import uuid
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
@@ -157,6 +157,33 @@ async def test_send_message_returns_503_without_an_llm_credential(
         )
     assert resp.status_code == 503
     assert resp.json()["detail"] == "no_llm_provider_configured"
+
+
+@pytest.mark.asyncio
+async def test_send_message_returns_502_on_llm_provider_error(authed_client: AsyncClient) -> None:
+    """Regression test: found via a live smoke test with a dummy API key --
+    litellm.exceptions.AuthenticationError (and every other litellm error, all
+    on the openai.OpenAIError hierarchy) must surface as a clean 502, not an
+    unhandled 500."""
+    import openai
+
+    create_resp = await authed_client.post("/api/agent/conversations", json={})
+    conversation_id = create_resp.json()["id"]
+
+    fake_response = MagicMock(status_code=401, headers={})
+    with patch(
+        "kairos.routers.agent.run_turn",
+        new=AsyncMock(
+            side_effect=openai.AuthenticationError(
+                message="invalid key", response=fake_response, body=None
+            )
+        ),
+    ):
+        resp = await authed_client.post(
+            f"/api/agent/conversations/{conversation_id}/messages", json={"content": "Hi"}
+        )
+    assert resp.status_code == 502
+    assert resp.json()["detail"] == "llm_provider_error"
 
 
 @pytest.mark.asyncio

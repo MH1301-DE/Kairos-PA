@@ -18,6 +18,7 @@ dependencies = [
     "garmin-fit-sdk>=21.0",
     "simpleeval>=1.0",
     "litellm>=1.50",
+    "openai>=1.0",
 ]
 
 [project.optional-dependencies]
