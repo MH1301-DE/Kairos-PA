@@ -447,6 +447,9 @@ class ConversationMessage(Base):
     content: Mapped[str | None] = mapped_column(Text)
     # tool calls the model requested this turn, if any -- null for role='user'/'tool'
     tool_calls: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    # the id of the specific tool_call this result answers -- only set for role='tool',
+    # required to correctly replay tool/assistant pairing back to the LLM on a later turn
+    tool_call_id: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (

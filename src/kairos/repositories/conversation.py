@@ -45,6 +45,7 @@ class ConversationRepository:
         role: str,
         content: str | None,
         tool_calls: list[dict[str, Any]] | None = None,
+        tool_call_id: str | None = None,
     ) -> ConversationMessage:
         message = ConversationMessage(
             id=uuid.uuid4(),
@@ -53,6 +54,7 @@ class ConversationRepository:
             role=role,
             content=content,
             tool_calls=tool_calls,
+            tool_call_id=tool_call_id,
         )
         self._session.add(message)
         await self._session.execute(
