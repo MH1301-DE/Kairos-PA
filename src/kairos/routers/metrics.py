@@ -14,6 +14,7 @@ from kairos.metrics.bootstrap import build_default_registry
 from kairos.metrics.registry import MetricRegistry
 from kairos.repositories.metrics_recompute import (
     recompute_hr_bucket_seconds_daily,
+    recompute_metric_daily_values,
     recompute_wellness_daily_stats,
 )
 
@@ -41,6 +42,7 @@ async def recompute_metrics(
     start = from_date or (end - timedelta(days=_RECOMPUTE_DEFAULT_DAYS))
     await recompute_wellness_daily_stats(session, user_id=user_id, start=start, end=end)
     await recompute_hr_bucket_seconds_daily(session, user_id=user_id, start=start, end=end)
+    await recompute_metric_daily_values(session, user_id=user_id, start=start, end=end)
     await session.commit()
     return {"status": "ok", "from_date": start.isoformat(), "to_date": end.isoformat()}
 

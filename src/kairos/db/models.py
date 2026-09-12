@@ -369,6 +369,23 @@ class WellnessDailyStats(Base):
     sample_count: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
 
+class MetricDailyValue(Base):
+    __tablename__ = "metric_daily_value"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app_user.id", ondelete="CASCADE"), primary_key=True
+    )
+    # formula IDs from MetricRegistry (e.g. 'ctl', 'acwr'), not a metric_def FK --
+    # these are derived metrics, not raw ingested ones
+    metric_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    variant_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    # NULL for multi-stat metrics (e.g. training_load's CTL/ATL/TSB dict) -- only
+    # scalar formula outputs get a daily series in this table
+    value: Mapped[float | None] = mapped_column(Float)
+    confidence: Mapped[str] = mapped_column(Text, nullable=False)
+
+
 class DailySummary(Base):
     __tablename__ = "daily_summary"
 
