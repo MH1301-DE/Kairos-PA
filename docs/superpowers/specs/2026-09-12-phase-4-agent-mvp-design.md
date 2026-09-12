@@ -418,13 +418,13 @@ tatsächlich ausgeführt wird.
   Analyse in dieser Spec falsch — 8 und 14 sind mit dem Phase-4-MVP-Tool-Satz
   beantwortbar, s.o.).
 
-## Offene Detailfragen (noch nicht entschieden, vor der Task-Planung zu klären)
+## Detailfragen — entschieden (2026-09-12)
 
-1. Wird `/chat` der neue Standard-Einstieg (Startseite) oder bleibt das
-   Dashboard (`/`) die Startseite und Chat ist ein zusätzlicher Nav-Punkt?
-2. Konversationsverlauf: eine dauerhafte Liste mehrerer Konversationen
-   (wie bei Claude/ChatGPT) oder eine einzige fortlaufende Konversation pro
-   Nutzer (einfacher, passt evtl. besser zum "1 Nutzer redet mit seinem
-   Assistenten"-Charakter dieses Projekts)?
-3. Welches Modell ist der Default für `user_setting.llm_model`, bevor ein
-   Nutzer selbst etwas einstellt?
+1. **Startseite bleibt das Dashboard (`/`).** `/chat` wird ein zusätzlicher
+   Nav-Punkt in `+layout.svelte`, kein Umbau des bestehenden Einstiegs.
+2. **Mehrere dauerhafte Konversationen**, wie bei Claude/ChatGPT — die
+   `conversation`-Tabelle und ihre Verlaufsliste (Datenmodell/Frontend oben)
+   bleiben wie ursprünglich spezifiziert, keine Vereinfachung auf eine
+   einzige fortlaufende Konversation nötig.
+3. **Default-Modell:** `anthropic/claude-sonnet-5` über litellm, bis ein
+   Nutzer in `user_setting.llm_model` etwas anderes einstellt.
