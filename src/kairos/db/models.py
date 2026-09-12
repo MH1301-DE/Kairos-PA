@@ -459,6 +459,17 @@ class ConversationMessage(Base):
     )
 
 
+class UserDashboardTile(Base):
+    __tablename__ = "user_dashboard_tile"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app_user.id", ondelete="CASCADE"), primary_key=True
+    )
+    module_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    position: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    visible: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
 class DailySummary(Base):
     __tablename__ = "daily_summary"
 

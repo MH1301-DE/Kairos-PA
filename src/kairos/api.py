@@ -5,6 +5,7 @@ from kairos.routers.agent import router as agent_router
 from kairos.routers.calendar import router as calendar_router
 from kairos.routers.connections import router as connections_router
 from kairos.routers.custom_metrics import router as custom_metrics_router
+from kairos.routers.dashboard import router as dashboard_router
 from kairos.routers.data import router as data_router
 from kairos.routers.goals import router as goals_router
 from kairos.routers.health import router as health_router
@@ -27,3 +28,4 @@ app.include_router(data_router)
 app.include_router(goals_router)
 app.include_router(memory_router)
 app.include_router(agent_router)
+app.include_router(dashboard_router)
