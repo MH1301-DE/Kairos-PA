@@ -11,12 +11,41 @@
 	}
 
 	let sending = $state(false);
+
+	// below 768px the conversation list becomes a drawer instead of a fixed
+	// left column -- see the max-width: 768px block in the style section below
+	let mobileListOpen = $state(false);
+
+	function handleKeydown(event: KeyboardEvent) {
+		if (event.key === 'Escape') mobileListOpen = false;
+	}
 </script>
+
+<svelte:window onkeydown={handleKeydown} />
 
 <h1>Chat</h1>
 
+<button
+	type="button"
+	class="btn btn-ghost mobile-list-toggle"
+	onclick={() => (mobileListOpen = true)}
+>
+	☰ Konversationen
+</button>
+
 <div class="chat-layout">
-	<aside class="conversation-list tile">
+	<aside class="conversation-list tile" class:mobile-open={mobileListOpen}>
+		<div class="conversation-list-header">
+			<h2 class="conversation-list-title">Konversationen</h2>
+			<button
+				type="button"
+				class="btn btn-ghost mobile-list-close"
+				aria-label="Schließen"
+				onclick={() => (mobileListOpen = false)}
+			>
+				✕
+			</button>
+		</div>
 		<form method="POST" action="?/newConversation" use:enhance>
 			<button type="submit" class="btn btn-secondary new-conversation-btn">
 				+ Neue Konversation
@@ -31,6 +60,7 @@
 						<a
 							href={conversationHref(c.id)}
 							class:active={c.id === data.activeConversationId}
+							onclick={() => (mobileListOpen = false)}
 						>
 							{c.title ?? 'Neue Konversation'}
 						</a>
@@ -39,6 +69,14 @@
 			</ul>
 		{/if}
 	</aside>
+	{#if mobileListOpen}
+		<button
+			type="button"
+			class="mobile-list-backdrop"
+			aria-label="Schließen"
+			onclick={() => (mobileListOpen = false)}
+		></button>
+	{/if}
 
 	<div class="chat-main tile">
 		{#if !data.activeConversationId}
@@ -240,5 +278,52 @@
 		border-radius: var(--radius-sm);
 		padding: var(--space-2);
 		color: var(--color-text);
+	}
+
+	.mobile-list-toggle,
+	.conversation-list-header,
+	.mobile-list-backdrop {
+		display: none;
+	}
+
+	@media (max-width: 768px) {
+		.mobile-list-toggle {
+			display: inline-flex;
+			margin-bottom: var(--space-4);
+		}
+		.chat-layout {
+			grid-template-columns: 1fr;
+		}
+		.conversation-list {
+			display: none;
+		}
+		.conversation-list.mobile-open {
+			display: flex;
+			position: fixed;
+			inset: 0;
+			z-index: 100;
+			border-radius: 0;
+			padding-top: max(var(--space-4), env(safe-area-inset-top));
+			padding-bottom: max(var(--space-4), env(safe-area-inset-bottom));
+			overflow-y: auto;
+		}
+		.conversation-list-header {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			margin-bottom: var(--space-2);
+		}
+		.conversation-list-title {
+			margin: 0;
+		}
+		.mobile-list-backdrop {
+			display: block;
+			position: fixed;
+			inset: 0;
+			z-index: 99;
+			background: rgb(0 0 0 / 50%);
+			border: none;
+			padding: 0;
+		}
 	}
 </style>
