@@ -17,6 +17,7 @@ dependencies = [
     "curl_cffi>=0.7",
     "garmin-fit-sdk>=21.0",
     "simpleeval>=1.0",
+    "litellm>=1.50",
 ]
 
 [project.optional-dependencies]

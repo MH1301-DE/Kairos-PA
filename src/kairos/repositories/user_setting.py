@@ -17,6 +17,7 @@ class UserSettingData:
     resting_hr_override: int | None
     hr_max_override: int | None
     sleep_target_hours: float
+    llm_model: str
 
 
 _DEFAULT = UserSettingData(
@@ -25,6 +26,7 @@ _DEFAULT = UserSettingData(
     resting_hr_override=None,
     hr_max_override=None,
     sleep_target_hours=8.0,
+    llm_model="anthropic/claude-sonnet-5",
 )
 
 
@@ -40,4 +42,5 @@ async def get_or_default_user_setting(session: AsyncSession, *, user_id: UUID) -
         resting_hr_override=row.resting_hr_override,
         hr_max_override=row.hr_max_override,
         sleep_target_hours=row.sleep_target_hours,
+        llm_model=row.llm_model,
     )

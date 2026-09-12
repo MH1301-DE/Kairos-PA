@@ -63,6 +63,9 @@ class UserSetting(Base):
     work_hours_end: Mapped[time | None] = mapped_column(Time)
     calendar_buffer_minutes: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=15)
     min_free_block_minutes: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=30)
+    llm_model: Mapped[str] = mapped_column(
+        Text, nullable=False, default="anthropic/claude-sonnet-5"
+    )
 
     __table_args__ = (
         CheckConstraint("sex IN ('male', 'female')", name="user_setting_sex_check"),
