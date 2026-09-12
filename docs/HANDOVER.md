@@ -1075,3 +1075,47 @@ umgesetzt, nicht nur geplant:
    Browser-Tool blockiert das Setzen von Session-Cookies per JS als Sicherheitsgrenze) — nur
    über die API-Integrationstests und `svelte-check` gegen dieselben Komponenten/Props
    verifiziert, kein echter Klick-Durchlauf.
+
+## Frontend-Modernisierung: alle 5 Tasks umgesetzt (2026-09-12)
+
+Design-Spec: `docs/superpowers/specs/2026-09-12-frontend-modernization-design.md`.
+Plan: `docs/superpowers/plans/2026-09-12-frontend-modernization.md`. Nutzer-Auftrag:
+"gehe kritisch über das Frontend, mach es hübscher... Personalisierung des
+Dashboards... Mobilgeräte-Optimierung, hauptsächlich iPhones." Bewusste
+Entscheidung: kein Wechsel zu Tailwind/shadcn-svelte (aktueller De-facto-Standard
+laut Recherche) — das bestehende charakterstarke Dark-Cockpit-Design-System bleibt,
+`svelte-dnd-action` ist die einzige neue Abhängigkeit, nur für Drag-and-Drop.
+
+1. **Mobile/PWA-Basics:** `viewport-fit=cover` + `apple-mobile-web-app-*`-Meta-Tags,
+   `.field input` fest auf 16px (iOS-Zoom-Schwelle, kein Token — bewusst kein
+   `--text-base`, falls der je kleiner wird), Hamburger-Drawer-Nav unterhalb 640px
+   (teilt sich Markup mit dem Desktop-Popup via `{#snippet}`), globale
+   `.btn:disabled`/`.field input:disabled`-Zustände (Onboardings alte
+   `fieldset:disabled{opacity}`-Regel entfernt, hätte sich sonst mit der neuen
+   globalen Regel zu einem überblassten Button multipliziert), Skeleton-Loading
+   für Dashboard-Kacheln.
+2. **`user_dashboard_tile`-Tabelle** + `GET`/`PUT /api/dashboard/layout` — liefert
+   ohne gespeicherte Zeilen exakt die bisherige 8-Modul-Reihenfolge (kein
+   Verhaltensunterschied für Nutzer, die nie personalisieren).
+3. **Drag-and-Drop-Personalisierung** im Dashboard ("Anpassen"-Modus,
+   `svelte-dnd-action`, Touch-fähig) — Reihenfolge + Sichtbarkeit, keine
+   nutzerdefinierten neuen Module (das wäre `docs/05-erweiterbarkeit.md`s viel
+   größeres Zielbild, bewusst nicht Teil dieser Spec). Live gegen echte
+   Dev-Server verifiziert: 1 von 8 Modulen sichtbar exakt wie gespeichert.
+4. **`/chat`:** Konversationsliste wird unterhalb 768px zum Vollbild-Drawer statt
+   fester 16rem-Spalte. **Echter Svelte-Parser-Fund:** ein JS-Kommentar im
+   `<script>`-Block, der wörtlich die Zeichenfolge `<style>` enthielt (selbst in
+   einem `//`-Kommentar), ließ `svelte-check` mit "`<script>` was left open"
+   fehlschlagen — der Parser unterscheidet nicht zwischen einem echten Tag und
+   einer zufällig tag-förmigen Zeichenfolge in einem Kommentar. Umformuliert statt
+   weiter geraten.
+5. **`/calendar`:** dichteres Monatsraster unterhalb 640px (Zellpadding,
+   Schriftgrößen) — 7-Spalten-Struktur bewusst erhalten (matcht Apple/Google
+   Kalender auf dem Handy, keine Listenansicht).
+
+Wie immer in dieser Session: **kein echter Browser-Klicktest möglich**
+(Google-OAuth, Cookie-Injection-Sperre) — verifiziert über `npm run check`
+(499 Dateien, 0 Fehler), `eslint` (keine neuen Funde), Vitest (48/48, 4 neu),
+und `curl` gegen echte, ungemockte Dev-Server für Task 2/3s Backend-Roundtrip.
+Eine manuelle Prüfung auf einem echten iPhone (oder Chromes Device-Toolbar)
+bleibt der eigentliche Verifikationsschritt, sobald ein Login möglich ist.
