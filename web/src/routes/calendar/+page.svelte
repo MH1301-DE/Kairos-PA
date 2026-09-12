@@ -321,6 +321,32 @@
 		color: var(--color-text-muted);
 	}
 
+	/* denser month grid on a phone -- keeps the 7-column structure (matches
+	   Apple/Google Calendar's own mobile month view) rather than switching to
+	   a list layout, just tightens spacing so it fits */
+	@media (max-width: 640px) {
+		.calendar-toolbar {
+			flex-wrap: wrap;
+			gap: var(--space-2);
+		}
+		.month-nav h2 {
+			min-width: 0;
+			font-size: var(--text-base);
+		}
+		.day-cell {
+			min-height: 3.5rem;
+			padding: 2px var(--space-1);
+		}
+		.day-number {
+			font-size: var(--text-xs);
+		}
+		.day-event-chip,
+		.day-event-more {
+			font-size: 0.55rem;
+			padding: 1px 2px;
+		}
+	}
+
 	.day-detail {
 		margin-bottom: var(--space-4);
 	}
