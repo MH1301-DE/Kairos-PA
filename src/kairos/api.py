@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 
 from kairos.auth.google import router as auth_router
+from kairos.routers.agent import router as agent_router
 from kairos.routers.calendar import router as calendar_router
 from kairos.routers.connections import router as connections_router
 from kairos.routers.custom_metrics import router as custom_metrics_router
@@ -25,3 +26,4 @@ app.include_router(calendar_router)
 app.include_router(data_router)
 app.include_router(goals_router)
 app.include_router(memory_router)
+app.include_router(agent_router)
