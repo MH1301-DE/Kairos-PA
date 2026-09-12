@@ -126,7 +126,7 @@ Die genannten Zahlen müssen exakt mit dem Tool-Ergebnis übereinstimmen.
 | Aspekt | Entscheidung | Notiz |
 |---|---|---|
 | Deployment | Einzelne Linux-VM (Hetzner o. Ä.), Docker Compose | Kein Kubernetes |
-| LLM-Zugang | API-basiert (Anthropic Claude), kein lokales Modell | Gesundheitsdaten nur als Aggregate — nie roh |
+| LLM-Zugang | API-basiert, pluggable über litellm (beliebiger Anbieter/API-Key pro Nutzer) | Gesundheitsdaten nur als Aggregate — nie roh; siehe [Phase-4-MVP-Design](superpowers/specs/2026-09-12-phase-4-agent-mvp-design.md) |
 | Garmin-Zugang | Inoffizielle Connect-API (`garth`) | Offizielle Health API erfordert B2B-Partnerschaft; ToS-Risiko dokumentiert in [ADR-0004](adr/ADR-0004-garmin-zugang.md) |
 | Nutzeranzahl | 5, geschlossene Gruppe | Kein öffentliches Signup |
 | Datentrennung | Logisch via Postgres RLS | Nicht physisch getrennte Datenbanken |

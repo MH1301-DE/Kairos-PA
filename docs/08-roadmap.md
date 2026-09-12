@@ -100,8 +100,11 @@ erscheint korrekt in beiden Kalendern; keine Sync-Schleife.
 - [ ] **Eval-Suite mit den 15 Referenzfragen + Zahlen-Assertions**
 - [ ] Token-Telemetrie
 
-**Abnahme:** 15/15 Referenzfragen korrekt. Median-Input < 15k Tokens bei > 40
-registrierten Tools.
+**Abnahme:** 13/13 Referenzfragen korrekt (Referenzfragen 13 und 15
+verschoben nach Phase 5, siehe [Phase-4-MVP-Design](superpowers/specs/2026-09-12-phase-4-agent-mvp-design.md) —
+mit dem MVP-Tool-Satz beantwortbare Fragen fallen nicht mehr unter diese
+Abnahme). Median-Input < 15k Tokens bei den 8 Core-Tools dieser Phase (kein
+registriertes Tool-Set > 8, siehe Spec).
 
 ---
 
@@ -114,8 +117,10 @@ registrierten Tools.
 - [ ] Insight-Job (regelbasiert) + Web Push
 - [ ] Benachrichtigungseinstellungen je Nutzer
 
-**Abnahme:** Referenzfrage 8 und 14 werden vollständig und nachvollziehbar
-beantwortet und in den Kalender geschrieben.
+**Abnahme:** Referenzfrage 13 und 15 werden vollständig und nachvollziehbar
+beantwortet und in den Kalender geschrieben (korrigiert von "8 und 14" —
+diese sind bereits mit dem Phase-4-MVP-Tool-Satz beantwortbar, siehe
+[Phase-4-MVP-Design](superpowers/specs/2026-09-12-phase-4-agent-mvp-design.md)).
 
 ---
 

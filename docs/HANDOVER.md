@@ -934,6 +934,19 @@ beantwortet**. Nächster Schritt: die Scope-Frage erneut stellen bzw. die Antwor
   Leitplanken (keine Diagnosen, keine Medikation, keine Kalorienziele ohne Nachfrage).
 - Kontextbudget-Zielwert bereits definiert: Median-Input < 15.000 Tokens/Turn, Hardcap 40.000.
 
+**Design-Spec fertig (2026-09-12):**
+`docs/superpowers/specs/2026-09-12-phase-4-agent-mvp-design.md`. Das
+Brainstorming aus diesem Abschnitt ist damit abgeschlossen — die Scope-Frage
+(MVP-Slice vs. Vollspezifikation) ist beantwortet (MVP-Slice), ebenso
+LLM-Provider (litellm), Eval-Gate-Aufteilung (13/13, Fragen 13+15 nach Phase
+5 verschoben, `00-vision-und-scope.md`/`08-roadmap.md` entsprechend
+korrigiert), Gedächtnis-Schreibpfad und Tool-Sicherheitsgrenzen (letztere
+zwei bereits implementiert, siehe oben). Drei Detailfragen sind in der Spec
+selbst noch offen ("Offene Detailfragen" am Ende) — vor der Task-Planung zu
+klären, nicht mehr Teil des Brainstormings selbst. **Nächster Schritt:**
+`superpowers:writing-plans` (oder gleichwertig) auf Basis dieser Spec einen
+Task-Plan erzeugen, gleiches Muster wie Phase 2/3.
+
 **Fortsetzung des Brainstormings (2026-09-12): Gedächtnis- und Tool-Sicherheitsentscheidungen.**
 Der Nutzer hat im Dialog vier konkrete Fragen zum künftigen Tool-/Memory-Layer beantwortet
 (noch bevor Orchestrator/LLM-Anbindung existieren) — diese Entscheidungen sind bereits
