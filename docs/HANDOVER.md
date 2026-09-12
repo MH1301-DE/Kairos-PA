@@ -287,7 +287,9 @@ tests/test_metrics_*.py                # Phase-2 Metrics-Backend (siehe unten)
 | Phase 1 — Garmin-Pipeline | ~95% — API-Endpoint ✅, Hypertables ✅, Quality-Flag ✅ (`ad8779b9f2f5`), echter 2-Jahres-Backfill läuft (Stand 2026-09-09) — siehe unten |
 | Phase 2 — Kennzahlen & Dashboard | ✅ beide Teilpläne (Metrics-Backend, Dashboard-Frontend) auf `main` gemergt und gepusht (siehe unten) — nur echte Google-OAuth-Credentials + Produktions-Deployment-Topologie fehlen noch für einen vollen Live-Test |
 | Phase 3 — Kalender | ✅ auf `main` gemergt und gepusht (Commit `67fce04`) — siehe unten |
-| Phase 4 — Agent | 🔄 Brainstorming läuft (dialogisch, Nutzer aktiv im Gespräch) — siehe unten |
+| Phase 4 — Agent MVP | ✅ alle 11 Tasks umgesetzt, LLM-Key-Architektur nachträglich auf deployment-weit korrigiert — siehe unten |
+| Frontend-Modernisierung | ✅ alle 5 Tasks umgesetzt (Personalisierung, Mobile/iPhone, Dark-Cockpit beibehalten) — siehe unten |
+| Phase 5 — Planung | ✅ alle 4 Tasks umgesetzt (`plan_propose`/`plan_commit`/`plan_adjust`/`plan_progress`) — siehe unten |
 
 ### Was für Phase-1-Abnahme noch fehlt
 
@@ -1119,3 +1121,43 @@ Wie immer in dieser Session: **kein echter Browser-Klicktest möglich**
 und `curl` gegen echte, ungemockte Dev-Server für Task 2/3s Backend-Roundtrip.
 Eine manuelle Prüfung auf einem echten iPhone (oder Chromes Device-Toolbar)
 bleibt der eigentliche Verifikationsschritt, sobald ein Login möglich ist.
+
+## Phase 5 Planning: alle 4 Tasks umgesetzt (2026-09-12)
+
+Design-Spec: `docs/superpowers/specs/2026-09-12-phase-5-planning-design.md`.
+Plan: `docs/superpowers/plans/2026-09-12-phase-5-planning.md`. Scope bewusst
+auf "Planung" beschränkt — "Planung & Proaktivität" (Insight-Job, Web-Push)
+bleibt komplett zurückgestellt. Algorithmus ist eine regelbasierte Heuristik,
+kein Solver.
+
+1. **`plan`/`plan_block`-Tabellen** (Migration `27d8fcfada03`) — `plan.status`
+   `draft`/`committed`/`abandoned`, `plan_block.workout_type`
+   `long_run`/`hard`/`easy`/`rest`, `plan_block.calendar_event_id` FK
+   `ON DELETE SET NULL` gegen `calendar_event`.
+2. **`src/kairos/planning/algorithm.py`** — reine Funktion
+   `generate_plan_blocks()`, wochenweise (`_plan_week`): längster freier
+   Block wird Long Run, bis zu 2 Hard-Tage mit ≥48h Abstand bei ≥60min
+   freier Zeit, mindestens 1 Ruhetag/Woche erzwungen (auch bei täglich
+   freien Blöcken), 0.5x-Taper in der letzten Woche vor `goal_date`.
+3. **`src/kairos/repositories/plan.py`** — `PlanRepository` mit
+   `create_draft`/`commit`/`replace_remaining_blocks` (Letzteres ersetzt nur
+   noch nicht `'done'`-markierte zukünftige Blöcke, historische Einträge
+   bleiben unangetastet).
+4. **4 neue Agent-Tools** (`plan_propose`/`plan_commit`/`plan_adjust`/
+   `plan_progress`, alle in `CORE_TOOLS` in `src/kairos/agent/tools.py`,
+   12 Core-Tools insgesamt) — `plan_commit` schreibt echte Kalendertermine
+   über `_create_calendar_event` (Rest-Blöcke werden übersprungen),
+   `plan_adjust` reduziert `target_trimp` künftiger `'planned'`-Blöcke
+   (-30% bei Stress/Krankheits-Stichworten, sonst -15%).
+   **Design-Spec-Korrektur während der Implementierung:** `plan_adjust`
+   aktualisiert **keine** bereits committeten Kalendertermine — Phase 3 hat
+   bewusst nie einen `PATCH`/Update-Endpoint für Kalenderevents gebaut, nur
+   `POST`/`DELETE`. Der ursprüngliche Spec-Satz dazu ist als dokumentierte
+   Historie stehen gelassen, mit Korrekturhinweis direkt darunter.
+
+Alle Tests grün (295 gesamt, u.a. 5 neue Handler-Tests, 3 neue
+Dispatcher-Bestätigungstests gegen die echten `TOOLS_BY_NAME`-Einträge statt
+Fake-Specs, 1 neuer Integrationstest `plan_propose`→`plan_commit` gegen eine
+echte DB mit gemocktem Google-Calendar-Client), `ruff`/`mypy --strict` auf
+`src` grün. Referenzfragen 13/15 aus `scripts/agent_eval_suite.py` sind noch
+nicht zurück in `CASES` aufgenommen — laut Plan optional, kein Hard-Requirement.

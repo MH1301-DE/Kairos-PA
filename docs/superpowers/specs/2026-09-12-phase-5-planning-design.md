@@ -140,7 +140,15 @@ noch nicht `'done'`-markierte Blöcke).
   `requires_confirmation=True`. Reduziert die Ziel-TRIMP-Werte der
   verbleibenden `'planned'`-Blöcke (einfache Regel: -30 % bei "viel Stress"/
   "krank"-artigen `reason`-Stichworten, sonst -15 % als konservativer
-  Default) und aktualisiert bereits committete Kalendertermine.
+  Default).
+  > **Korrektur (2026-09-12, während der Implementierung von Task 4):**
+  > `plan_adjust` aktualisiert **keine** bereits committeten Kalendertermine
+  > — Phase 3 hat bewusst nur `POST`/`DELETE` für Kalenderevents gebaut, kein
+  > `PATCH`/Update-Endpoint (siehe `docs/HANDOVER.md`). Der Handler ändert
+  > ausschließlich `plan_block.target_trimp` für Blöcke mit `status='planned'`;
+  > bereits verknüpfte `calendar_event`-Zeilen bleiben unverändert. Der
+  > ursprüngliche Satz oben ("aktualisiert bereits committete
+  > Kalendertermine") ist als dokumentierte Historie stehen gelassen.
 - `plan_progress_handler(session, *, user_id, plan_id=None)` — `read`.
   Ohne `plan_id` wird der aktuell aktive (`status='committed'`) Plan des
   Nutzers verwendet. Vergleicht diese Woche: Soll (`plan_block`-Einträge)
