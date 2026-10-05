@@ -15,6 +15,8 @@ from kairos.agent.orchestrator import OrchestratorResult
 from kairos.api import app
 from kairos.auth.deps import current_user
 from kairos.db.session import get_session
+from kairos.repositories.conversation import ConversationRepository
+from kairos.routers import agent as agent_router_module
 
 
 async def _insert_user(session: AsyncSession, user_id: uuid.UUID, email: str, sub: str) -> None:
@@ -186,32 +188,94 @@ async def test_send_message_returns_502_on_llm_provider_error(authed_client: Asy
     assert resp.json()["detail"] == "llm_provider_error"
 
 
-@pytest.mark.asyncio
-async def test_confirm_executes_the_tool_and_returns_its_result(
-    authed_client: AsyncClient,
-) -> None:
-    create_resp = await authed_client.post("/api/agent/conversations", json={})
-    conversation_id = create_resp.json()["id"]
+async def _conversation_with_pending_proposal(
+    db_session: AsyncSession, user_id: uuid.UUID
+) -> uuid.UUID:
+    repo = ConversationRepository(session=db_session)
+    conversation = await repo.create(user_id=user_id, title="t")
+    await repo.append_message(conversation_id=conversation.id, user_id=user_id, role="user",
+                              content="Termin bitte")
+    await repo.append_message(
+        conversation_id=conversation.id, user_id=user_id, role="assistant", content=None,
+        tool_calls=[{"id": "call_p", "name": "propose_calendar_event",
+                     "arguments": '{"summary": "Lauf", "start_at": "2026-10-06T07:00:00+00:00",'
+                                  ' "end_at": "2026-10-06T08:00:00+00:00"}'}],
+    )
+    await db_session.commit()
+    return conversation.id
 
-    tool_result = {"summary": "Termin angelegt.", "data": {"id": "evt-1"}, "meta": {}}
-    with patch(
-        "kairos.routers.agent.dispatch", new=AsyncMock(return_value=tool_result)
-    ) as mock_dispatch:
+
+@pytest.mark.asyncio
+async def test_confirm_executes_stored_arguments_and_answers_the_original_call(
+    authed_client: AsyncClient, db_session: AsyncSession, test_user_id: uuid.UUID
+) -> None:
+    conversation_id = await _conversation_with_pending_proposal(db_session, test_user_id)
+    executed = AsyncMock(return_value={"summary": "Termin angelegt", "data": {}, "meta": {}})
+    with patch.object(agent_router_module, "dispatch", new=executed):
         resp = await authed_client.post(
-            f"/api/agent/conversations/{conversation_id}/confirm",
-            json={"tool_name": "propose_calendar_event", "arguments": {"summary": "Long Run"}},
+            f"/api/agent/conversations/{conversation_id}/proposals/call_p/confirm"
         )
     assert resp.status_code == 200
-    assert resp.json() == tool_result
-    call_kwargs = mock_dispatch.call_args.kwargs
-    assert call_kwargs["pending_confirmation"] is True
-    assert call_kwargs["tool_call"].name == "propose_calendar_event"
+    call = executed.call_args.kwargs["tool_call"]
+    assert call.name == "propose_calendar_event"
+    assert call.arguments["summary"] == "Lauf"
+    assert executed.call_args.kwargs["pending_confirmation"] is True
+    repo = ConversationRepository(session=db_session)
+    assert await repo.has_tool_result(conversation_id=conversation_id, user_id=test_user_id,
+                                      tool_call_id="call_p")
+
+
+@pytest.mark.asyncio
+async def test_second_confirm_is_rejected_without_executing_twice(
+    authed_client: AsyncClient, db_session: AsyncSession, test_user_id: uuid.UUID
+) -> None:
+    conversation_id = await _conversation_with_pending_proposal(db_session, test_user_id)
+    executed = AsyncMock(return_value={"summary": "ok", "data": {}, "meta": {}})
+    with patch.object(agent_router_module, "dispatch", new=executed):
+        first = await authed_client.post(
+            f"/api/agent/conversations/{conversation_id}/proposals/call_p/confirm")
+        second = await authed_client.post(
+            f"/api/agent/conversations/{conversation_id}/proposals/call_p/confirm")
+    assert first.status_code == 200
+    assert second.status_code == 409
+    assert second.json()["detail"] == "proposal_already_resolved"
+    assert executed.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_reject_records_rejection_and_unknown_proposal_is_404(
+    authed_client: AsyncClient, db_session: AsyncSession, test_user_id: uuid.UUID
+) -> None:
+    conversation_id = await _conversation_with_pending_proposal(db_session, test_user_id)
+    resp = await authed_client.post(
+        f"/api/agent/conversations/{conversation_id}/proposals/call_p/reject")
+    assert resp.status_code == 200
+    missing = await authed_client.post(
+        f"/api/agent/conversations/{conversation_id}/proposals/nope/confirm")
+    assert missing.status_code == 404
+    assert missing.json()["detail"] == "proposal_not_found"
+
+
+@pytest.mark.asyncio
+async def test_read_tool_call_cannot_be_confirmed(
+    authed_client: AsyncClient, db_session: AsyncSession, test_user_id: uuid.UUID
+) -> None:
+    repo = ConversationRepository(session=db_session)
+    conversation = await repo.create(user_id=test_user_id, title="t")
+    await repo.append_message(
+        conversation_id=conversation.id, user_id=test_user_id, role="assistant", content=None,
+        tool_calls=[{"id": "call_r", "name": "query_health", "arguments": "{}"}],
+    )
+    await db_session.commit()
+    resp = await authed_client.post(
+        f"/api/agent/conversations/{conversation.id}/proposals/call_r/confirm")
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "not_a_proposal"
 
 
 @pytest.mark.asyncio
 async def test_confirm_404_for_unknown_conversation(authed_client: AsyncClient) -> None:
     resp = await authed_client.post(
-        f"/api/agent/conversations/{uuid.uuid4()}/confirm",
-        json={"tool_name": "propose_calendar_event", "arguments": {}},
+        f"/api/agent/conversations/{uuid.uuid4()}/proposals/call_p/confirm"
     )
     assert resp.status_code == 404

@@ -113,17 +113,14 @@
 						<div class="proposal-actions">
 							<form method="POST" action="?/confirm" use:enhance>
 								<input type="hidden" name="conversation_id" value={data.activeConversationId} />
-								<input type="hidden" name="tool_name" value={form.proposal.tool_name} />
-								<input
-									type="hidden"
-									name="arguments"
-									value={JSON.stringify(form.proposal.arguments)}
-								/>
+								<input type="hidden" name="tool_call_id" value={form.proposal.tool_call_id} />
 								<button type="submit" class="btn btn-primary">Bestätigen</button>
 							</form>
-							<a href={conversationHref(data.activeConversationId)} class="btn btn-ghost">
-								Ablehnen
-							</a>
+							<form method="POST" action="?/reject" use:enhance>
+								<input type="hidden" name="conversation_id" value={data.activeConversationId} />
+								<input type="hidden" name="tool_call_id" value={form.proposal.tool_call_id} />
+								<button type="submit" class="btn btn-ghost">Ablehnen</button>
+							</form>
 						</div>
 					</div>
 				{/if}

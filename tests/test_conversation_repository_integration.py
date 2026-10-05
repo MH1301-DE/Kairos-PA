@@ -109,3 +109,32 @@ async def test_conversation_enforce_rls_isolation(
     repo_b = ConversationRepository(session=app_session)
     conversations_for_b = await repo_b.list_for_user(user_id=user_b)
     assert conversations_for_b == []
+
+
+@pytest.mark.asyncio
+async def test_find_tool_call_and_has_tool_result(session: AsyncSession) -> None:
+    user_id = uuid4()
+    await _insert_user(session, user_id)
+    await session.commit()
+    repo = ConversationRepository(session=session)
+    conversation = await repo.create(user_id=user_id, title="t")
+    conversation_id = conversation.id
+    await repo.append_message(
+        conversation_id=conversation_id, user_id=user_id, role="assistant", content=None,
+        tool_calls=[{"id": "call_p", "name": "propose_calendar_event", "arguments": "{\"a\": 1}"}],
+    )
+    found = await repo.find_tool_call(
+        conversation_id=conversation_id, user_id=user_id, tool_call_id="call_p"
+    )
+    assert found == {"id": "call_p", "name": "propose_calendar_event", "arguments": "{\"a\": 1}"}
+    assert await repo.find_tool_call(
+        conversation_id=conversation_id, user_id=user_id, tool_call_id="nope"
+    ) is None
+    assert not await repo.has_tool_result(
+        conversation_id=conversation_id, user_id=user_id, tool_call_id="call_p"
+    )
+    await repo.append_message(conversation_id=conversation_id, user_id=user_id, role="tool",
+                              content="{}", tool_call_id="call_p")
+    assert await repo.has_tool_result(
+        conversation_id=conversation_id, user_id=user_id, tool_call_id="call_p"
+    )

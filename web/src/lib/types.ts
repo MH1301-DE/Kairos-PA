@@ -95,6 +95,7 @@ export interface Proposal {
 	tool_name: string;
 	arguments: Record<string, unknown>;
 	summary: string;
+	tool_call_id: string;
 }
 
 // the tool result shape from src/kairos/agent/tools.py's _envelope()

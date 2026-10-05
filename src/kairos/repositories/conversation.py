@@ -80,3 +80,32 @@ class ConversationRepository:
             .limit(limit)
         )
         return list(reversed(result.scalars().all()))
+
+    async def find_tool_call(
+        self, *, conversation_id: UUID, user_id: UUID, tool_call_id: str
+    ) -> dict[str, Any] | None:
+        result = await self._session.execute(
+            select(ConversationMessage).where(
+                ConversationMessage.conversation_id == conversation_id,
+                ConversationMessage.user_id == user_id,
+                ConversationMessage.role == "assistant",
+                ConversationMessage.tool_calls.contains([{"id": tool_call_id}]),
+            )
+        )
+        message = result.scalars().first()
+        if message is None or not message.tool_calls:
+            return None
+        return next((tc for tc in message.tool_calls if tc["id"] == tool_call_id), None)
+
+    async def has_tool_result(
+        self, *, conversation_id: UUID, user_id: UUID, tool_call_id: str
+    ) -> bool:
+        result = await self._session.execute(
+            select(ConversationMessage.id).where(
+                ConversationMessage.conversation_id == conversation_id,
+                ConversationMessage.user_id == user_id,
+                ConversationMessage.role == "tool",
+                ConversationMessage.tool_call_id == tool_call_id,
+            )
+        )
+        return result.first() is not None

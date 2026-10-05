@@ -63,18 +63,33 @@ export const actions: Actions = {
 	confirm: async ({ request, fetch }) => {
 		const form = await request.formData();
 		const conversationId = String(form.get('conversation_id') ?? '');
-		const toolName = String(form.get('tool_name') ?? '');
-		const argumentsJson = String(form.get('arguments') ?? '{}');
+		const toolCallId = String(form.get('tool_call_id') ?? '');
 		const { status, data } = await apiPost<ToolResult & { detail?: string }>(
 			fetch,
-			`/api/agent/conversations/${conversationId}/confirm`,
-			{ tool_name: toolName, arguments: JSON.parse(argumentsJson) }
+			`/api/agent/conversations/${conversationId}/proposals/${toolCallId}/confirm`,
+			{}
 		);
 		if (status === 401) redirect(302, '/auth/login');
 		if (status !== 200) {
 			return fail(status, { error: `Aktion konnte nicht bestätigt werden (${status}).` });
 		}
 		return { confirmResult: data };
+	},
+
+	reject: async ({ request, fetch }) => {
+		const form = await request.formData();
+		const conversationId = String(form.get('conversation_id') ?? '');
+		const toolCallId = String(form.get('tool_call_id') ?? '');
+		const { status } = await apiPost(
+			fetch,
+			`/api/agent/conversations/${conversationId}/proposals/${toolCallId}/reject`,
+			{}
+		);
+		if (status === 401) redirect(302, '/auth/login');
+		if (status !== 200) {
+			return fail(status, { error: `Aktion konnte nicht abgelehnt werden (${status}).` });
+		}
+		return { rejected: true };
 	},
 
 	// reuses the /memory page's delete endpoint -- the undo chip on a
