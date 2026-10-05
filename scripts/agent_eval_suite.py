@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
@@ -35,7 +36,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from kairos.agent import dispatcher as dispatcher_module
+from kairos.agent import orchestrator as orchestrator_module
 from kairos.agent.dispatcher import ToolCall, dispatch
 from kairos.agent.orchestrator import run_turn
 from kairos.config import settings
@@ -55,7 +56,9 @@ class EvalResult:
     case: EvalCase
     tools_called: list[str] = field(default_factory=list)
     reply: str | None = None
+    proposal: str | None = None
     error: str | None = None
+    seconds: float = 0.0
 
     @property
     def tool_selection_ok(self) -> bool:
@@ -203,16 +206,27 @@ async def run_eval_case(
             pending_confirmation=pending_confirmation,
         )
 
-    dispatcher_module.dispatch = _recording_dispatch
+    # orchestrator binds `dispatch` at import time, so patch it there, not on the dispatcher module
+    orchestrator_module.dispatch = _recording_dispatch
+    started = time.monotonic()
     try:
         result = await run_turn(
             session, user_id=user_id, conversation_id=conversation_id, user_message=case.question
         )
-        return EvalResult(case=case, tools_called=tools_called, reply=result.reply_text)
+        await session.commit()
+        return EvalResult(
+            case=case, tools_called=tools_called, reply=result.reply_text,
+            proposal=result.proposal.summary if result.proposal else None,
+            seconds=time.monotonic() - started,
+        )
     except Exception as exc:  # noqa: BLE001 -- eval harness must not crash on one bad case
-        return EvalResult(case=case, tools_called=tools_called, error=str(exc))
+        await session.rollback()
+        return EvalResult(
+            case=case, tools_called=tools_called, error=f"{type(exc).__name__}: {exc}",
+            seconds=time.monotonic() - started,
+        )
     finally:
-        dispatcher_module.dispatch = original_dispatch
+        orchestrator_module.dispatch = original_dispatch
 
 
 async def main() -> None:
@@ -221,26 +235,44 @@ async def main() -> None:
         sys.exit("LLM_API_KEY ist in .env nicht gesetzt, Abbruch.")
 
     user_id = uuid.uuid4()
+    results: list[EvalResult] = []
     async with async_session_factory() as session:
-        print("Seede Testdatensatz (60 Tage Trainingsdaten) ...")
-        await seed_test_data(session, user_id)
+        try:
+            print("Seede Testdatensatz (60 Tage Trainingsdaten) ...")
+            await seed_test_data(session, user_id)
 
-        conv_repo = ConversationRepository(session=session)
-        conversation = await conv_repo.create(user_id=user_id, title="Eval")
-        await session.commit()
-
-        results: list[EvalResult] = []
-        for case in CASES:
-            print(f"[{case.number}/15] {case.question}")
-            result = await run_eval_case(session, user_id, conversation.id, case)
-            results.append(result)
-            if result.tool_selection_ok:
-                status = "OK"
-            elif result.error:
-                status = "FEHLER"
-            else:
-                status = "TOOL-MISMATCH"
-            print(f"    -> {status} (Tools: {result.tools_called or '-'})")
+            conv_repo = ConversationRepository(session=session)
+            for case in CASES:
+                # fresh conversation per case: measures tool selection, not history carry-over
+                conversation = await conv_repo.create(user_id=user_id, title=f"Eval {case.number}")
+                await session.commit()
+                print(f"[{case.number}/15] {case.question}")
+                result = await run_eval_case(session, user_id, conversation.id, case)
+                results.append(result)
+                if result.tool_selection_ok:
+                    status = "OK"
+                elif result.error:
+                    status = "FEHLER"
+                else:
+                    status = "TOOL-MISMATCH"
+                print(
+                    f"    -> {status} in {result.seconds:.1f}s "
+                    f"(Tools: {result.tools_called or '-'})"
+                )
+                if result.error:
+                    print(f"       Fehler: {result.error[:300]}")
+                if result.proposal:
+                    print(f"       Proposal: {result.proposal}")
+                if result.reply:
+                    print("       Antwort: " + result.reply.replace("\n", " ")[:400])
+        finally:
+            # every user table cascades from app_user, so this removes all seeded eval data
+            await session.rollback()
+            await session.execute(
+                text("DELETE FROM app_user WHERE id = :id"), {"id": str(user_id)}
+            )
+            await session.commit()
+            print("Eval-Nutzer und Testdaten entfernt.")
 
     passed = sum(1 for r in results if r.tool_selection_ok)
     print(f"\n{passed}/{len(results)} Fragen mit erwartetem Tool beantwortet.")
