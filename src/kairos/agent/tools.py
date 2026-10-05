@@ -41,6 +41,7 @@ _RENDER_COMPONENTS = frozenset(
 @dataclass(frozen=True)
 class ToolSpec:
     name: str
+    description: str
     risk_class: Literal["read", "write", "destructive"]
     requires_confirmation: bool
     json_schema: dict[str, Any]
@@ -434,7 +435,13 @@ async def plan_progress_handler(
 
 CORE_TOOLS: tuple[ToolSpec, ...] = (
     ToolSpec(
-        name="query_health", risk_class="read", requires_confirmation=False,
+        name="query_health",
+        description=(
+            "Wert einer Kennzahl an einem Tag (Default heute). metric_id aus VERFÜGBARE "
+            "KENNZAHLEN. Für Erholung: hrv_baseline, resting_hr_trend, sleep_debt; "
+            "für Belastung: training_load, acwr."
+        ),
+        risk_class="read", requires_confirmation=False,
         json_schema={
             "type": "object",
             "properties": {
@@ -449,7 +456,12 @@ CORE_TOOLS: tuple[ToolSpec, ...] = (
         handler=query_health_handler,
     ),
     ToolSpec(
-        name="analyze_records", risk_class="read", requires_confirmation=False,
+        name="analyze_records",
+        description=(
+            "Tages-Zeitreihe einer Kennzahl über window_days (max. 60) mit "
+            "Mittelwert/Min/Max. Nur für Kennzahlen mit 'Zeitreihe: ja' (trimp, sleep_debt)."
+        ),
+        risk_class="read", requires_confirmation=False,
         json_schema={
             "type": "object",
             "properties": {
@@ -462,7 +474,12 @@ CORE_TOOLS: tuple[ToolSpec, ...] = (
         handler=analyze_records_handler,
     ),
     ToolSpec(
-        name="query_calendar", risk_class="read", requires_confirmation=False,
+        name="query_calendar",
+        description=(
+            "Termine zwischen from_date und to_date; mit duration_minutes zusätzlich "
+            "freie Blöcke mindestens dieser Länge (für Trainingsplanung)."
+        ),
+        risk_class="read", requires_confirmation=False,
         json_schema={
             "type": "object",
             "properties": {
@@ -481,7 +498,12 @@ CORE_TOOLS: tuple[ToolSpec, ...] = (
         handler=query_calendar_handler,
     ),
     ToolSpec(
-        name="recall", risk_class="read", requires_confirmation=False,
+        name="recall",
+        description=(
+            "Durchsucht gespeicherte Erinnerungen über den Nutzer (Ziele, Vorlieben, "
+            "Einschränkungen). Ohne query: die neuesten Einträge."
+        ),
+        risk_class="read", requires_confirmation=False,
         json_schema={
             "type": "object",
             "properties": {
@@ -492,7 +514,12 @@ CORE_TOOLS: tuple[ToolSpec, ...] = (
         handler=recall_handler,
     ),
     ToolSpec(
-        name="remember", risk_class="write", requires_confirmation=False,
+        name="remember",
+        description=(
+            "Speichert einen Fakt über den Nutzer, der in späteren Gesprächen wichtig "
+            "ist (Ziel, Verletzung, Vorliebe). Keine Messwerte speichern."
+        ),
+        risk_class="write", requires_confirmation=False,
         json_schema={
             "type": "object",
             "properties": {"content": {"type": "string"}},
@@ -501,7 +528,12 @@ CORE_TOOLS: tuple[ToolSpec, ...] = (
         handler=remember_handler,
     ),
     ToolSpec(
-        name="render", risk_class="read", requires_confirmation=False,
+        name="render",
+        description=(
+            "Zeigt Daten aus einem vorherigen Tool-Ergebnis als Diagramm oder Karte im "
+            "Chat. Nur Zahlen aus Tool-Ergebnissen dieses Turns verwenden."
+        ),
+        risk_class="read", requires_confirmation=False,
         json_schema={
             "type": "object",
             "properties": {
@@ -513,7 +545,12 @@ CORE_TOOLS: tuple[ToolSpec, ...] = (
         handler=render_handler,
     ),
     ToolSpec(
-        name="propose_calendar_event", risk_class="write", requires_confirmation=True,
+        name="propose_calendar_event",
+        description=(
+            "Schlägt einen Kalendertermin vor; wird erst nach Bestätigung durch den "
+            "Nutzer in Google Calendar angelegt."
+        ),
+        risk_class="write", requires_confirmation=True,
         json_schema={
             "type": "object",
             "properties": {
@@ -527,7 +564,12 @@ CORE_TOOLS: tuple[ToolSpec, ...] = (
         handler=propose_calendar_event_handler,
     ),
     ToolSpec(
-        name="delete_calendar_event", risk_class="destructive", requires_confirmation=True,
+        name="delete_calendar_event",
+        description=(
+            "Schlägt das Löschen eines Kalendertermins vor; wird erst nach Bestätigung "
+            "ausgeführt."
+        ),
+        risk_class="destructive", requires_confirmation=True,
         json_schema={
             "type": "object",
             "properties": {
@@ -539,7 +581,12 @@ CORE_TOOLS: tuple[ToolSpec, ...] = (
         handler=delete_calendar_event_handler,
     ),
     ToolSpec(
-        name="plan_propose", risk_class="read", requires_confirmation=False,
+        name="plan_propose",
+        description=(
+            "Erstellt einen Trainingsplan-Entwurf für weeks Wochen auf Basis freier "
+            "Kalenderzeit und aktueller Belastung, optional bis goal_date."
+        ),
+        risk_class="read", requires_confirmation=False,
         json_schema={
             "type": "object",
             "properties": {
@@ -551,7 +598,12 @@ CORE_TOOLS: tuple[ToolSpec, ...] = (
         handler=plan_propose_handler,
     ),
     ToolSpec(
-        name="plan_commit", risk_class="write", requires_confirmation=True,
+        name="plan_commit",
+        description=(
+            "Überträgt einen Plan-Entwurf in den Kalender; wird erst nach Bestätigung "
+            "ausgeführt."
+        ),
+        risk_class="write", requires_confirmation=True,
         json_schema={
             "type": "object",
             "properties": {"plan_id": {"type": "string"}},
@@ -560,7 +612,12 @@ CORE_TOOLS: tuple[ToolSpec, ...] = (
         handler=plan_commit_handler,
     ),
     ToolSpec(
-        name="plan_adjust", risk_class="write", requires_confirmation=True,
+        name="plan_adjust",
+        description=(
+            "Reduziert die Belastung künftiger Einheiten eines Plans (z.B. bei Stress "
+            "oder Krankheit); wird erst nach Bestätigung ausgeführt."
+        ),
+        risk_class="write", requires_confirmation=True,
         json_schema={
             "type": "object",
             "properties": {
@@ -572,7 +629,12 @@ CORE_TOOLS: tuple[ToolSpec, ...] = (
         handler=plan_adjust_handler,
     ),
     ToolSpec(
-        name="plan_progress", risk_class="read", requires_confirmation=False,
+        name="plan_progress",
+        description=(
+            "Soll/Ist-Vergleich des aktiven (oder angegebenen) Trainingsplans für die "
+            "laufende Woche."
+        ),
+        risk_class="read", requires_confirmation=False,
         json_schema={
             "type": "object",
             "properties": {

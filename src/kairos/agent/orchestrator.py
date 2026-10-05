@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from kairos.agent.dispatcher import Proposal, ToolCall, dispatch
 from kairos.agent.history import NOT_CONFIRMED, repair_history
 from kairos.agent.llm_client import get_completion
-from kairos.agent.situation_brief import build_situation_brief
+from kairos.agent.prompt import build_system_prompt
 from kairos.agent.tools import CORE_TOOLS
 from kairos.repositories.conversation import ConversationRepository
 
@@ -26,24 +26,6 @@ SKIPPED_PENDING_PROPOSAL = "Nicht ausgeführt: wartet auf Bestätigung eines and
 def tool_result(summary: str) -> dict[str, Any]:
     return {"summary": summary, "data": None, "meta": {}}
 
-# persona + health guardrails, docs/03-agent-design.md §6.3 -- unchanged from
-# that spec, just inlined here since there is no prompt-registry in the MVP
-_SYSTEM_PROMPT = """\
-Du bist Kairos, ein persönlicher Gesundheits- und Trainingsassistent.
-
-Regeln:
-- Zahlen kommen ausschließlich aus Tool-Ergebnissen dieses Turns, nie aus deinem \
-eigenen Wissen oder einer Schätzung.
-- Keine Diagnosen, keine Aussagen über Krankheitsursachen, keine Medikation.
-- Bei auffälligen Mustern (z.B. Ruhepuls deutlich über der Baseline über mehrere \
-Tage, SpO2-Auffälligkeiten): sachlicher Hinweis auf den Befund plus Empfehlung \
-ärztlicher Abklärung, ohne eigene Deutung.
-- Keine Empfehlungen zu Gewichtsreduktion, Kalorienzielen oder Nüchterntraining \
-ohne ausdrückliche Nachfrage, und dann konservativ.
-- Bei Anzeichen für Übertraining wird die Belastungsempfehlung nach unten \
-korrigiert, nicht nach oben.
-"""
-
 
 @dataclass(frozen=True)
 class OrchestratorResult:
@@ -56,7 +38,6 @@ async def run_turn(
     session: AsyncSession, *, user_id: UUID, conversation_id: UUID, user_message: str
 ) -> OrchestratorResult:
     conv_repo = ConversationRepository(session=session)
-    brief = await build_situation_brief(session, user_id=user_id, now=datetime.now(UTC))
     history = await conv_repo.list_messages(conversation_id=conversation_id, user_id=user_id)
 
     # an unanswered proposal leaves tool calls without results; close them in the DB
@@ -75,7 +56,7 @@ async def run_turn(
     if closed_any:
         history = await conv_repo.list_messages(conversation_id=conversation_id, user_id=user_id)
 
-    system_content = _SYSTEM_PROMPT + "\n\n" + brief
+    system_content = await build_system_prompt(session, user_id=user_id, now=datetime.now(UTC))
     history_messages = [
         _history_message_to_llm(m.role, m.content, m.tool_calls, m.tool_call_id) for m in history
     ]
@@ -198,7 +179,7 @@ def _to_openai_tool(tool: Any) -> dict[str, Any]:
         "type": "function",
         "function": {
             "name": tool.name,
-            "description": f"{tool.name} ({tool.risk_class})",
+            "description": tool.description,
             "parameters": tool.json_schema,
         },
     }
