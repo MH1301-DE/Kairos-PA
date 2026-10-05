@@ -896,6 +896,19 @@ dem Cloudflare-1015-Vorfall bleibt). `uv.lock` ist seit Phase 0 veraltet (enthä
 - Testlauf dieser Session: volle Suite mit Docker **302 passed, 0 skipped**, `mypy --strict
   src` sauber.
 
+**Update (2026-10-05): Backfill holt nur noch die Lücke.** Erster echter Backfill nach dem
+Re-Login lief wieder über alle 720 Tage, obwohl `sync_state` für jede Kind bereits
+2024-09-19 bis 2026-09-09 als abgedeckt markiert hatte — der Short-Circuit in
+`SyncService.run_backfill()` griff nur, wenn der *ganze* angefragte Bereich abgedeckt war, ein
+teilweise neuer Bereich lief komplett neu (~7.200 Garmin-Requests statt ~270, Stunden statt
+Minuten). Abgebrochen (noch nichts committet) und gefixt: überlappt die angefragte Spanne die
+abgedeckte auf **einer** Seite, wird auf die unabgedeckte Seite gekürzt, mit einem Tag
+Überlappung (der Randtag kann beim letzten Sync unvollständig gewesen sein). Spannt die
+Anfrage über beide Seiten, läuft weiterhin der volle Bereich. Neuer
+`on_windows_total`-Callback setzt `SyncJob.windows_total` beim Start jeder Kind auf die echte
+Fensterzahl — die beim Request zurückgegebene Zahl ist nur noch eine Obergrenze. 5 neue Tests
+in `tests/test_backfill_cursor.py`, Suite **307 passed**.
+
 **6. Performance-Falle in `activity_fit` gefunden, noch nicht gefixt:**
 `SqlCanonicalRepository.upsert_many()` (`src/kairos/repositories/canonical.py`) schreibt
 jeden `CanonicalRecord` einzeln (`await self._session.execute(stmt)` in einer

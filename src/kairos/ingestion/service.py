@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -142,8 +143,11 @@ class SyncService:
         throttle: Callable[[], None] | None = None,
         should_stop: Callable[[], bool] | None = None,
         on_progress: Callable[[int], None] | None = None,
+        on_windows_total: Callable[[int], None] | None = None,
     ) -> BackfillResult:
         if from_date >= to_date:
+            if on_windows_total is not None:
+                on_windows_total(0)
             return BackfillResult(windows_processed=0, completed=True, next_cursor=None)
 
         cursor, complete_from, complete_to = await self._sync_state_repo.get_backfill_state(
@@ -162,10 +166,21 @@ class SyncService:
             and complete_to >= to_date
         )
         if already_covered:
+            if on_windows_total is not None:
+                on_windows_total(0)
             return BackfillResult(windows_processed=0, completed=True, next_cursor=None)
 
-        if cursor is None:
-            cursor = to_date
+        # Trim to the uncovered side, overlapping one step: the edge day may have been partial.
+        if complete_from is not None and complete_to is not None:
+            if complete_from <= from_date < complete_to < to_date:
+                from_date = max(from_date, complete_to - step)
+            elif from_date < complete_from < to_date <= complete_to:
+                to_date = min(to_date, complete_from + step)
+
+        cursor = to_date if cursor is None else min(cursor, to_date)
+
+        if on_windows_total is not None:
+            on_windows_total(max(math.ceil((cursor - from_date) / step), 0))
 
         windows_processed = 0
         while cursor > from_date:

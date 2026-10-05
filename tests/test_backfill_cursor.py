@@ -274,3 +274,130 @@ async def test_run_backfill_extends_further_into_the_past_when_requested() -> No
     assert repo.complete_updates == [
         (datetime(2026, 8, 1, tzinfo=UTC), datetime(2026, 8, 2, tzinfo=UTC)),
     ]
+
+
+@pytest.mark.asyncio
+async def test_run_backfill_only_fetches_gap_after_covered_range() -> None:
+    # real incident: 2 years already covered up to 09-09, a default "last 720
+    # days" request on 10-05 re-walked all 720 days instead of the 26-day gap
+    repo = StubSyncStateRepo()
+    repo.complete_from = datetime(2026, 7, 1, tzinfo=UTC)
+    repo.complete_to = datetime(2026, 8, 5, tzinfo=UTC)
+    service = _service(repo)
+    connector = StubConnector()
+    totals: list[int] = []
+
+    result = await service.run_backfill(
+        connector=connector,
+        user_id=uuid4(),
+        kind="sleep",
+        from_date=datetime(2026, 7, 10, tzinfo=UTC),
+        to_date=datetime(2026, 8, 8, tzinfo=UTC),
+        step=timedelta(days=1),
+        on_windows_total=totals.append,
+    )
+
+    # re-fetches the last covered day too: it may have been partial when synced
+    assert connector.windows == [
+        Window(start=datetime(2026, 8, 7, tzinfo=UTC), end=datetime(2026, 8, 8, tzinfo=UTC)),
+        Window(start=datetime(2026, 8, 6, tzinfo=UTC), end=datetime(2026, 8, 7, tzinfo=UTC)),
+        Window(start=datetime(2026, 8, 5, tzinfo=UTC), end=datetime(2026, 8, 6, tzinfo=UTC)),
+        Window(start=datetime(2026, 8, 4, tzinfo=UTC), end=datetime(2026, 8, 5, tzinfo=UTC)),
+    ]
+    assert totals == [4]
+    assert result == BackfillResult(windows_processed=4, completed=True, next_cursor=None)
+    assert repo.complete_updates == [
+        (datetime(2026, 8, 4, tzinfo=UTC), datetime(2026, 8, 8, tzinfo=UTC)),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_run_backfill_only_fetches_gap_before_covered_range() -> None:
+    repo = StubSyncStateRepo()
+    repo.complete_from = datetime(2026, 8, 3, tzinfo=UTC)
+    repo.complete_to = datetime(2026, 8, 20, tzinfo=UTC)
+    service = _service(repo)
+    connector = StubConnector()
+    totals: list[int] = []
+
+    await service.run_backfill(
+        connector=connector,
+        user_id=uuid4(),
+        kind="sleep",
+        from_date=datetime(2026, 8, 1, tzinfo=UTC),
+        to_date=datetime(2026, 8, 10, tzinfo=UTC),
+        step=timedelta(days=1),
+        on_windows_total=totals.append,
+    )
+
+    assert connector.windows == [
+        Window(start=datetime(2026, 8, 3, tzinfo=UTC), end=datetime(2026, 8, 4, tzinfo=UTC)),
+        Window(start=datetime(2026, 8, 2, tzinfo=UTC), end=datetime(2026, 8, 3, tzinfo=UTC)),
+        Window(start=datetime(2026, 8, 1, tzinfo=UTC), end=datetime(2026, 8, 2, tzinfo=UTC)),
+    ]
+    assert totals == [3]
+
+
+@pytest.mark.asyncio
+async def test_run_backfill_walks_full_range_when_request_spans_both_sides() -> None:
+    repo = StubSyncStateRepo()
+    repo.complete_from = datetime(2026, 8, 2, tzinfo=UTC)
+    repo.complete_to = datetime(2026, 8, 3, tzinfo=UTC)
+    service = _service(repo)
+    connector = StubConnector()
+    totals: list[int] = []
+
+    await service.run_backfill(
+        connector=connector,
+        user_id=uuid4(),
+        kind="sleep",
+        from_date=datetime(2026, 8, 1, tzinfo=UTC),
+        to_date=datetime(2026, 8, 4, tzinfo=UTC),
+        step=timedelta(days=1),
+        on_windows_total=totals.append,
+    )
+
+    assert len(connector.windows) == 3
+    assert totals == [3]
+
+
+@pytest.mark.asyncio
+async def test_run_backfill_reports_remaining_windows_when_resuming_cursor() -> None:
+    repo = StubSyncStateRepo()
+    repo.cursor = datetime(2026, 8, 3, tzinfo=UTC)
+    service = _service(repo)
+    connector = StubConnector()
+    totals: list[int] = []
+
+    await service.run_backfill(
+        connector=connector,
+        user_id=uuid4(),
+        kind="sleep",
+        from_date=datetime(2026, 8, 1, tzinfo=UTC),
+        to_date=datetime(2026, 8, 4, tzinfo=UTC),
+        step=timedelta(days=1),
+        on_windows_total=totals.append,
+    )
+
+    assert len(connector.windows) == 2
+    assert totals == [2]
+
+
+@pytest.mark.asyncio
+async def test_run_backfill_reports_zero_total_when_already_covered() -> None:
+    repo = StubSyncStateRepo()
+    repo.complete_from = datetime(2026, 8, 1, tzinfo=UTC)
+    repo.complete_to = datetime(2026, 8, 4, tzinfo=UTC)
+    service = _service(repo)
+    totals: list[int] = []
+
+    await service.run_backfill(
+        connector=StubConnector(),
+        user_id=uuid4(),
+        kind="sleep",
+        from_date=datetime(2026, 8, 1, tzinfo=UTC),
+        to_date=datetime(2026, 8, 4, tzinfo=UTC),
+        on_windows_total=totals.append,
+    )
+
+    assert totals == [0]

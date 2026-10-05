@@ -186,6 +186,13 @@ def _make_on_progress(job: SyncJob) -> Callable[[int], None]:
     return _on_progress
 
 
+def _make_on_windows_total(job: SyncJob) -> Callable[[int], None]:
+    def _on_windows_total(n: int) -> None:
+        job.windows_total = n
+
+    return _on_windows_total
+
+
 async def _run_backfill_task(
     *,
     user_id: UUID,
@@ -237,6 +244,8 @@ async def _run_backfill_task(
                         # GET /api/sync/status shows real progress mid-run instead
                         # of 0 the entire time and then a jump to windows_total
                         on_progress=_make_on_progress(job),
+                        # requested range is an upper bound; already-covered days are skipped
+                        on_windows_total=_make_on_windows_total(job),
                     )
                     await session.commit()
                     job.status = "done"
