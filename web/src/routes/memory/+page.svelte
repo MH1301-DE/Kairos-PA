@@ -31,8 +31,8 @@
 
 <h1>Gedächtnis</h1>
 <p class="lede">
-	Was sich Kairos über dich merkt. Einträge, die der Agent selbst anlegt, sind mit
-	"von Kairos" markiert -- du kannst jeden Eintrag hier ansehen, bearbeiten oder löschen.
+	Was sich Kairos über dich merkt. Einträge, die der Agent selbst anlegt, sind mit "von Kairos"
+	markiert -- du kannst jeden Eintrag hier ansehen, bearbeiten oder löschen.
 </p>
 
 <div class="tile">
@@ -54,11 +54,7 @@
 		>
 			<label class="field">
 				Text
-				<textarea
-					name="content"
-					rows="2"
-					placeholder="z.B. trainiert ungern vor 7 Uhr"
-					required
+				<textarea name="content" rows="2" placeholder="z.B. trainiert ungern vor 7 Uhr" required
 				></textarea>
 			</label>
 			{#if form?.createError}
@@ -103,7 +99,7 @@
 						</form>
 					{:else}
 						<div class="memory-content">
-							<span class="badge" class:badge-ok={entry.source === 'agent'}>
+							<span class="badge">
 								{entry.source === 'agent' ? 'von Kairos' : 'von dir'}
 							</span>
 							<p>{entry.content}</p>
@@ -202,19 +198,7 @@
 		gap: var(--space-2);
 	}
 	.badge {
-		font-size: var(--text-xs);
-		padding: 0.1rem 0.5rem;
-		border-radius: 999px;
-		background: var(--color-border);
-		color: var(--color-text-muted);
 		align-self: flex-start;
-	}
-	.badge-ok {
-		background: color-mix(in srgb, var(--color-accent) 20%, transparent);
-		color: var(--color-accent);
-	}
-	.btn-small {
-		font-size: var(--text-xs);
-		padding: 0.2rem 0.5rem;
+		margin-top: 0;
 	}
 </style>

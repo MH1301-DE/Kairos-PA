@@ -6,6 +6,9 @@
 	import { pwaInfo } from 'virtual:pwa-info';
 	import type { LayoutData } from './$types';
 	import type { Snippet } from 'svelte';
+	import { page } from '$app/state';
+	import FreshnessIndicator from '$lib/components/FreshnessIndicator.svelte';
+	import { freshness } from '$lib/design/freshness';
 
 	let { data, children }: { data: LayoutData; children: Snippet } = $props();
 
@@ -20,7 +23,27 @@
 	});
 
 	let garminConnection = $derived(data.connections.find((c) => c.connector === 'garmin'));
-	let calendarConnection = $derived(data.connections.find((c) => c.connector === 'google_calendar'));
+	let calendarConnection = $derived(
+		data.connections.find((c) => c.connector === 'google_calendar')
+	);
+	let fresh = $derived(freshness(garminConnection, data.jobs ?? []));
+
+	const CONNECTION_LABELS: Record<string, string> = {
+		active: 'verbunden',
+		reauth_required: 'Anmeldung abgelaufen',
+		disabled: 'getrennt',
+		error: 'Fehler'
+	};
+
+	function connectionTone(status: string | undefined) {
+		if (status === 'reauth_required' || status === 'error') return 'badge-danger';
+		if (status === undefined || status === 'disabled') return 'badge-warning';
+		return '';
+	}
+
+	function isActive(href: string): boolean {
+		return href === '/' ? page.url.pathname === '/' : page.url.pathname.startsWith(href);
+	}
 
 	let menuOpen = $state(false);
 	let menuRoot: HTMLDivElement | undefined = $state();
@@ -57,14 +80,18 @@
 		<h3>Verbindungen</h3>
 		<div class="menu-row">
 			<span>Garmin</span>
-			<span class="badge" class:badge-ok={garminConnection?.status === 'active'}>
-				{garminConnection ? garminConnection.status : 'nicht verbunden'}
+			<span class="badge {connectionTone(garminConnection?.status)}">
+				{garminConnection
+					? (CONNECTION_LABELS[garminConnection.status] ?? garminConnection.status)
+					: 'nicht verbunden'}
 			</span>
 		</div>
 		<div class="menu-row">
 			<span>Google Kalender</span>
-			<span class="badge" class:badge-ok={calendarConnection?.status === 'active'}>
-				{calendarConnection ? calendarConnection.status : 'nicht verbunden'}
+			<span class="badge {connectionTone(calendarConnection?.status)}">
+				{calendarConnection
+					? (CONNECTION_LABELS[calendarConnection.status] ?? calendarConnection.status)
+					: 'nicht verbunden'}
 			</span>
 		</div>
 		<a
@@ -103,21 +130,28 @@
 		<a href={resolve('/')} class="wordmark">Kairos</a>
 		<div class="nav-links">
 			{#each NAV_ITEMS as item (item.href)}
-				<a href={resolve(item.href)}>{item.label}</a>
+				<a
+					href={resolve(item.href)}
+					class:active={isActive(item.href)}
+					aria-current={isActive(item.href) ? 'page' : undefined}>{item.label}</a
+				>
 			{/each}
 		</div>
+		{#if fresh}
+			<div class="freshness-slot"><FreshnessIndicator value={fresh} /></div>
+		{/if}
 		{#if data.authenticated}
 			<div class="menu-root" bind:this={menuRoot}>
 				<button
 					type="button"
-					class="btn btn-ghost menu-trigger"
+					class="btn btn-secondary menu-trigger"
 					aria-expanded={menuOpen}
 					onclick={() => (menuOpen = !menuOpen)}
 				>
 					Konto & Sync ▾
 				</button>
 				{#if menuOpen}
-					<div class="menu-panel" role="menu">
+					<div class="menu-panel overlay" role="menu">
 						{@render accountMenuContent()}
 					</div>
 				{/if}
@@ -149,7 +183,11 @@
 			</div>
 			<div class="mobile-drawer-links">
 				{#each NAV_ITEMS as item (item.href)}
-					<a href={resolve(item.href)} onclick={() => (mobileMenuOpen = false)}>{item.label}</a>
+					<a
+						href={resolve(item.href)}
+						class:active={isActive(item.href)}
+						onclick={() => (mobileMenuOpen = false)}>{item.label}</a
+					>
 				{/each}
 			</div>
 			<div class="mobile-drawer-account">
@@ -171,54 +209,51 @@
 		display: flex;
 		align-items: center;
 		gap: var(--space-6);
-		padding: var(--space-4) var(--space-6);
-		border-bottom: 1px solid var(--color-border);
+		height: var(--size-header-desktop);
+		padding: 0 var(--space-8);
 	}
 	.wordmark {
-		font-family: var(--font-display);
-		font-size: var(--text-lg);
-		font-weight: 600;
-		color: var(--color-accent);
+		font: var(--type-subtitle);
+		color: var(--text);
 		letter-spacing: -0.01em;
 	}
-	.wordmark:hover,
-	.wordmark:focus-visible {
-		text-decoration: none;
+	.wordmark:hover {
+		color: var(--text);
 	}
 	.nav-links {
 		display: flex;
-		gap: var(--space-5);
+		gap: var(--space-1);
 		flex: 1;
 	}
 	.nav-links a {
-		color: var(--color-text-muted);
-		font-size: var(--text-sm);
-		font-weight: 500;
+		color: var(--text-secondary);
+		font: var(--type-body-sm);
+		padding: var(--space-2) 14px;
+		border-radius: var(--radius-pill);
+		transition:
+			background var(--motion-fast) var(--motion-easing),
+			color var(--motion-fast) var(--motion-easing);
 	}
-	.nav-links a:hover,
-	.nav-links a:focus-visible {
-		color: var(--color-text);
-		text-decoration: none;
+	.nav-links a:hover {
+		color: var(--text);
+		background: var(--surface);
+	}
+	.nav-links a.active {
+		color: var(--accent);
+		background: var(--accent-subtle);
 	}
 	.menu-root {
 		position: relative;
-	}
-	.menu-trigger {
-		font-size: var(--text-sm);
 	}
 	.menu-panel {
 		position: absolute;
 		right: 0;
 		top: calc(100% + var(--space-2));
 		width: 20rem;
-		background: var(--color-surface);
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-md, 8px);
-		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
 		padding: var(--space-4);
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-4);
+		gap: var(--space-5);
 		z-index: 50;
 	}
 	.menu-section {
@@ -227,48 +262,43 @@
 		gap: var(--space-2);
 	}
 	.menu-section h3 {
-		font-size: var(--text-xs);
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
-		color: var(--color-text-muted);
+		font: var(--type-caption);
+		color: var(--text-muted);
 		margin: 0;
 	}
 	.menu-row {
 		display: flex;
 		align-items: center;
 		gap: var(--space-2);
-		font-size: var(--text-sm);
+		font: var(--type-body-sm);
 	}
 	.menu-row span:first-child {
 		flex: 1;
 	}
-	.badge {
-		font-size: var(--text-xs);
-		padding: 0.1rem 0.5rem;
-		border-radius: 999px;
-		background: var(--color-border);
-		color: var(--color-text-muted);
-	}
-	.badge-ok {
-		background: color-mix(in srgb, var(--color-accent) 20%, transparent);
-		color: var(--color-accent);
+	.menu-row .badge {
+		margin-top: 0;
 	}
 	.menu-link {
-		font-size: var(--text-xs);
+		font: var(--type-caption);
 	}
 	.menu-status-link {
 		align-self: flex-start;
 	}
 	.menu-action {
 		width: 100%;
-		text-align: left;
+		justify-content: flex-start;
+	}
+	/* the overlay is already surface-raised, so lift the secondary button one step */
+	.menu-panel .btn-secondary,
+	.mobile-drawer .btn-secondary {
+		background: var(--line-subtle);
 	}
 	form:has(.menu-action) {
 		display: contents;
 	}
 	main {
-		padding: var(--space-6);
-		max-width: 72rem;
+		padding: var(--space-6) var(--space-8) var(--space-16);
+		max-width: 90rem;
 		margin: 0 auto;
 	}
 
@@ -279,11 +309,11 @@
 		justify-content: center;
 		align-items: center;
 		gap: 4px;
-		width: 44px;
-		height: 44px;
-		background: transparent;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-sm);
+		width: var(--size-tap-min);
+		height: var(--size-tap-min);
+		background: var(--surface);
+		border: none;
+		border-radius: var(--radius-pill);
 		cursor: pointer;
 		padding: 0;
 	}
@@ -291,7 +321,7 @@
 		display: block;
 		width: 18px;
 		height: 2px;
-		background: var(--color-text-muted);
+		background: var(--text-secondary);
 		border-radius: 1px;
 	}
 
@@ -299,10 +329,18 @@
 		display: none;
 	}
 
+	@media (max-width: 960px) {
+		.freshness-slot {
+			display: none;
+		}
+	}
+
 	@media (max-width: 640px) {
 		nav {
 			gap: var(--space-4);
-			padding: var(--space-3) var(--space-4);
+			height: var(--size-header-mobile);
+			padding: 0 var(--space-4);
+			justify-content: space-between;
 		}
 		.nav-links,
 		.menu-root {
@@ -311,13 +349,16 @@
 		.hamburger-btn {
 			display: flex;
 		}
+		main {
+			padding: var(--space-4) var(--space-4) var(--space-12);
+		}
 		.mobile-drawer {
 			display: flex;
 			flex-direction: column;
 			position: fixed;
 			inset: 0;
 			z-index: 100;
-			background: var(--color-bg);
+			background: var(--bg);
 			padding: var(--space-4);
 			padding-top: max(var(--space-4), env(safe-area-inset-top));
 			padding-bottom: max(var(--space-4), env(safe-area-inset-bottom));
@@ -336,22 +377,26 @@
 			margin-bottom: var(--space-6);
 		}
 		.mobile-drawer-links a {
-			padding: var(--space-3) var(--space-2);
-			font-size: var(--text-lg);
-			color: var(--color-text);
-			border-radius: var(--radius-sm);
+			padding: var(--space-3) var(--space-4);
+			font: var(--type-subtitle);
+			font-weight: 400;
+			color: var(--text);
+			border-radius: var(--radius-md);
 		}
-		.mobile-drawer-links a:hover,
-		.mobile-drawer-links a:focus-visible {
-			background: var(--color-surface-raised);
-			text-decoration: none;
+		.mobile-drawer-links a:hover {
+			background: var(--surface);
+		}
+		.mobile-drawer-links a.active {
+			color: var(--accent);
+			background: var(--accent-subtle);
 		}
 		.mobile-drawer-account {
 			display: flex;
 			flex-direction: column;
-			gap: var(--space-4);
-			padding-top: var(--space-4);
-			border-top: 1px solid var(--color-border);
+			gap: var(--space-5);
+			padding: var(--space-5) var(--space-4);
+			background: var(--surface);
+			border-radius: var(--radius-lg);
 		}
 	}
 </style>

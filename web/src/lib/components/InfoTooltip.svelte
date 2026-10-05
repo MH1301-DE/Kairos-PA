@@ -51,9 +51,9 @@
 		height: 1.15rem;
 		flex-shrink: 0;
 		border-radius: 999px;
-		border: 1px solid var(--color-border);
-		background: transparent;
-		color: var(--color-text-muted);
+		border: none;
+		background: var(--surface-raised);
+		color: var(--text-muted);
 		font-family: var(--font-body);
 		font-size: 0.7rem;
 		font-weight: 600;
@@ -64,13 +64,13 @@
 		padding: 0;
 		cursor: help;
 		transition:
-			border-color 0.15s ease,
-			color 0.15s ease;
+			background var(--motion-fast) var(--motion-easing),
+			color var(--motion-fast) var(--motion-easing);
 	}
 	.info-trigger:hover,
 	.info-trigger:focus-visible {
-		border-color: var(--color-accent);
-		color: var(--color-accent);
+		background: var(--surface-hover);
+		color: var(--text);
 	}
 	.info-bubble {
 		position: absolute;
@@ -83,15 +83,14 @@
 		flex-direction: column;
 		gap: var(--space-1);
 		background: var(--color-surface-raised);
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-sm);
+		border-radius: var(--radius-md);
 		padding: var(--space-2) var(--space-3);
 		font-family: var(--font-body);
 		font-size: var(--text-xs);
 		font-weight: 400;
 		color: var(--color-text-muted);
 		line-height: 1.5;
-		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+		box-shadow: var(--shadow-overlay);
 		pointer-events: none;
 	}
 	.info-line {
@@ -99,6 +98,6 @@
 	}
 	.info-line strong {
 		color: var(--color-text);
-		font-weight: 600;
+		font-weight: 500;
 	}
 </style>

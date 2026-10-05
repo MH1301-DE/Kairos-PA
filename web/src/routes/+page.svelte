@@ -252,8 +252,12 @@
 		color: var(--color-text-muted);
 	}
 	.as-of-picker input {
-		font-size: var(--text-xs);
-		padding: 0.1rem 0.3rem;
+		font: var(--type-micro);
+		color: var(--text-secondary);
+		background: var(--surface);
+		border: none;
+		border-radius: var(--radius-sm);
+		padding: 4px 8px;
 	}
 	.tile-loading {
 		display: flex;

@@ -226,7 +226,7 @@
 	}
 	.message-user {
 		align-self: flex-end;
-		background: color-mix(in srgb, var(--color-accent) 20%, transparent);
+		background: var(--surface-raised);
 	}
 	.message-assistant {
 		align-self: flex-start;
@@ -258,8 +258,8 @@
 		flex-direction: column;
 		gap: var(--space-3);
 		padding: var(--space-3);
-		border: 1px solid var(--color-accent);
-		border-radius: var(--radius-md, 8px);
+		border: 1px solid var(--accent);
+		border-radius: 18px;
 		max-width: 80%;
 	}
 	.proposal-actions {

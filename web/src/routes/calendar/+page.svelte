@@ -97,10 +97,27 @@
 
 <div class="calendar-toolbar">
 	<div class="month-nav">
-		<a href={monthHref(shiftMonth(data.year, data.month, -1).year, shiftMonth(data.year, data.month, -1).month)} class="btn btn-ghost" aria-label="Vorheriger Monat">‹</a>
+		<a
+			href={monthHref(
+				shiftMonth(data.year, data.month, -1).year,
+				shiftMonth(data.year, data.month, -1).month
+			)}
+			class="btn btn-ghost"
+			aria-label="Vorheriger Monat">‹</a
+		>
 		<h2>{monthLabel(data.year, data.month)}</h2>
-		<a href={monthHref(shiftMonth(data.year, data.month, 1).year, shiftMonth(data.year, data.month, 1).month)} class="btn btn-ghost" aria-label="Nächster Monat">›</a>
-		<a href={monthHref(Number(today.slice(0, 4)), Number(today.slice(5, 7)))} class="btn btn-ghost today-link">Heute</a>
+		<a
+			href={monthHref(
+				shiftMonth(data.year, data.month, 1).year,
+				shiftMonth(data.year, data.month, 1).month
+			)}
+			class="btn btn-ghost"
+			aria-label="Nächster Monat">›</a
+		>
+		<a
+			href={monthHref(Number(today.slice(0, 4)), Number(today.slice(5, 7)))}
+			class="btn btn-ghost today-link">Heute</a
+		>
 	</div>
 	<form method="POST" action="?/sync" use:enhance>
 		<button type="submit" class="btn btn-ghost">Kalender synchronisieren</button>
@@ -138,12 +155,14 @@
 </div>
 
 <div class="tile day-detail">
-	<h3>{new Date(`${selectedDate}T00:00:00`).toLocaleDateString('de-DE', {
-		weekday: 'long',
-		day: '2-digit',
-		month: 'long',
-		year: 'numeric'
-	})}</h3>
+	<h3>
+		{new Date(`${selectedDate}T00:00:00`).toLocaleDateString('de-DE', {
+			weekday: 'long',
+			day: '2-digit',
+			month: 'long',
+			year: 'numeric'
+		})}
+	</h3>
 
 	{#if selectedEvents.length === 0}
 		<p class="empty">Keine Termine an diesem Tag.</p>
@@ -298,8 +317,8 @@
 		font-family: var(--font-mono);
 	}
 	.day-cell.is-today .day-number {
-		color: var(--color-accent);
-		font-weight: 700;
+		color: var(--text);
+		font-weight: 600;
 	}
 	.day-events {
 		display: flex;
@@ -310,8 +329,8 @@
 		font-size: 0.65rem;
 		padding: 1px 4px;
 		border-radius: 3px;
-		background: var(--color-accent-soft);
-		color: var(--color-accent-strong);
+		background: var(--surface-raised);
+		color: var(--text-secondary);
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;

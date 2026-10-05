@@ -1,4 +1,8 @@
 import type { MetricResult } from './types';
+import { colors } from './design/palette';
+
+// normal range = data band; green is reserved for interaction, never "good"
+const c = colors.dark;
 
 export type ChartForm = 'value' | 'bar' | 'gauge';
 
@@ -42,10 +46,10 @@ function acwrGauge(): GaugeSpec {
 		max: 2,
 		valueKey: 'ratio',
 		bands: [
-			{ from: 0, to: 0.8, color: '#94a3b8', label: 'undertraining' },
-			{ from: 0.8, to: 1.3, color: '#22c55e', label: 'sweet_spot' },
-			{ from: 1.3, to: 1.5, color: '#f59e0b', label: 'caution' },
-			{ from: 1.5, to: 2.0, color: '#ef4444', label: 'high_risk' }
+			{ from: 0, to: 0.8, color: c['data-track'], label: 'undertraining' },
+			{ from: 0.8, to: 1.3, color: c['data-band'], label: 'sweet_spot' },
+			{ from: 1.3, to: 1.5, color: c['status-attention-mark'], label: 'caution' },
+			{ from: 1.5, to: 2.0, color: c['status-deviation-mark'], label: 'high_risk' }
 		]
 	};
 }
@@ -60,9 +64,9 @@ function hrvBaselineGauge(result: MetricResult): GaugeSpec {
 		max: high + pad,
 		valueKey: 'today',
 		bands: [
-			{ from: low - pad, to: low, color: '#ef4444', label: 'low' },
-			{ from: low, to: high, color: '#22c55e', label: 'normal' },
-			{ from: high, to: high + pad, color: '#f59e0b', label: 'high' }
+			{ from: low - pad, to: low, color: c['status-deviation-mark'], label: 'low' },
+			{ from: low, to: high, color: c['data-band'], label: 'normal' },
+			{ from: high, to: high + pad, color: c['data-track'], label: 'high' }
 		]
 	};
 }

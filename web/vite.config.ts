@@ -28,8 +28,8 @@ export default defineConfig({
 				name: 'Kairos',
 				short_name: 'Kairos',
 				description: 'Persönlicher Gesundheits- und Trainingsassistent',
-				theme_color: '#0f172a',
-				background_color: '#ffffff',
+				theme_color: '#0e1512',
+				background_color: '#0e1512',
 				display: 'standalone',
 				icons: [
 					{ src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },

@@ -36,12 +36,12 @@
 					},
 					axisLine: {
 						lineStyle: {
-							width: 12,
+							width: 8,
 							color: spec.bands.map((b) => [(b.to - spec.min) / (spec.max - spec.min), b.color])
 						}
 					},
 					pointer: { show: true },
-					detail: { formatter: `{value}`, fontSize: 20 },
+					detail: { formatter: `{value}`, fontSize: 28, offsetCenter: [0, '55%'] },
 					data: [{ value: Math.round(value * 100) / 100 }]
 				}
 			]

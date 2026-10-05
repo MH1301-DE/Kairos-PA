@@ -45,26 +45,28 @@
 		gap: var(--space-1);
 	}
 	dt {
-		font-size: var(--text-xs);
-		color: var(--color-text-muted);
+		font: var(--type-caption);
+		color: var(--text-muted);
 	}
 	dd {
 		margin: 0 0 var(--space-2);
-		font-size: var(--text-xl);
-		color: var(--color-text);
+		font: var(--type-metric-md);
+		letter-spacing: -0.01em;
+		color: var(--text);
 	}
 	.scalar {
-		font-size: var(--text-3xl);
-		color: var(--color-text);
-		line-height: 1;
+		font: var(--type-metric-lg);
+		letter-spacing: -0.02em;
+		color: var(--text);
 	}
 	.unit {
-		font-family: var(--font-body);
-		font-size: var(--text-sm);
-		color: var(--color-text-muted);
+		font: var(--type-body);
+		font-size: 16px;
+		letter-spacing: 0;
+		color: var(--text-muted);
 	}
 	.trend {
-		font-size: var(--text-sm);
-		color: var(--color-text-muted);
+		font: var(--type-caption);
+		color: var(--text-muted);
 	}
 </style>

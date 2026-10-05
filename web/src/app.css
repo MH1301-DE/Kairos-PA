@@ -1,64 +1,178 @@
 /*
-	Kairos design tokens — a dark training-cockpit palette.
-	"Kairos" (καιρός): the opportune moment, not clock time. The accent
-	is a warm dawn light against a near-black instrument-panel surface —
-	the visual cue for "this is the moment to act," paired with quiet,
-	unlit surfaces for everything at rest.
+	Kairos design tokens — direction "Ruhe" (claude.ai/design: Kairos Designsystem).
+	Source of truth: src/lib/design/kairos-tokens.json; this file mirrors it as CSS.
 
-	The HR-zone / gauge band colors inside GaugeTile.svelte and
-	modules.ts are semantic (gray/green/amber/red = training-zone
-	meaning) and intentionally NOT tokenized here — they're domain data,
-	not brand color, and stay independent of a future re-theme.
+	Five rules carry everything:
+	1. Green belongs to interaction only (primary button, active tab, chips) — never "good".
+	2. Status has its own muted scale and always a shape (circle / diamond / triangle).
+	3. Every value sits next to the personal normal range.
+	4. Gaps are shown, not smoothed.
+	5. Separation through brightness and spacing, not lines.
+
+	Dark is the default; [data-theme='light'] on <html> switches to the light variant.
 */
 
 :root {
-	--color-bg: #14161c;
-	--color-surface: #1c1f28;
-	--color-surface-raised: #262a35;
-	--color-border: #333849;
-	--color-border-subtle: #262a35;
+	--bg: #0e1512;
+	--surface: #131c17;
+	--surface-raised: #18221d;
+	--surface-sunken: #0b110e;
+	--surface-hover: #1b2520;
+	--line-subtle: #1f2a24;
 
-	--color-text: #eceef3;
-	--color-text-muted: #9096ac;
-	--color-text-faint: #5b6072;
+	--text: #e6ece8;
+	--text-secondary: #a8b3ad;
+	--text-muted: #86938c;
+	--text-faint: #65726b;
 
-	--color-accent: #e8935a;
-	--color-accent-strong: #f2a876;
-	--color-accent-soft: rgb(232 147 90 / 14%);
-	--color-accent-contrast: #14161c;
+	--accent: #7fe0a6;
+	--accent-hover: #a8eec4;
+	--accent-ink: #0b1410;
+	--accent-subtle: #17271f;
+	--focus-ring: #7fe0a6;
+	--skeleton: #1a241f;
 
-	--color-danger: #ef6461;
-	--color-danger-soft: rgb(239 100 97 / 12%);
-	--color-success: #6bbf8c;
-	--color-success-soft: rgb(107 191 140 / 12%);
-	--color-warning: #e0b155;
-	--color-warning-soft: rgb(224 177 85 / 14%);
+	--status-neutral-mark: #a8b3ad;
+	--status-neutral-text: #a8b3ad;
+	--status-neutral-bg: #18221d;
+	--status-attention-mark: #cdae6e;
+	--status-attention-text: #d4b87c;
+	--status-attention-bg: #221e14;
+	--status-deviation-mark: #c99079;
+	--status-deviation-text: #d9a08a;
+	--status-deviation-bg: #251a15;
+	--status-deviation-line: #8a5a4a;
 
-	--font-display: 'Fraunces', ui-serif, Georgia, serif;
-	--font-body: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
-	--font-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', monospace;
+	--data-primary: #c9d2cd;
+	--data-secondary: #6b7a72;
+	--data-band: #34433b;
+	--data-band-area: #18231d;
+	--data-track: #1d2822;
+	--data-gap: #1e2924;
 
-	--text-xs: 0.75rem;
-	--text-sm: 0.8125rem;
-	--text-base: 0.9375rem;
-	--text-lg: 1.125rem;
-	--text-xl: 1.5rem;
-	--text-2xl: 2rem;
-	--text-3xl: 2.75rem;
+	--shadow-overlay: 0 16px 40px rgb(0 0 0 / 45%), 0 0 0 1px var(--line-subtle);
+	--shadow-panel: -1px 0 0 var(--line-subtle);
+	--shadow-focus: 0 0 0 2px var(--bg), 0 0 0 4px var(--focus-ring);
 
-	--space-1: 0.25rem;
-	--space-2: 0.5rem;
-	--space-3: 0.75rem;
-	--space-4: 1rem;
-	--space-5: 1.5rem;
-	--space-6: 2rem;
-	--space-8: 3rem;
+	--font-sans: 'Geist', system-ui, -apple-system, 'Segoe UI', sans-serif;
+	--font-mono: 'Geist Mono', ui-monospace, 'SFMono-Regular', monospace;
 
-	--radius-sm: 0.375rem;
-	--radius-md: 0.625rem;
-	--radius-lg: 1rem;
+	/* type scale: size / weight / line-height / tracking per role */
+	--type-metric-xl: 300 72px / 1 var(--font-sans);
+	--type-metric-lg: 300 44px / 1 var(--font-sans);
+	--type-metric-md: 400 28px / 1.1 var(--font-sans);
+	--type-headline: 300 34px / 1.32 var(--font-sans);
+	--type-title: 400 22px / 1.3 var(--font-sans);
+	--type-subtitle: 500 17px / 1.35 var(--font-sans);
+	--type-body: 400 15px / 1.55 var(--font-sans);
+	--type-body-sm: 400 14px / 1.5 var(--font-sans);
+	--type-caption: 400 13px / 1.45 var(--font-sans);
+	--type-micro: 400 12px / 1.3 var(--font-sans);
+
+	--space-0: 0;
+	--space-1: 4px;
+	--space-2: 8px;
+	--space-3: 12px;
+	--space-4: 16px;
+	--space-5: 20px;
+	--space-6: 24px;
+	--space-7: 28px;
+	--space-8: 32px;
+	--space-10: 40px;
+	--space-12: 48px;
+	--space-16: 64px;
+
+	--radius-xs: 4px;
+	--radius-sm: 8px;
+	--radius-md: 12px;
+	--radius-lg: 20px;
+	--radius-pill: 999px;
+
+	--size-tap-min: 44px;
+	--size-header-desktop: 72px;
+	--size-header-mobile: 56px;
+	--size-tabbar: 64px;
+	--size-agent-panel: 440px;
+
+	--motion-fast: 120ms;
+	--motion-base: 200ms;
+	--motion-panel: 240ms;
+	--motion-easing: cubic-bezier(0.2, 0, 0, 1);
+
+	/* legacy aliases — existing pages still reference these names */
+	--color-bg: var(--bg);
+	--color-surface: var(--surface);
+	--color-surface-raised: var(--surface-raised);
+	--color-border: var(--line-subtle);
+	--color-border-subtle: var(--surface-raised);
+	--color-text: var(--text);
+	--color-text-muted: var(--text-muted);
+	--color-text-faint: var(--text-faint);
+	--color-accent: var(--accent);
+	--color-accent-strong: var(--accent-hover);
+	--color-accent-soft: var(--accent-subtle);
+	--color-accent-contrast: var(--accent-ink);
+	--color-danger: var(--status-deviation-text);
+	--color-danger-soft: var(--status-deviation-bg);
+	--color-warning: var(--status-attention-text);
+	--color-warning-soft: var(--status-attention-bg);
+	--color-success: var(--status-neutral-text);
+	--color-success-soft: var(--status-neutral-bg);
+	--font-body: var(--font-sans);
+	--font-display: var(--font-sans);
+	--text-xs: 12px;
+	--text-sm: 13px;
+	--text-base: 15px;
+	--text-lg: 17px;
+	--text-xl: 22px;
+	--text-2xl: 34px;
+	--text-3xl: 44px;
 
 	color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+	--bg: #f3f5f3;
+	--surface: #ffffff;
+	--surface-raised: #ffffff;
+	--surface-sunken: #e9edea;
+	--surface-hover: #eef2ef;
+	--line-subtle: #e1e6e2;
+
+	--text: #0f1813;
+	--text-secondary: #3c4842;
+	--text-muted: #5a6660;
+	--text-faint: #7f8a84;
+
+	--accent: #1f8a57;
+	--accent-hover: #187047;
+	--accent-ink: #ffffff;
+	--accent-subtle: #e3f2e9;
+	--focus-ring: #1f8a57;
+	--skeleton: #e6ebe7;
+
+	--status-neutral-mark: #5a6660;
+	--status-neutral-text: #3c4842;
+	--status-neutral-bg: #eef2ef;
+	--status-attention-mark: #b98a2e;
+	--status-attention-text: #7d5a12;
+	--status-attention-bg: #f7efdc;
+	--status-deviation-mark: #b8644a;
+	--status-deviation-text: #8e4430;
+	--status-deviation-bg: #f6e6df;
+	--status-deviation-line: #b8644a;
+
+	--data-primary: #2f3a34;
+	--data-secondary: #9aa59f;
+	--data-band: #cfd9d2;
+	--data-band-area: #e8efea;
+	--data-track: #e4e9e5;
+	--data-gap: #edf0ee;
+
+	--shadow-overlay: 0 12px 32px rgb(15 24 19 / 12%), 0 0 0 1px var(--line-subtle);
+	--shadow-focus: 0 0 0 2px #ffffff, 0 0 0 4px var(--focus-ring);
+
+	color-scheme: light;
 }
 
 * {
@@ -72,35 +186,75 @@ body {
 }
 
 body {
-	background: var(--color-bg);
-	color: var(--color-text);
-	font-family: var(--font-body);
-	font-size: var(--text-base);
-	line-height: 1.55;
+	background: var(--bg);
+	color: var(--text);
+	font: var(--type-body);
+	font-variant-numeric: tabular-nums;
 	-webkit-font-smoothing: antialiased;
 }
 
 h1,
 h2,
 h3 {
-	font-family: var(--font-display);
-	font-weight: 600;
-	letter-spacing: -0.01em;
+	font-family: var(--font-sans);
 	margin: 0 0 var(--space-4);
-	color: var(--color-text);
+	color: var(--text);
 }
 
 h1 {
-	font-size: var(--text-2xl);
-	font-optical-sizing: auto;
+	font: var(--type-title);
+}
+
+h2 {
+	font: var(--type-subtitle);
 }
 
 h3 {
-	font-size: var(--text-lg);
+	font: var(--type-body-sm);
+	color: var(--text-secondary);
 	margin-bottom: var(--space-2);
 }
 
-/* metric tile title row -- title + the "?" info-tooltip trigger sit inline */
+/* type-role utility classes */
+.t-metric-xl {
+	font: var(--type-metric-xl);
+	letter-spacing: -0.03em;
+}
+.t-metric-lg {
+	font: var(--type-metric-lg);
+	letter-spacing: -0.02em;
+}
+.t-metric-md {
+	font: var(--type-metric-md);
+	letter-spacing: -0.01em;
+}
+.t-headline {
+	font: var(--type-headline);
+	letter-spacing: -0.01em;
+}
+.t-title {
+	font: var(--type-title);
+}
+.t-subtitle {
+	font: var(--type-subtitle);
+}
+.t-body-sm {
+	font: var(--type-body-sm);
+}
+.t-caption {
+	font: var(--type-caption);
+	color: var(--text-muted);
+}
+.t-micro {
+	font: var(--type-micro);
+	color: var(--text-faint);
+}
+.t-unit {
+	font-size: 16px;
+	line-height: 1;
+	color: var(--text-muted);
+}
+
 .tile-header {
 	display: flex;
 	align-items: center;
@@ -116,58 +270,46 @@ p {
 }
 
 a {
-	color: var(--color-accent-strong);
+	color: var(--accent);
 	text-decoration: none;
+	transition: color var(--motion-fast) var(--motion-easing);
 }
 
-a:hover,
-a:focus-visible {
-	text-decoration: underline;
-	text-underline-offset: 0.15em;
+a:hover {
+	color: var(--accent-hover);
 }
 
 :focus-visible {
-	outline: 2px solid var(--color-accent);
-	outline-offset: 2px;
+	outline: none;
+	box-shadow: var(--shadow-focus);
 	border-radius: var(--radius-sm);
 }
 
-/* numeric/data readouts get the mono face — the instrument-panel digit rhythm */
 .figure {
-	font-family: var(--font-mono);
 	font-variant-numeric: tabular-nums;
 }
 
-/* shared card chrome for every metric tile + error/empty states -- flex column +
-   min-height so every tile in the grid reads as the same size regardless of
-   how little content it has (a bare "Nicht genug Daten" vs. a 220px chart) */
+/* tiles: brightness separates them from the page, no border */
 .tile {
-	background: var(--color-surface);
-	border: 1px solid var(--color-border);
+	background: var(--surface);
 	border-radius: var(--radius-lg);
-	padding: var(--space-4) var(--space-5);
-	transition: border-color 0.15s ease;
+	padding: var(--space-6);
 	display: flex;
 	flex-direction: column;
 	flex: 1;
 	min-height: 320px;
 }
 
-.tile:hover {
-	border-color: var(--color-border-subtle);
-}
-
 .tile .empty {
-	color: var(--color-text-faint);
-	font-family: var(--font-mono);
-	font-size: var(--text-sm);
+	color: var(--text-faint);
+	font: var(--type-caption);
 }
 
+/* error keeps the tile's shape; only the text carries the deviation tone */
 .tile-error {
-	background: var(--color-surface);
-	border: 1px solid var(--color-danger-soft);
+	background: var(--surface);
 	border-radius: var(--radius-lg);
-	padding: var(--space-4) var(--space-5);
+	padding: var(--space-6);
 	display: flex;
 	flex-direction: column;
 	flex: 1;
@@ -175,168 +317,284 @@ a:focus-visible {
 }
 
 .tile-error p {
-	color: var(--color-danger);
+	color: var(--status-deviation-text);
 	margin: 0;
-	font-size: var(--text-sm);
+	font: var(--type-caption);
 }
 
-/* badges */
-.badge {
+/* status pills: neutral / attention / deviation — always with a shape mark */
+.badge,
+.status-pill {
 	display: inline-flex;
 	align-items: center;
-	font-size: var(--text-xs);
-	font-family: var(--font-mono);
-	padding: 0.15rem var(--space-2);
-	border-radius: 999px;
+	gap: var(--space-2);
+	font: var(--type-caption);
+	color: var(--status-neutral-text);
+	background: var(--status-neutral-bg);
+	padding: 4px 10px;
+	border-radius: var(--radius-pill);
 	margin-top: var(--space-2);
+	align-self: flex-start;
 }
 
-.badge-warning {
-	background: var(--color-warning-soft);
-	color: var(--color-warning);
+.badge::before,
+.status-pill::before {
+	content: '';
+	flex: none;
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	box-shadow: inset 0 0 0 1.5px var(--status-neutral-mark);
 }
 
-.badge-danger {
-	background: var(--color-danger-soft);
-	color: var(--color-danger);
+.badge-warning,
+.status-pill.attention {
+	color: var(--status-attention-text);
+	background: var(--status-attention-bg);
+}
+
+.badge-warning::before,
+.status-pill.attention::before {
+	border-radius: 0;
+	box-shadow: none;
+	background: var(--status-attention-mark);
+	transform: rotate(45deg) scale(0.9);
+}
+
+.badge-danger,
+.status-pill.deviation {
+	color: var(--status-deviation-text);
+	background: var(--status-deviation-bg);
+}
+
+.badge-danger::before,
+.status-pill.deviation::before {
+	width: 0;
+	height: 0;
+	border-radius: 0;
+	box-shadow: none;
+	border-left: 4.5px solid transparent;
+	border-right: 4.5px solid transparent;
+	border-bottom: 8px solid var(--status-deviation-mark);
 }
 
 /* forms */
 .field {
 	display: flex;
 	flex-direction: column;
-	gap: var(--space-2);
-	font-size: var(--text-sm);
-	color: var(--color-text-muted);
+	gap: 6px;
+	font: var(--type-caption);
+	color: var(--text-muted);
 }
 
-.field input {
-	font: inherit;
-	/* fixed 16px, not a token: below this, iOS Safari auto-zooms on focus --
-	   a platform threshold, not a design choice, so it must never track
-	   --text-base if that token ever changes to something smaller again */
+.field input,
+.field select,
+.field textarea,
+.input {
+	font: var(--type-body);
+	/* 16px floor, not a token: below it iOS Safari auto-zooms on focus */
 	font-size: 16px;
-	color: var(--color-text);
-	background: var(--color-surface);
-	border: 1px solid var(--color-border);
-	border-radius: var(--radius-sm);
-	padding: var(--space-3);
+	color: var(--text);
+	background: var(--surface-sunken);
+	border: none;
+	border-radius: var(--radius-md);
+	min-height: var(--size-tap-min);
+	padding: 0 14px;
 }
 
-.field input:focus-visible {
-	border-color: var(--color-accent);
+.field textarea {
+	padding: var(--space-3) 14px;
 }
 
-.field input::placeholder {
-	color: var(--color-text-faint);
+.field input:focus-visible,
+.field select:focus-visible,
+.field textarea:focus-visible,
+.input:focus-visible {
+	box-shadow: var(--shadow-focus);
+	border-radius: var(--radius-md);
 }
 
-.field input:disabled {
-	opacity: 0.6;
+.field input[aria-invalid='true'],
+.input[aria-invalid='true'] {
+	box-shadow: inset 0 0 0 1px var(--status-deviation-line);
+}
+
+.field-error {
+	font: var(--type-caption);
+	color: var(--status-deviation-text);
+}
+
+.field input::placeholder,
+.input::placeholder {
+	color: var(--text-faint);
+}
+
+.field input:disabled,
+.input:disabled {
+	color: var(--text-faint);
 	cursor: not-allowed;
 }
 
-/* buttons */
+/* buttons: all pills; primary is the only filled accent */
 .btn {
-	font: inherit;
-	font-size: var(--text-sm);
-	font-weight: 600;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: var(--space-2);
+	font: var(--type-body-sm);
 	cursor: pointer;
 	border: none;
-	border-radius: var(--radius-sm);
-	padding: var(--space-3) var(--space-4);
+	border-radius: var(--radius-pill);
+	padding: 10px 18px;
+	min-height: 40px;
 	transition:
-		background 0.15s ease,
-		transform 0.05s ease;
+		background var(--motion-fast) var(--motion-easing),
+		color var(--motion-fast) var(--motion-easing);
 }
 
-.btn:active {
-	transform: translateY(1px);
+.btn:focus-visible {
+	border-radius: var(--radius-pill);
 }
 
-.btn:disabled {
-	opacity: 0.5;
+.btn:disabled,
+.btn[aria-disabled='true'] {
+	background: var(--data-track);
+	color: var(--text-faint);
 	cursor: not-allowed;
 }
 
 .btn-primary {
-	background: var(--color-accent);
-	color: var(--color-accent-contrast);
+	background: var(--accent);
+	color: var(--accent-ink);
+	font-weight: 500;
 }
 
-.btn-primary:hover {
-	background: var(--color-accent-strong);
+.btn-primary:hover:not(:disabled) {
+	background: var(--accent-hover);
+	color: var(--accent-ink);
+}
+
+.btn-secondary {
+	background: var(--surface-raised);
+	color: var(--text);
+}
+
+.btn-secondary:hover:not(:disabled) {
+	background: var(--line-subtle);
+	color: var(--text);
 }
 
 .btn-ghost {
 	background: transparent;
-	color: var(--color-text-muted);
-	border: 1px solid var(--color-border);
+	color: var(--text-secondary);
+	padding-inline: 12px;
 }
 
-.btn-ghost:hover {
-	color: var(--color-text);
-	border-color: var(--color-text-muted);
+.btn-ghost:hover:not(:disabled) {
+	color: var(--text);
+}
+
+.btn-ghost:disabled {
+	background: transparent;
+}
+
+.btn-small {
+	font: var(--type-caption);
+	padding: 6px 12px;
+	min-height: 32px;
 }
 
 /* status text */
 .status-error {
-	color: var(--color-danger);
-	font-size: var(--text-sm);
+	color: var(--status-deviation-text);
+	font: var(--type-caption);
 }
 
 .status-success {
-	color: var(--color-success);
-	font-size: var(--text-sm);
+	color: var(--status-neutral-text);
+	font: var(--type-caption);
 }
 
-/* data table (sync-status) */
+/* chips: evidence (inline in agent prose) and context (in the composer) */
+.chip-evidence {
+	text-decoration: underline dotted var(--accent);
+	text-decoration-thickness: 1.5px;
+	text-underline-offset: 5px;
+	border-radius: var(--radius-xs);
+	padding: 0 2px;
+	cursor: pointer;
+}
+
+.chip-evidence:hover,
+.chip-evidence[aria-current='true'] {
+	background: var(--accent-subtle);
+	color: var(--accent-hover);
+}
+
+.chip-context {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-2);
+	font: var(--type-micro);
+	color: var(--accent-hover);
+	background: var(--accent-subtle);
+	padding: 5px 10px;
+	border-radius: var(--radius-pill);
+}
+
+.chip-context::before {
+	content: '';
+	width: 6px;
+	height: 6px;
+	border-radius: 1px;
+	background: var(--accent);
+}
+
+/* floating layers are the only elements with a shadow */
+.overlay {
+	background: var(--surface-raised);
+	border-radius: var(--radius-md);
+	box-shadow: var(--shadow-overlay);
+}
+
+/* data table — rows separated by brightness, header in caption tone */
 table {
 	width: 100%;
 	border-collapse: collapse;
-	font-size: var(--text-sm);
+	font: var(--type-body-sm);
 }
 
 th {
 	text-align: left;
-	color: var(--color-text-muted);
-	font-weight: 500;
-	font-size: var(--text-xs);
-	text-transform: uppercase;
-	letter-spacing: 0.04em;
+	color: var(--text-muted);
+	font: var(--type-caption);
 	padding: var(--space-2) var(--space-3);
-	border-bottom: 1px solid var(--color-border);
+	box-shadow: inset 0 -1px 0 var(--surface-raised);
 }
 
 td {
 	padding: var(--space-3);
-	border-bottom: 1px solid var(--color-border-subtle);
-	font-family: var(--font-mono);
+	box-shadow: inset 0 -1px 0 var(--surface-raised);
 }
 
 tbody tr:hover {
-	background: var(--color-surface-raised);
+	background: var(--surface-hover);
 }
 
-/* pulsing placeholder for a loading tile -- used in place of plain "Lädt …" text */
+/* loading placeholder: calm pulse, not a shimmer sweep */
 .skeleton {
-	background: linear-gradient(
-		90deg,
-		var(--color-surface-raised) 25%,
-		var(--color-border) 50%,
-		var(--color-surface-raised) 75%
-	);
-	background-size: 200% 100%;
-	animation: skeleton-shimmer 1.5s ease-in-out infinite;
+	background: var(--skeleton);
 	border-radius: var(--radius-sm);
+	animation: skeleton-pulse 1.6s ease-in-out infinite;
 }
 
-@keyframes skeleton-shimmer {
-	0% {
-		background-position: 200% 0;
-	}
+@keyframes skeleton-pulse {
+	0%,
 	100% {
-		background-position: -200% 0;
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.55;
 	}
 }
 

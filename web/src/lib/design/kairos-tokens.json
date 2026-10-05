@@ -1,0 +1,210 @@
+{
+	"$description": "Kairos Design-Tokens. Richtung 1b 'Ruhe'. Semantische Namen; dark = Default, light = zweite Variante.",
+	"font": {
+		"family": {
+			"sans": "'Geist', system-ui, sans-serif",
+			"mono": "'Geist Mono', ui-monospace, monospace"
+		},
+		"numeric": "tabular-nums",
+		"scale": {
+			"metric-xl": {
+				"size": 72,
+				"weight": 300,
+				"line": 1.0,
+				"tracking": "-0.03em",
+				"use": "Hauptkennzahl in Kacheln"
+			},
+			"metric-lg": {
+				"size": 44,
+				"weight": 300,
+				"line": 1.0,
+				"tracking": "-0.02em",
+				"use": "Sekundäre Kennzahl, mobile Hauptkennzahl"
+			},
+			"metric-md": {
+				"size": 28,
+				"weight": 400,
+				"line": 1.1,
+				"tracking": "-0.01em",
+				"use": "Kennzahl in Tabellen/Chat"
+			},
+			"headline": {
+				"size": 34,
+				"weight": 300,
+				"line": 1.32,
+				"tracking": "-0.01em",
+				"use": "Tageskopf-Zusammenfassung (Agent)"
+			},
+			"title": { "size": 22, "weight": 400, "line": 1.3, "use": "Seitentitel" },
+			"subtitle": { "size": 17, "weight": 500, "line": 1.35, "use": "Abschnitte, Kartentitel" },
+			"body": { "size": 15, "weight": 400, "line": 1.55, "use": "Fließtext, Chat" },
+			"body-sm": { "size": 14, "weight": 400, "line": 1.5, "use": "Kachel-Titel, Kontextzeile" },
+			"caption": { "size": 13, "weight": 400, "line": 1.45, "use": "Abdeckung, Fußzeilen" },
+			"micro": {
+				"size": 12,
+				"weight": 400,
+				"line": 1.3,
+				"use": "Achsenbeschriftung, Einheiten klein"
+			},
+			"unit": {
+				"size": 16,
+				"weight": 400,
+				"line": 1.0,
+				"color": "text-muted",
+				"use": "Einheit neben metric-xl"
+			}
+		}
+	},
+	"space": {
+		"0": 0,
+		"1": 4,
+		"2": 8,
+		"3": 12,
+		"4": 16,
+		"5": 20,
+		"6": 24,
+		"7": 28,
+		"8": 32,
+		"10": 40,
+		"12": 48,
+		"16": 64
+	},
+	"radius": { "xs": 4, "sm": 8, "md": 12, "lg": 20, "pill": 999 },
+	"size": {
+		"tap-min": 44,
+		"header-desktop": 72,
+		"header-mobile": 56,
+		"tabbar": 64,
+		"agent-panel": 440,
+		"nav-history": 260
+	},
+	"breakpoint": { "mobile": 0, "tablet": 768, "desktop": 1200, "wide": 1440 },
+	"motion": {
+		"fast": "120ms",
+		"base": "200ms",
+		"panel": "240ms",
+		"easing": "cubic-bezier(.2,.0,.0,1)"
+	},
+	"color": {
+		"dark": {
+			"bg": "#0E1512",
+			"surface": "#131C17",
+			"surface-raised": "#18221D",
+			"surface-sunken": "#0B110E",
+			"surface-hover": "#1B2520",
+			"line-subtle": "#1F2A24",
+			"text": "#E6ECE8",
+			"text-secondary": "#A8B3AD",
+			"text-muted": "#86938C",
+			"text-faint": "#65726B",
+			"accent": "#7FE0A6",
+			"accent-hover": "#A8EEC4",
+			"accent-ink": "#0B1410",
+			"accent-subtle": "#17271F",
+			"focus-ring": "#7FE0A6",
+			"skeleton": "#1A241F",
+			"status-neutral-mark": "#A8B3AD",
+			"status-neutral-text": "#A8B3AD",
+			"status-attention-mark": "#CDAE6E",
+			"status-attention-text": "#D4B87C",
+			"status-attention-bg": "#221E14",
+			"status-deviation-mark": "#C99079",
+			"status-deviation-text": "#D9A08A",
+			"status-deviation-bg": "#251A15",
+			"data-primary": "#C9D2CD",
+			"data-secondary": "#6B7A72",
+			"data-band": "#34433B",
+			"data-band-area": "#18231D",
+			"data-track": "#1D2822",
+			"data-gap": "#1E2924"
+		},
+		"light": {
+			"bg": "#F3F5F3",
+			"surface": "#FFFFFF",
+			"surface-raised": "#FFFFFF",
+			"surface-sunken": "#E9EDEA",
+			"surface-hover": "#EEF2EF",
+			"line-subtle": "#E1E6E2",
+			"text": "#0F1813",
+			"text-secondary": "#3C4842",
+			"text-muted": "#5A6660",
+			"text-faint": "#7F8A84",
+			"accent": "#1F8A57",
+			"accent-hover": "#187047",
+			"accent-ink": "#FFFFFF",
+			"accent-subtle": "#E3F2E9",
+			"focus-ring": "#1F8A57",
+			"skeleton": "#E6EBE7",
+			"status-neutral-mark": "#5A6660",
+			"status-neutral-text": "#3C4842",
+			"status-attention-mark": "#B98A2E",
+			"status-attention-text": "#7D5A12",
+			"status-attention-bg": "#F7EFDC",
+			"status-deviation-mark": "#B8644A",
+			"status-deviation-text": "#8E4430",
+			"status-deviation-bg": "#F6E6DF",
+			"data-primary": "#2F3A34",
+			"data-secondary": "#9AA59F",
+			"data-band": "#CFD9D2",
+			"data-band-area": "#E8EFEA",
+			"data-track": "#E4E9E5",
+			"data-gap": "#EDF0EE"
+		}
+	},
+	"shadow": {
+		"dark": {
+			"overlay": "0 16px 40px rgba(0,0,0,.45), 0 0 0 1px #1F2A24",
+			"panel": "-1px 0 0 #1F2A24",
+			"focus": "0 0 0 2px #0E1512, 0 0 0 4px #7FE0A6"
+		},
+		"light": {
+			"overlay": "0 12px 32px rgba(15,24,19,.12), 0 0 0 1px #E1E6E2",
+			"panel": "-1px 0 0 #E1E6E2",
+			"focus": "0 0 0 2px #FFFFFF, 0 0 0 4px #1F8A57"
+		}
+	},
+	"chart": {
+		"hr-zones": {
+			"$note": "Geordnet ruhig → intensiv; Helligkeit steigt monoton, Farbton wandert blau → olive → ocker → koralle. In Graustufen und bei Deuteranopie unterscheidbar.",
+			"dark": {
+				"z1": "#4F6782",
+				"z2": "#6F94A3",
+				"z3": "#A3AE88",
+				"z4": "#D6A766",
+				"z5": "#EC9A85"
+			},
+			"light": {
+				"z1": "#3E5675",
+				"z2": "#5A8796",
+				"z3": "#8C9867",
+				"z4": "#C08A3C",
+				"z5": "#C9674F"
+			}
+		},
+		"sleep": {
+			"$note": "Nominal, aber nach Helligkeit gestaffelt (Tief dunkel → Wach hell), damit die Phasen auch ohne Farbsehen trennbar sind.",
+			"dark": { "deep": "#4A5E8C", "rem": "#9C7FB8", "light": "#9FB7CC", "awake": "#E0C990" },
+			"light": { "deep": "#34497A", "rem": "#7D5F9E", "light": "#86A3BE", "awake": "#C9AB5E" }
+		},
+		"heat": {
+			"dark": {
+				"0": "#18211C",
+				"1": "#2A3530",
+				"2": "#45524B",
+				"3": "#6C7A73",
+				"4": "#A2AEA8",
+				"none": "transparent",
+				"none-outline": "#34433B"
+			},
+			"light": {
+				"0": "#EDF0EE",
+				"1": "#D3DAD5",
+				"2": "#AEB8B2",
+				"3": "#7F8B85",
+				"4": "#46524C",
+				"none": "transparent",
+				"none-outline": "#CFD9D2"
+			}
+		}
+	}
+}
