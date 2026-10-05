@@ -893,8 +893,8 @@ dem Cloudflare-1015-Vorfall bleibt). `uv.lock` ist seit Phase 0 veraltet (enthä
   zweite Login einen **neuen** E-Mail/SMS-Code auslösen und den eingegebenen entwerten.
   Falls das live auftritt: Login-Session (`_mfa_session`) zwischen den beiden Requests
   aufbewahren statt neu einloggen.
-- Testlauf dieser Session: 37 Garmin-Tests grün, `mypy --strict src` sauber; die volle
-  Suite lief nur ohne Docker (173 passed / 129 skipped).
+- Testlauf dieser Session: volle Suite mit Docker **302 passed, 0 skipped**, `mypy --strict
+  src` sauber.
 
 **6. Performance-Falle in `activity_fit` gefunden, noch nicht gefixt:**
 `SqlCanonicalRepository.upsert_many()` (`src/kairos/repositories/canonical.py`) schreibt
