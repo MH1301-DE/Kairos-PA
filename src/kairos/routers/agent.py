@@ -138,8 +138,10 @@ async def send_message(
 async def _load_pending_proposal(
     repo: ConversationRepository, *, conversation_id: UUID, user_id: UUID, tool_call_id: str
 ) -> dict[str, Any]:
+    # row lock serializes concurrent confirms so has_tool_result below can't race
     call = await repo.find_tool_call(
-        conversation_id=conversation_id, user_id=user_id, tool_call_id=tool_call_id
+        conversation_id=conversation_id, user_id=user_id, tool_call_id=tool_call_id,
+        for_update=True,
     )
     if call is None:
         raise HTTPException(status_code=404, detail="proposal_not_found")

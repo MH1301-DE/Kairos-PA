@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from kairos.db.rls import install_rls_listener
 from kairos.repositories.conversation import ConversationRepository
@@ -138,3 +139,45 @@ async def test_find_tool_call_and_has_tool_result(session: AsyncSession) -> None
     assert await repo.has_tool_result(
         conversation_id=conversation_id, user_id=user_id, tool_call_id="call_p"
     )
+
+
+@pytest.mark.asyncio
+async def test_find_tool_call_for_update_serializes_concurrent_resolvers(
+    session: AsyncSession,
+) -> None:
+    user_id = uuid4()
+    await _insert_user(session, user_id)
+    await session.commit()
+    repo_a = ConversationRepository(session=session)
+    conversation = await repo_a.create(user_id=user_id, title="t")
+    conversation_id = conversation.id
+    await repo_a.append_message(
+        conversation_id=conversation_id, user_id=user_id, role="assistant", content=None,
+        tool_calls=[{"id": "call_p", "name": "propose_calendar_event", "arguments": "{}"}],
+    )
+    await session.commit()
+    assert session.bind is not None
+    factory = async_sessionmaker(session.bind, expire_on_commit=False)
+
+    await repo_a.find_tool_call(
+        conversation_id=conversation_id, user_id=user_id, tool_call_id="call_p", for_update=True
+    )
+
+    async def second_resolver() -> bool:
+        async with factory() as other:
+            repo_b = ConversationRepository(session=other)
+            await repo_b.find_tool_call(
+                conversation_id=conversation_id, user_id=user_id,
+                tool_call_id="call_p", for_update=True,
+            )
+            return await repo_b.has_tool_result(
+                conversation_id=conversation_id, user_id=user_id, tool_call_id="call_p"
+            )
+
+    task = asyncio.create_task(second_resolver())
+    await asyncio.sleep(0.5)
+    assert not task.done()  # blocked on A's row lock
+    await repo_a.append_message(conversation_id=conversation_id, user_id=user_id, role="tool",
+                                content="{}", tool_call_id="call_p")
+    await session.commit()
+    assert await asyncio.wait_for(task, timeout=10) is True

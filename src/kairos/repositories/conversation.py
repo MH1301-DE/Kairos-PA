@@ -82,16 +82,22 @@ class ConversationRepository:
         return list(reversed(result.scalars().all()))
 
     async def find_tool_call(
-        self, *, conversation_id: UUID, user_id: UUID, tool_call_id: str
+        self,
+        *,
+        conversation_id: UUID,
+        user_id: UUID,
+        tool_call_id: str,
+        for_update: bool = False,
     ) -> dict[str, Any] | None:
-        result = await self._session.execute(
-            select(ConversationMessage).where(
-                ConversationMessage.conversation_id == conversation_id,
-                ConversationMessage.user_id == user_id,
-                ConversationMessage.role == "assistant",
-                ConversationMessage.tool_calls.contains([{"id": tool_call_id}]),
-            )
+        stmt = select(ConversationMessage).where(
+            ConversationMessage.conversation_id == conversation_id,
+            ConversationMessage.user_id == user_id,
+            ConversationMessage.role == "assistant",
+            ConversationMessage.tool_calls.contains([{"id": tool_call_id}]),
         )
+        if for_update:
+            stmt = stmt.with_for_update()
+        result = await self._session.execute(stmt)
         message = result.scalars().first()
         if message is None or not message.tool_calls:
             return None

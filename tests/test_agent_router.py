@@ -250,6 +250,18 @@ async def test_reject_records_rejection_and_unknown_proposal_is_404(
     resp = await authed_client.post(
         f"/api/agent/conversations/{conversation_id}/proposals/call_p/reject")
     assert resp.status_code == 200
+    assert resp.json() == {"rejected": True}
+    tool_rows = [
+        m for m in await ConversationRepository(session=db_session).list_messages(
+            conversation_id=conversation_id, user_id=test_user_id
+        ) if m.role == "tool"
+    ]
+    assert [m.tool_call_id for m in tool_rows] == ["call_p"]
+    assert "abgelehnt" in (tool_rows[0].content or "")
+    again = await authed_client.post(
+        f"/api/agent/conversations/{conversation_id}/proposals/call_p/confirm")
+    assert again.status_code == 409
+    assert again.json()["detail"] == "proposal_already_resolved"
     missing = await authed_client.post(
         f"/api/agent/conversations/{conversation_id}/proposals/nope/confirm")
     assert missing.status_code == 404
