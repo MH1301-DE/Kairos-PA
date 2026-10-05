@@ -59,13 +59,9 @@ _MIN_INLINE_TOKEN_LEN = 513
 # repeated manual login attempts against a real account triggered a Cloudflare
 # Error 1015 temporary IP ban on sso.garmin.com, and 401s were returned to the
 # user even though the credentials were never actually wrong).
-# curl_cffi is a hard dependency of this project (pyproject.toml), so
-# mobile+cffi — the strategy python-garminconnect documents as its primary,
-# TLS-fingerprint-rotating strategy — is always available; skip the other 4 so
-# a single login click makes exactly one attempt instead of a trial-and-error
-# cascade against Garmin.
+# Only widget+cffi: Garmin 429s the mobile clientId from every network since 2026-10.
 _SKIPPED_LOGIN_STRATEGIES = frozenset(
-    {"mobile+requests", "widget+cffi", "portal+cffi", "portal+requests"}
+    {"mobile+cffi", "mobile+requests", "portal+cffi", "portal+requests"}
 )
 
 

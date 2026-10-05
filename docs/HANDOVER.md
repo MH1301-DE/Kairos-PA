@@ -38,7 +38,7 @@ Der Agent soll Trainingslast erkennen, Erholung bewerten und Termine vorschlagen
 | DB | PostgreSQL + TimescaleDB + pgvector |
 | Cache/Sessions | Redis |
 | Auth | Google OIDC (kein eigenes Passwort-Management) |
-| Garmin-API | garminconnect 0.3.8, curl_cffi 0.16.0 (TLS-Fingerprint-Impersonation) |
+| Garmin-API | garminconnect 0.3.17, curl_cffi 0.16.0 (TLS-Fingerprint-Impersonation), Login nur über `widget+cffi` (siehe "Garmin-Login auf Widget-Flow umgestellt") |
 | FIT-Decode | garmin-fit-sdk 21.212.0 |
 | Verschlüsselung | AES-256-GCM (cryptography >=42), Envelope-Encryption |
 | Linter/Typen | ruff, mypy (strict) |
@@ -864,6 +864,37 @@ wurde.
   statt geteiltem App-Pool) -- korrekter isoliert, nicht nur ein Workaround.
 - 4 neue + 1 entfernter (jetzt obsoleter) Test, alle 302 Tests grün, `ruff`/`mypy --strict`
   sauber.
+
+**Update (2026-10-05): Garmin-Login auf Widget-Flow umgestellt.** Nach >1 Monat Pause
+lieferte jeder Neuverbindungsversuch sofort `429`. Diagnose mit dem neuen
+`scripts/garmin_login_probe.py` (sendet exakt den Request von garminconnect, standardmäßig
+mit Fake-Konto, damit das echte Konto nicht gesperrt wird):
+- `--flow mobile` (`POST sso.garmin.com/mobile/api/login?clientId=GCM_IOS_DARK`): `429` mit
+  JSON-Body + `request-id` aus **zwei verschiedenen Netzen** (Handy-Hotspot via `DUS`,
+  Hotel-WLAN via `FRA`). Also keine IP-Sperre, sondern Garmin drosselt diese mobile
+  `clientId` serverseitig, unabhängig von der Quelle — Warten/Netzwechsel hilft nicht.
+- `--flow widget` (`GET /sso/embed` → `GET /sso/signin` → `POST /sso/signin`, HTML-Formular
+  mit CSRF): `200`/`200`/`401` — erreichbar, Fake-Credentials sauber abgelehnt.
+
+Änderungen: `garminconnect` 0.3.9 → **0.3.17** (`pyproject.toml`-Floor jetzt `>=0.3.17`;
+0.3.17 ändert den mobilen Request nicht, behebt das 429 also allein nicht).
+`_SKIPPED_LOGIN_STRATEGIES` in `src/kairos/connectors/garmin/client.py` skippt jetzt
+`mobile+cffi` statt `widget+cffi` — weiterhin **genau eine** Strategie pro Klick (Schutz vor
+dem Cloudflare-1015-Vorfall bleibt). `uv.lock` ist seit Phase 0 veraltet (enthält
+`garminconnect` gar nicht) und wurde nicht angefasst.
+
+**Bekannte Folgerisiken des Widget-Flows (noch nicht live verifiziert):**
+- **Falsches Passwort wird als `upstream_unavailable` gemeldet, nicht als
+  `invalid_credentials`:** Garmin antwortet mit `401` + Titel "GARMIN Authentication
+  Application"; garminconnect erkennt Credential-Fehler nur an "invalid"/"locked"/... im
+  Titel und wirft deshalb `GarminConnectConnectionError("unexpected title")`.
+- **MFA:** `GarminConnectBackend.login()` ist zustandslos — beim MFA-Retry wird komplett neu
+  eingeloggt und dann `resume_login()` mit dem Code aufgerufen. Beim Widget-Flow kann der
+  zweite Login einen **neuen** E-Mail/SMS-Code auslösen und den eingegebenen entwerten.
+  Falls das live auftritt: Login-Session (`_mfa_session`) zwischen den beiden Requests
+  aufbewahren statt neu einloggen.
+- Testlauf dieser Session: 37 Garmin-Tests grün, `mypy --strict src` sauber; die volle
+  Suite lief nur ohne Docker (173 passed / 129 skipped).
 
 **6. Performance-Falle in `activity_fit` gefunden, noch nicht gefixt:**
 `SqlCanonicalRepository.upsert_many()` (`src/kairos/repositories/canonical.py`) schreibt

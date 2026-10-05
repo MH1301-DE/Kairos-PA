@@ -171,10 +171,11 @@ def test_login_connection_error_mapped_to_unavailable() -> None:
 
 
 def test_login_uses_single_hardened_strategy_not_cascade() -> None:
-    """Regression test: a real login must try exactly one strategy (mobile+cffi),
+    """Regression test: a real login must try exactly one strategy (widget+cffi),
     never the full 5-strategy cascade — each extra strategy is an extra request
     against Garmin, and trying several per click is what got a real IP
-    Cloudflare-banned (Error 1015) during manual testing of this project."""
+    Cloudflare-banned (Error 1015) during manual testing of this project.
+    mobile+cffi is skipped since Garmin 429s its clientId from every network."""
     backend = _make_backend()
     tokens = backend.login("user@example.com", "secret", mfa_token=None)
 
@@ -184,8 +185,8 @@ def test_login_uses_single_hardened_strategy_not_cascade() -> None:
     built = backend._module.last_instance
     assert built is not None
     assert built.client.skip_strategies == {
+        "mobile+cffi",
         "mobile+requests",
-        "widget+cffi",
         "portal+cffi",
         "portal+requests",
     }
