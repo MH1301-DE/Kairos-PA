@@ -213,3 +213,78 @@ async def test_tool_handler_exception_becomes_an_error_tool_result(session: Asyn
     messages = await repo.list_messages(conversation_id=conversation_id, user_id=user_id)
     tool_message = next(m for m in messages if m.role == "tool")
     assert "Fehler" in (tool_message.content or "")
+
+
+@pytest.mark.asyncio
+async def test_invalid_tool_json_is_returned_to_the_model_not_raised(session: AsyncSession) -> None:
+    user_id, conversation_id = await _new_conversation(session)
+    bad_call = _fake_tool_call("call_1", "query_health", '{"metric_id": ')
+    completion = AsyncMock(side_effect=[
+        _fake_response(None, [bad_call]), _fake_response("Korrigiert."),
+    ])
+    with (
+        patch.object(orchestrator_module, "get_completion", new=completion),
+        patch.object(orchestrator_module, "dispatch", new=AsyncMock()) as mock_dispatch,
+    ):
+        result = await run_turn(
+            session, user_id=user_id, conversation_id=conversation_id, user_message="x"
+        )
+    assert result.reply_text == "Korrigiert."
+    mock_dispatch.assert_not_called()
+    second_call_messages = completion.call_args_list[1].kwargs["messages"]
+    tool_msg = next(m for m in second_call_messages if m["role"] == "tool")
+    assert "Ungültige JSON-Argumente" in tool_msg["content"]
+
+
+@pytest.mark.asyncio
+async def test_proposal_carries_tool_call_id_and_siblings_get_skipped_results(
+    session: AsyncSession,
+) -> None:
+    user_id, conversation_id = await _new_conversation(session)
+    calls = [
+        _fake_tool_call("call_p", "propose_calendar_event",
+                        '{"summary": "Lauf", "start_at": "2026-10-06T07:00:00+00:00",'
+                        ' "end_at": "2026-10-06T08:00:00+00:00"}'),
+        _fake_tool_call("call_q", "query_health", '{"metric_id": "hrv_baseline"}'),
+    ]
+    proposal = Proposal(tool_name="propose_calendar_event", arguments={}, summary="s",
+                        tool_call_id="call_p")
+    with (
+        patch.object(orchestrator_module, "get_completion",
+                     new=AsyncMock(return_value=_fake_response(None, calls))),
+        patch.object(orchestrator_module, "dispatch", new=AsyncMock(return_value=proposal)),
+    ):
+        result = await run_turn(
+            session, user_id=user_id, conversation_id=conversation_id, user_message="plan"
+        )
+    assert result.proposal is not None
+    assert result.proposal.tool_call_id == "call_p"
+    repo = ConversationRepository(session=session)
+    tool_msgs = [m for m in await repo.list_messages(conversation_id=conversation_id,
+                                                     user_id=user_id) if m.role == "tool"]
+    assert [m.tool_call_id for m in tool_msgs] == ["call_q"]
+    assert "wartet auf Bestätigung" in (tool_msgs[0].content or "")
+
+
+@pytest.mark.asyncio
+async def test_unanswered_proposal_is_closed_when_the_user_writes_again(
+    session: AsyncSession,
+) -> None:
+    user_id, conversation_id = await _new_conversation(session)
+    repo = ConversationRepository(session=session)
+    await repo.append_message(conversation_id=conversation_id, user_id=user_id, role="user",
+                              content="plan")
+    await repo.append_message(
+        conversation_id=conversation_id, user_id=user_id, role="assistant", content=None,
+        tool_calls=[{"id": "call_p", "name": "propose_calendar_event", "arguments": "{}"}],
+    )
+    await session.commit()
+    completion = AsyncMock(return_value=_fake_response("Ok."))
+    with patch.object(orchestrator_module, "get_completion", new=completion):
+        await run_turn(session, user_id=user_id, conversation_id=conversation_id,
+                       user_message="lieber nicht")
+    stored = await repo.list_messages(conversation_id=conversation_id, user_id=user_id)
+    closing = [m for m in stored if m.role == "tool" and m.tool_call_id == "call_p"]
+    assert len(closing) == 1
+    sent = completion.call_args.kwargs["messages"]
+    assert any(m["role"] == "tool" and m["tool_call_id"] == "call_p" for m in sent)

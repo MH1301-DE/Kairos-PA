@@ -6,13 +6,14 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from kairos.agent.tools import TOOLS_BY_NAME
+from kairos.agent.tools import TOOLS_BY_NAME, ToolSpec
 
 
 @dataclass(frozen=True)
 class ToolCall:
     name: str
     arguments: dict[str, Any]
+    id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,12 @@ class Proposal:
     tool_name: str
     arguments: dict[str, Any]
     summary: str
+    tool_call_id: str | None = None
+
+
+def needs_confirmation(spec: ToolSpec) -> bool:
+    # remember is the one write-class tool that runs immediately (undo chip instead)
+    return spec.risk_class != "read" and spec.name != "remember"
 
 
 async def dispatch(
@@ -33,18 +40,14 @@ async def dispatch(
     if spec is None:
         raise ValueError(f"Unknown tool: {tool_call.name!r}")
 
-    # read tools, and the one documented write-class exception (remember,
-    # design spec Scope-Entscheidung 4), execute immediately
-    if spec.risk_class == "read" or spec.name == "remember":
-        return await spec.handler(session, user_id=user_id, **tool_call.arguments)
-
-    # every other write/destructive tool needs a Proposal first, unless this
-    # call IS the confirmation (pending_confirmation=True, from POST .../confirm)
-    if not pending_confirmation:
+    # read tools and remember execute immediately; every other tool needs a
+    # Proposal first, unless this call IS the confirmation (POST .../confirm)
+    if needs_confirmation(spec) and not pending_confirmation:
         return Proposal(
             tool_name=spec.name,
             arguments=tool_call.arguments,
             summary=_summarize(spec.name, tool_call.arguments),
+            tool_call_id=tool_call.id,
         )
 
     return await spec.handler(session, user_id=user_id, **tool_call.arguments)

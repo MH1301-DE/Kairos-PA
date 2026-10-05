@@ -10,6 +10,7 @@ from litellm.types.utils import ChatCompletionMessageToolCall
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kairos.agent.dispatcher import Proposal, ToolCall, dispatch
+from kairos.agent.history import NOT_CONFIRMED, repair_history
 from kairos.agent.llm_client import get_completion
 from kairos.agent.situation_brief import build_situation_brief
 from kairos.agent.tools import CORE_TOOLS
@@ -18,6 +19,12 @@ from kairos.repositories.conversation import ConversationRepository
 # hardcap so a runaway tool-call cycle (model keeps calling tools without ever
 # producing a plain-text reply) can't loop forever
 _MAX_LOOP_ITERATIONS = 8
+
+SKIPPED_PENDING_PROPOSAL = "Nicht ausgeführt: wartet auf Bestätigung eines anderen Vorschlags."
+
+
+def tool_result(summary: str) -> dict[str, Any]:
+    return {"summary": summary, "data": None, "meta": {}}
 
 # persona + health guardrails, docs/03-agent-design.md §6.3 -- unchanged from
 # that spec, just inlined here since there is no prompt-registry in the MVP
@@ -52,11 +59,31 @@ async def run_turn(
     brief = await build_situation_brief(session, user_id=user_id, now=datetime.now(UTC))
     history = await conv_repo.list_messages(conversation_id=conversation_id, user_id=user_id)
 
-    system_content = _SYSTEM_PROMPT + "\n\n" + brief
-    messages: list[dict[str, Any]] = [{"role": "system", "content": system_content}]
+    # an unanswered proposal leaves tool calls without results; close them in the DB
+    answered = {m.tool_call_id for m in history if m.role == "tool"}
+    closed_any = False
     for m in history:
-        messages.append(_history_message_to_llm(m.role, m.content, m.tool_calls, m.tool_call_id))
-    messages.append({"role": "user", "content": user_message})
+        for open_call in (m.tool_calls or []) if m.role == "assistant" else []:
+            if open_call["id"] not in answered:
+                answered.add(open_call["id"])
+                closed_any = True
+                await conv_repo.append_message(
+                    conversation_id=conversation_id, user_id=user_id, role="tool",
+                    content=json.dumps(tool_result(NOT_CONFIRMED), ensure_ascii=False),
+                    tool_call_id=open_call["id"],
+                )
+    if closed_any:
+        history = await conv_repo.list_messages(conversation_id=conversation_id, user_id=user_id)
+
+    system_content = _SYSTEM_PROMPT + "\n\n" + brief
+    history_messages = [
+        _history_message_to_llm(m.role, m.content, m.tool_calls, m.tool_call_id) for m in history
+    ]
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": system_content},
+        *repair_history(history_messages),
+        {"role": "user", "content": user_message},
+    ]
 
     await conv_repo.append_message(
         conversation_id=conversation_id, user_id=user_id, role="user", content=user_message
@@ -103,26 +130,43 @@ async def run_turn(
             }
         )
 
-        for tc in tool_calls:
+        for index, tc in enumerate(tool_calls):
             if tc.function.name is None:
                 raise ValueError("Tool call from the model is missing a function name")
-            call = ToolCall(name=tc.function.name, arguments=json.loads(tc.function.arguments))
             try:
-                result = await dispatch(
-                    session, user_id=user_id, tool_call=call, pending_confirmation=False
-                )
-            except Exception as exc:
-                result = {"summary": f"Fehler: {exc}", "data": None, "meta": {}}
+                arguments = json.loads(tc.function.arguments or "{}")
+                if not isinstance(arguments, dict):
+                    raise ValueError("Argumente müssen ein JSON-Objekt sein")
+            except ValueError as exc:  # JSONDecodeError is a ValueError
+                result: dict[str, Any] | Proposal = tool_result(f"Ungültige JSON-Argumente: {exc}")
+                call_name = tc.function.name
+            else:
+                call = ToolCall(name=tc.function.name, arguments=arguments, id=tc.id)
+                call_name = call.name
+                try:
+                    result = await dispatch(
+                        session, user_id=user_id, tool_call=call, pending_confirmation=False
+                    )
+                except Exception as exc:
+                    result = tool_result(f"Fehler: {exc}")
 
             if isinstance(result, Proposal):
                 # short-circuits the loop -- the user must confirm/reject before
-                # anything else happens, no further get_completion calls this turn
+                # anything else happens; later sibling calls still need a result
+                for skipped in tool_calls[index + 1:]:
+                    await conv_repo.append_message(
+                        conversation_id=conversation_id, user_id=user_id, role="tool",
+                        content=json.dumps(
+                            tool_result(SKIPPED_PENDING_PROPOSAL), ensure_ascii=False
+                        ),
+                        tool_call_id=skipped.id,
+                    )
                 return OrchestratorResult(reply_text=None, proposal=result, remembered=remembered)
 
-            if call.name == "remember":
+            if call_name == "remember" and result.get("data"):
                 remembered.append(result["data"])
 
-            result_json = json.dumps(result)
+            result_json = json.dumps(result, ensure_ascii=False)
             await conv_repo.append_message(
                 conversation_id=conversation_id, user_id=user_id, role="tool",
                 content=result_json, tool_call_id=tc.id,
