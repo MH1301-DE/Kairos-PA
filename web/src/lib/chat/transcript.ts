@@ -96,7 +96,58 @@ export function historyToItems(messages: ChatMessage[]): Item[] {
 			if (block) currentAssistant().blocks.push(block);
 		}
 	}
+	items.push(...pendingProposals(messages));
 	return items;
+}
+
+// mirrors dispatcher.needs_confirmation (write/destructive tools except remember)
+const CONFIRMATION_TOOLS = new Set([
+	'propose_calendar_event',
+	'delete_calendar_event',
+	'plan_commit',
+	'plan_adjust'
+]);
+
+function proposalSummary(name: string, rawArguments: string): string {
+	let args: Record<string, unknown> = {};
+	try {
+		const parsed = JSON.parse(rawArguments) as unknown;
+		if (parsed && typeof parsed === 'object') args = parsed as Record<string, unknown>;
+	} catch {
+		// broken arguments still get a generic card
+	}
+	if (name === 'propose_calendar_event' && args.summary) {
+		return `Termin "${str(args.summary)}" anlegen: ${str(args.start_at)} – ${str(args.end_at)}`;
+	}
+	if (name === 'delete_calendar_event' && args.event_id) {
+		return `Termin ${str(args.event_id)} löschen`;
+	}
+	return `${name} ausführen`;
+}
+
+// the backend closes open calls once the user writes again, so only calls after the last user message can still be pending
+function pendingProposals(messages: ChatMessage[]): ProposalItem[] {
+	const answered = new Set(messages.filter((m) => m.role === 'tool').map((m) => m.tool_call_id));
+	let lastUser = -1;
+	messages.forEach((m, i) => {
+		if (m.role === 'user') lastUser = i;
+	});
+	const pending: ProposalItem[] = [];
+	messages.slice(lastUser + 1).forEach((m) => {
+		if (m.role !== 'assistant') return;
+		for (const call of m.tool_calls ?? []) {
+			if (!CONFIRMATION_TOOLS.has(call.name) || answered.has(call.id)) continue;
+			pending.push({
+				kind: 'proposal',
+				key: nextKey(),
+				toolCallId: call.id,
+				summary: proposalSummary(call.name, call.arguments ?? ''),
+				state: 'open',
+				outcome: null
+			});
+		}
+	});
+	return pending;
 }
 
 function str(value: unknown): string {

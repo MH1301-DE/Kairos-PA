@@ -1,16 +1,32 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { marked } from 'marked';
 	import DOMPurify from 'dompurify';
 
 	let { text }: { text: string } = $props();
 
-	const html = $derived(DOMPurify.sanitize(marked.parse(text, { async: false }) as string));
+	// DOMPurify needs a DOM; server render and hydration show escaped plain text
+	let mounted = $state(false);
+	onMount(() => {
+		mounted = true;
+	});
+
+	const html = $derived(
+		mounted ? DOMPurify.sanitize(marked.parse(text, { async: false }) as string) : ''
+	);
 </script>
 
-<!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized by DOMPurify -->
-<div class="markdown">{@html html}</div>
+{#if mounted}
+	<!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized by DOMPurify -->
+	<div class="markdown">{@html html}</div>
+{:else}
+	<div class="markdown plain">{text}</div>
+{/if}
 
 <style>
+	.plain {
+		white-space: pre-wrap;
+	}
 	.markdown :global(> :first-child) {
 		margin-top: 0;
 	}

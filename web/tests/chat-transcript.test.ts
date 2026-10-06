@@ -47,6 +47,73 @@ describe('historyToItems', () => {
 	});
 });
 
+describe('historyToItems pending proposals', () => {
+	const call = (id: string, name: string, args: Record<string, unknown>) => ({
+		id,
+		name,
+		arguments: JSON.stringify(args)
+	});
+
+	it('restores the newest unanswered confirmation call as a proposal card', () => {
+		const items = historyToItems([
+			msg({ id: 'u1', role: 'user', content: 'Trag Lauf ein' }),
+			msg({
+				id: 'a1',
+				role: 'assistant',
+				content: 'Soll ich das eintragen?',
+				tool_calls: [
+					call('c1', 'propose_calendar_event', {
+						summary: 'Lauf',
+						start_at: '2026-10-07T07:00',
+						end_at: '2026-10-07T08:00'
+					})
+				]
+			})
+		]);
+		expect(items.map((i) => i.kind)).toEqual(['user', 'assistant', 'proposal']);
+		expect(items[2]).toMatchObject({
+			kind: 'proposal',
+			toolCallId: 'c1',
+			state: 'open',
+			summary: 'Termin "Lauf" anlegen: 2026-10-07T07:00 – 2026-10-07T08:00'
+		});
+	});
+
+	it('uses a generic summary for other confirmation tools and broken arguments', () => {
+		const items = historyToItems([
+			msg({
+				id: 'a1',
+				role: 'assistant',
+				tool_calls: [
+					call('c1', 'plan_commit', { plan_id: 'p' }),
+					{ id: 'c2', name: 'plan_adjust', arguments: '{oops' }
+				]
+			})
+		]);
+		expect(
+			items.filter((i) => i.kind === 'proposal').map((i) => (i as { summary: string }).summary)
+		).toEqual(['plan_commit ausführen', 'plan_adjust ausführen']);
+	});
+
+	it('skips answered calls, read tools and calls followed by a user message', () => {
+		const items = historyToItems([
+			msg({
+				id: 'a1',
+				role: 'assistant',
+				tool_calls: [call('c1', 'plan_commit', { plan_id: 'p' }), call('c2', 'query_health', {})]
+			}),
+			msg({ id: 'u2', role: 'user', content: 'Doch nicht' }),
+			msg({
+				id: 'a2',
+				role: 'assistant',
+				tool_calls: [call('c3', 'delete_calendar_event', { event_id: 'e' })]
+			}),
+			msg({ id: 't3', role: 'tool', tool_call_id: 'c3', content: '{"summary":"ok"}' })
+		]);
+		expect(items.some((i) => i.kind === 'proposal')).toBe(false);
+	});
+});
+
 describe('applyEvent', () => {
 	it('streams tokens, shows tool status and splits text around a tool round', () => {
 		const items: Item[] = [];

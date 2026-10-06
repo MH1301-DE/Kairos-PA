@@ -24,8 +24,11 @@
 	let draft = $state('');
 	let sending = $state(false);
 
-	const HTTP_ERRORS: Record<number, string> = {
-		404: 'Nicht gefunden – bitte die Seite neu laden.',
+	const SEND_ERRORS: Record<number, string> = {
+		404: 'Konversation nicht gefunden – bitte die Seite neu laden.'
+	};
+	const PROPOSAL_ERRORS: Record<number, string> = {
+		404: 'Vorschlag nicht gefunden – bitte die Seite neu laden.',
 		409: 'Dieser Vorschlag wurde bereits bearbeitet.'
 	};
 
@@ -39,7 +42,11 @@
 	}
 
 	// returns the HTTP status when the request was refused before streaming
-	async function runStream(path: string, body?: unknown): Promise<number | null> {
+	async function runStream(
+		path: string,
+		body: unknown,
+		errorTexts: Record<number, string>
+	): Promise<number | null> {
 		sending = true;
 		items.push(newAssistant());
 		const bubble = items[items.length - 1] as AssistantItem;
@@ -59,7 +66,7 @@
 			}
 			const status = err instanceof ApiError ? err.status : 0;
 			if (status) refusedStatus = status;
-			pushError(HTTP_ERRORS[status] ?? 'Die Anfrage ist fehlgeschlagen.');
+			pushError(errorTexts[status] ?? 'Die Anfrage ist fehlgeschlagen.');
 		}
 		bubble.status = null;
 		if (!sawDone && !failed) pushError('Die Verbindung wurde unterbrochen.');
@@ -74,15 +81,21 @@
 		const content = draft.trim();
 		if (!content || sending) return;
 		draft = '';
+		// the backend closes unanswered proposals as soon as the user writes again
+		for (const item of items) {
+			if (item.kind === 'proposal' && item.state === 'open') item.state = 'resolved';
+		}
 		items.push({ kind: 'user', key: nextKey(), text: content });
-		await runStream(`/api/agent/conversations/${conversationId}/stream`, { content });
+		await runStream(`/api/agent/conversations/${conversationId}/stream`, { content }, SEND_ERRORS);
 	}
 
 	async function resolveProposal(proposal: ProposalItem, action: 'confirm' | 'reject') {
 		if (sending || proposal.state !== 'open') return;
 		proposal.state = 'busy';
 		const refused = await runStream(
-			`/api/agent/conversations/${conversationId}/proposals/${encodeURIComponent(proposal.toolCallId)}/${action}`
+			`/api/agent/conversations/${conversationId}/proposals/${encodeURIComponent(proposal.toolCallId)}/${action}`,
+			undefined,
+			PROPOSAL_ERRORS
 		);
 		if (proposal.state === 'busy') proposal.state = refused === 409 ? 'resolved' : 'open';
 	}
