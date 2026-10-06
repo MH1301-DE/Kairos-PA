@@ -20,8 +20,8 @@
 	let days = $derived(monthGridDays(data.year, data.month));
 	const today = todayKey();
 
-	function monthHref(year: number, month: number): string {
-		return `${resolve('/calendar')}?month=${year}-${String(month).padStart(2, '0')}`;
+	function monthHref(year: number, month: number) {
+		return resolve(`/calendar?month=${year}-${String(month).padStart(2, '0')}`);
 	}
 
 	function initialSelected(gridDays: CalendarDay[]): string {
@@ -52,6 +52,8 @@
 	// buckets each event onto every day it spans, not just its start day --
 	// a multi-day event (e.g. a 2-day workshop) needs a chip on each of its days
 	let eventsByDay = $derived.by(() => {
+		// rebuilt on every derivation and never mutated afterwards, so it needn't be reactive
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity
 		const map = new Map<string, CalendarEvent[]>();
 		for (const event of data.events) {
 			for (const key of eventDayKeys(event.start_at, event.end_at, event.all_day)) {

@@ -1,5 +1,5 @@
 // web/tests/e2e/sync.spec.ts
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import http from 'node:http';
 
 const STUB_PORT = 8791;
@@ -17,7 +17,9 @@ function startSyncStub(): Promise<http.Server> {
 			res.writeHead(200, { 'Content-Type': 'application/json' });
 			res.end(
 				JSON.stringify({
-					connections: [{ connector: 'garmin', status: 'active', external_account: 'user@example.com' }]
+					connections: [
+						{ connector: 'garmin', status: 'active', external_account: 'user@example.com' }
+					]
 				})
 			);
 			return;
@@ -102,9 +104,15 @@ test.describe('sync page', () => {
 		stub = undefined;
 	});
 
+	// the Garmin/calendar triggers live in the "Sync starten" dropdown since e983988
+	async function openSyncMenu(page: Page) {
+		await page.getByRole('button', { name: /Sync starten/ }).click();
+	}
+
 	test('trigger button starts a backfill and polling shows progress to done', async ({ page }) => {
 		await page.goto('/sync', { waitUntil: 'networkidle' });
-		await page.locator('button', { hasText: 'Backfill starten' }).click();
+		await openSyncMenu(page);
+		await page.locator('button', { hasText: 'Garmin-Backfill starten' }).click();
 		await expect(page.getByText('running')).toBeVisible({ timeout: 5000 });
 		await expect(page.getByText('done')).toBeVisible({ timeout: 15000 });
 	});
@@ -113,27 +121,32 @@ test.describe('sync page', () => {
 		page
 	}) => {
 		await page.goto('/sync', { waitUntil: 'networkidle' });
+		await openSyncMenu(page);
 		const button = page.locator('button', { hasText: /Backfill/ });
 		await expect(button).toBeEnabled();
 
 		await button.click();
 		await expect(page.getByText('running')).toBeVisible({ timeout: 5000 });
 		await expect(button).toBeDisabled();
-		await expect(button).toHaveText('Backfill läuft …');
+		await expect(button).toHaveText('Garmin-Backfill läuft …');
 
 		// the disabled state must come from server-reported job status (data.jobs),
 		// not from local click-handler state -- reload and confirm it survives
 		await page.reload({ waitUntil: 'networkidle' });
+		await openSyncMenu(page);
 		await expect(page.locator('button', { hasText: /Backfill/ })).toBeDisabled();
 
 		await expect(page.getByText('done')).toBeVisible({ timeout: 15000 });
 		await expect(page.locator('button', { hasText: /Backfill/ })).toBeEnabled();
-		await expect(page.locator('button', { hasText: /Backfill/ })).toHaveText('Backfill starten');
+		await expect(page.locator('button', { hasText: /Backfill/ })).toHaveText(
+			'Garmin-Backfill starten'
+		);
 	});
 
 	test('shows a progress indicator while a job is running', async ({ page }) => {
 		await page.goto('/sync', { waitUntil: 'networkidle' });
-		await page.locator('button', { hasText: 'Backfill starten' }).click();
+		await openSyncMenu(page);
+		await page.locator('button', { hasText: 'Garmin-Backfill starten' }).click();
 		await expect(page.getByText('running')).toBeVisible({ timeout: 5000 });
 		await expect(page.locator('progress')).toBeVisible();
 		await expect(page.locator('.progress-label')).toContainText('/ 100');

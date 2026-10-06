@@ -75,7 +75,8 @@
 					{connection ? meta.manageLabel : 'Jetzt verbinden'}
 				</a>
 			{:else}
-				<a href={meta.manageHref} class="btn btn-secondary">
+				<!-- /auth/* is served by the backend, so it must be a full page load -->
+				<a href={meta.manageHref} rel="external" class="btn btn-secondary">
 					{connection ? meta.manageLabel : 'Jetzt verbinden'}
 				</a>
 			{/if}
@@ -86,8 +87,8 @@
 <h2 class="section-title">Chat-Assistent</h2>
 <div class="tile llm-note">
 	<p>
-		Der LLM-Anbieter gilt für die gesamte Kairos-Installation, nicht pro Konto — wird von
-		der Person eingerichtet, die den Server betreibt (<code>LLM_API_KEY</code> in
+		Der LLM-Anbieter gilt für die gesamte Kairos-Installation, nicht pro Konto — wird von der Person
+		eingerichtet, die den Server betreibt (<code>LLM_API_KEY</code> in
 		<code>.env</code>).
 	</p>
 </div>
