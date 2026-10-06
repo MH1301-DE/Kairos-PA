@@ -57,6 +57,12 @@ describe('kachelState', () => {
 		expect(kachelState({ loading: false, result: r, error: null }, sleep)).toBe('teilweise');
 	});
 
+	it('is "ok" for a one-day metric with a real value but no activity that day', () => {
+		const trimp = moduleById('trimp')!;
+		const r = result({ metric_id: 'trimp', value: 0, coverage_days: 0, coverage_required_days: 1 });
+		expect(kachelState({ loading: false, result: r, error: null }, trimp)).toBe('ok');
+	});
+
 	it('is "ok" with full coverage and high confidence', () => {
 		expect(kachelState({ loading: false, result: result(), error: null }, sleep)).toBe('ok');
 	});
@@ -77,6 +83,12 @@ describe('coverageFoot', () => {
 		const trimp = moduleById('trimp')!;
 		const r = result({ coverage_days: 1, coverage_required_days: 1 });
 		expect(coverageFoot(r, trimp, 'ok')).toBe('aus 1 Tag');
+	});
+
+	it('says there was no activity instead of "0 von 1"', () => {
+		const trimp = moduleById('trimp')!;
+		const r = result({ value: 0, coverage_days: 0, coverage_required_days: 1 });
+		expect(coverageFoot(r, trimp, 'ok')).toBe('keine Aktivität im Zeitraum');
 	});
 
 	it('reports the longer basis when coverage exceeds the minimum', () => {

@@ -17,6 +17,8 @@ export function kachelState(tile: TileInput, module: ModuleDef): KachelState {
 	if (r.confidence === 'insufficient_data' || r.value === null) return 'leer';
 	// the zone variant returns an all-zero dict instead of null on days without HR data
 	if (module.kind === 'histogramm' && r.coverage_days === 0) return 'leer';
+	// a day-metric without activity (TRIMP 0 on a rest day) is a real value, not a gap
+	if (r.coverage_days === 0 && r.coverage_required_days <= 1) return 'ok';
 	if (r.coverage_days < r.coverage_required_days) return 'teilweise';
 	if (r.confidence === 'low' || r.confidence === 'medium') return 'teilweise';
 	return 'ok';
@@ -31,6 +33,7 @@ function unitWord(module: ModuleDef, n: number, dative = false): string {
 export function coverageFoot(r: MetricResult, module: ModuleDef, state: KachelState): string {
 	const have = r.coverage_days;
 	const need = r.coverage_required_days;
+	if (have === 0) return 'keine Aktivität im Zeitraum';
 	if (state === 'teilweise') {
 		if (have < need) return `Ø aus ${have} von ${need} ${unitWord(module, need, true)}`;
 		return `aus ${have} ${unitWord(module, have, true)} · Aussagekraft eingeschränkt`;

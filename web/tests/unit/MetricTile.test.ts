@@ -62,6 +62,20 @@ describe('MetricTile', () => {
 		expect(screen.getByText('Jetzt abgleichen')).toBeTruthy();
 	});
 
+	it('leaves out the progress line when history is enough but today is missing', () => {
+		renderTile(
+			'hrv_baseline',
+			result({
+				metric_id: 'hrv_baseline',
+				value: null,
+				confidence: 'insufficient_data',
+				coverage_days: 32,
+				coverage_required_days: 20
+			})
+		);
+		expect(screen.queryByText(/Bisher:/)).toBeNull();
+	});
+
 	it('offers a retry on a fetch error', async () => {
 		const onretry = vi.fn();
 		renderTile('sleep_debt', null, { onretry });

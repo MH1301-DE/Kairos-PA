@@ -52,7 +52,7 @@
 		const res = tile.result;
 		const need = res?.coverage_required_days ?? 0;
 		const progress =
-			res && need > 1
+			res && need > 1 && res.coverage_days < need
 				? ` Bisher: ${res.coverage_days} von ${need} ${module.coverageUnit === 'Nächte' ? 'Nächten' : 'Tagen'}.`
 				: '';
 		return {
