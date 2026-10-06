@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 from typing import Any
 from uuid import UUID
 
@@ -41,3 +42,25 @@ async def get_completion(
         stream=False,
     )
     return response  # type: ignore[no-any-return]
+
+
+async def stream_completion(
+    session: AsyncSession,
+    *,
+    user_id: UUID,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None = None,
+) -> AsyncIterator[Any]:
+    if not settings.llm_api_key:
+        raise NoLlmCredentialConfigured("LLM_API_KEY is not configured for this deployment")
+
+    setting = await get_or_default_user_setting(session, user_id=user_id)
+    stream: Any = await litellm.acompletion(
+        model=setting.llm_model,
+        messages=messages,
+        tools=tools,
+        api_key=settings.llm_api_key,
+        stream=True,
+    )
+    async for chunk in stream:
+        yield chunk

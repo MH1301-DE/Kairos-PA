@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 from uuid import UUID, uuid4
@@ -13,6 +14,7 @@ from kairos.agent import orchestrator as orchestrator_module
 from kairos.agent.dispatcher import Proposal
 from kairos.agent.orchestrator import run_turn
 from kairos.repositories.conversation import ConversationRepository
+from tests.agent_stream_helpers import stream_forever, stream_rounds
 
 
 async def _insert_user(session: AsyncSession, user_id: UUID) -> None:
@@ -54,8 +56,8 @@ async def test_plain_text_reply_ends_the_turn(session: AsyncSession) -> None:
 
     with (
         patch.object(
-            orchestrator_module, "get_completion",
-            new=AsyncMock(return_value=_fake_response("Du bist gut erholt.")),
+            orchestrator_module, "stream_completion",
+            new=stream_forever(_fake_response("Du bist gut erholt.")),
         ),
         patch.object(orchestrator_module, "dispatch", new=AsyncMock()) as mock_dispatch,
     ):
@@ -85,8 +87,8 @@ async def test_tool_call_then_plain_text_completes_two_rounds(session: AsyncSess
 
     with (
         patch.object(
-            orchestrator_module, "get_completion", new=AsyncMock(side_effect=responses)
-        ) as mock_get_completion,
+            orchestrator_module, "stream_completion", new=stream_rounds(*responses)
+        ) as mock_stream_completion,
         patch.object(
             orchestrator_module, "dispatch", new=AsyncMock(return_value=tool_result)
         ) as mock_dispatch,
@@ -96,7 +98,7 @@ async def test_tool_call_then_plain_text_completes_two_rounds(session: AsyncSess
             user_message="Wie erholt bin ich?",
         )
 
-    assert mock_get_completion.call_count == 2
+    assert mock_stream_completion.call_count == 2
     mock_dispatch.assert_called_once()
     call_kwargs = mock_dispatch.call_args.kwargs
     assert call_kwargs["tool_call"].name == "query_health"
@@ -123,9 +125,9 @@ async def test_proposal_short_circuits_without_a_second_completion_call(
 
     with (
         patch.object(
-            orchestrator_module, "get_completion",
-            new=AsyncMock(return_value=_fake_response(None, [tool_call])),
-        ) as mock_get_completion,
+            orchestrator_module, "stream_completion",
+            new=stream_forever(_fake_response(None, [tool_call])),
+        ) as mock_stream_completion,
         patch.object(orchestrator_module, "dispatch", new=AsyncMock(return_value=proposal)),
     ):
         result = await run_turn(
@@ -133,8 +135,8 @@ async def test_proposal_short_circuits_without_a_second_completion_call(
             user_message="Plan mir einen Lauf morgen früh.",
         )
 
-    assert mock_get_completion.call_count == 1
-    assert result.proposal is proposal
+    assert mock_stream_completion.call_count == 1
+    assert result.proposal == replace(proposal, tool_call_id="call_1")
     assert result.reply_text is None
 
 
@@ -145,9 +147,9 @@ async def test_hardcap_trips_on_a_runaway_tool_call_loop(session: AsyncSession) 
 
     with (
         patch.object(
-            orchestrator_module, "get_completion",
-            new=AsyncMock(return_value=_fake_response(None, [tool_call])),
-        ) as mock_get_completion,
+            orchestrator_module, "stream_completion",
+            new=stream_forever(_fake_response(None, [tool_call])),
+        ) as mock_stream_completion,
         patch.object(
             orchestrator_module, "dispatch",
             new=AsyncMock(return_value={"summary": "ok", "data": {}, "meta": {}}),
@@ -157,7 +159,7 @@ async def test_hardcap_trips_on_a_runaway_tool_call_loop(session: AsyncSession) 
             session, user_id=user_id, conversation_id=conversation_id, user_message="Frage",
         )
 
-    assert mock_get_completion.call_count == orchestrator_module._MAX_LOOP_ITERATIONS
+    assert mock_stream_completion.call_count == orchestrator_module._MAX_LOOP_ITERATIONS
     assert result.proposal is None
     assert "Zu viele Tool-Aufrufe" in (result.reply_text or "")
 
@@ -175,7 +177,7 @@ async def test_remember_result_collected_in_remembered_list(session: AsyncSessio
 
     with (
         patch.object(
-            orchestrator_module, "get_completion", new=AsyncMock(side_effect=responses)
+            orchestrator_module, "stream_completion", new=stream_rounds(*responses)
         ),
         patch.object(
             orchestrator_module, "dispatch", new=AsyncMock(return_value=remember_result)
@@ -186,7 +188,9 @@ async def test_remember_result_collected_in_remembered_list(session: AsyncSessio
             user_message="Ich mag keine Sprints.",
         )
 
-    assert result.remembered == [remember_result["data"]]
+    assert result.remembered == [
+        {"id": "abc", "content": "mag keine Sprints", "expires_at": None}
+    ]
 
 
 @pytest.mark.asyncio
@@ -197,7 +201,7 @@ async def test_tool_handler_exception_becomes_an_error_tool_result(session: Asyn
 
     with (
         patch.object(
-            orchestrator_module, "get_completion", new=AsyncMock(side_effect=responses)
+            orchestrator_module, "stream_completion", new=stream_rounds(*responses)
         ),
         patch.object(
             orchestrator_module, "dispatch",
@@ -219,11 +223,9 @@ async def test_tool_handler_exception_becomes_an_error_tool_result(session: Asyn
 async def test_invalid_tool_json_is_returned_to_the_model_not_raised(session: AsyncSession) -> None:
     user_id, conversation_id = await _new_conversation(session)
     bad_call = _fake_tool_call("call_1", "query_health", '{"metric_id": ')
-    completion = AsyncMock(side_effect=[
-        _fake_response(None, [bad_call]), _fake_response("Korrigiert."),
-    ])
+    completion = stream_rounds(_fake_response(None, [bad_call]), _fake_response("Korrigiert."))
     with (
-        patch.object(orchestrator_module, "get_completion", new=completion),
+        patch.object(orchestrator_module, "stream_completion", new=completion),
         patch.object(orchestrator_module, "dispatch", new=AsyncMock()) as mock_dispatch,
     ):
         result = await run_turn(
@@ -250,8 +252,8 @@ async def test_proposal_carries_tool_call_id_and_siblings_get_skipped_results(
     proposal = Proposal(tool_name="propose_calendar_event", arguments={}, summary="s",
                         tool_call_id="call_p")
     with (
-        patch.object(orchestrator_module, "get_completion",
-                     new=AsyncMock(return_value=_fake_response(None, calls))),
+        patch.object(orchestrator_module, "stream_completion",
+                     new=stream_forever(_fake_response(None, calls))),
         patch.object(orchestrator_module, "dispatch", new=AsyncMock(return_value=proposal)),
     ):
         result = await run_turn(
@@ -279,8 +281,8 @@ async def test_unanswered_proposal_is_closed_when_the_user_writes_again(
         tool_calls=[{"id": "call_p", "name": "propose_calendar_event", "arguments": "{}"}],
     )
     await session.commit()
-    completion = AsyncMock(return_value=_fake_response("Ok."))
-    with patch.object(orchestrator_module, "get_completion", new=completion):
+    completion = stream_forever(_fake_response("Ok."))
+    with patch.object(orchestrator_module, "stream_completion", new=completion):
         await run_turn(session, user_id=user_id, conversation_id=conversation_id,
                        user_message="lieber nicht")
     stored = await repo.list_messages(conversation_id=conversation_id, user_id=user_id)
@@ -295,8 +297,8 @@ async def test_failing_compaction_does_not_fail_the_turn(session: AsyncSession) 
     user_id, conversation_id = await _new_conversation(session)
     with (
         patch.object(
-            orchestrator_module, "get_completion",
-            new=AsyncMock(return_value=_fake_response("Alles gut.")),
+            orchestrator_module, "stream_completion",
+            new=stream_forever(_fake_response("Alles gut.")),
         ),
         patch.object(
             orchestrator_module, "compact_conversation",
