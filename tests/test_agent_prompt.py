@@ -28,3 +28,10 @@ def test_memory_block_lists_entries_with_expiry_and_respects_budget() -> None:
 
 def test_empty_memory_block() -> None:
     assert render_memory_block([]) == "ERINNERUNGEN: keine"
+
+
+def test_oversized_newer_entry_does_not_hide_older_ones() -> None:
+    block = render_memory_block([_entry("x" * 8000), _entry("Ziel: Halbmarathon")],
+                                budget_tokens=300)
+    assert "- Ziel: Halbmarathon" in block
+    assert "x" * 100 not in block

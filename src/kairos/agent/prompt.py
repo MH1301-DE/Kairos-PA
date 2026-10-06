@@ -38,7 +38,7 @@ def render_memory_block(entries: list[AgentMemory], budget_tokens: int = 1500) -
         suffix = f" (gilt bis {e.expires_at.strftime('%d.%m.%Y')})" if e.expires_at else ""
         line = f"- {e.content}{suffix}"
         if used + len(line) // 4 > budget_tokens:
-            break
+            continue
         lines.append(line)
         used += len(line) // 4
     return "\n".join(lines)
