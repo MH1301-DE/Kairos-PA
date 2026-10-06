@@ -3,7 +3,17 @@ import { applyLayout, orderModules } from '../../src/lib/dashboardLayout';
 import type { ModuleDef } from '../../src/lib/modules';
 
 function fakeModule(moduleId: string): ModuleDef {
-	return { moduleId, variant: 'default', title: moduleId, description: [], form: 'value' };
+	return {
+		moduleId,
+		variant: 'default',
+		title: moduleId,
+		description: [],
+		kind: 'kennzahl',
+		period: 'heute',
+		coverageUnit: 'Tage',
+		emptyHint: '',
+		askPrompt: ''
+	};
 }
 
 describe('applyLayout', () => {

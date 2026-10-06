@@ -67,7 +67,7 @@
 	}
 
 	const NAV_ITEMS = [
-		{ href: '/', label: 'Dashboard' },
+		{ href: '/', label: 'Übersicht' },
 		{ href: '/calendar', label: 'Kalender' },
 		{ href: '/goals', label: 'Ziele' },
 		{ href: '/memory', label: 'Gedächtnis' },

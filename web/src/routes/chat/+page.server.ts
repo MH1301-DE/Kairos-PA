@@ -27,7 +27,9 @@ export const load: PageServerLoad = async ({ fetch, url, depends }) => {
 };
 
 export const actions: Actions = {
-	newConversation: async ({ fetch }) => {
+	newConversation: async ({ fetch, request }) => {
+		// a question handed over from a tile's "Dazu fragen" link survives the redirect
+		const q = String((await request.formData()).get('q') ?? '').trim();
 		const { status, data } = await apiPost<{ id: string; detail?: string }>(
 			fetch,
 			'/api/agent/conversations',
@@ -37,7 +39,7 @@ export const actions: Actions = {
 		if (status !== 201) {
 			return fail(status, { error: `Konversation konnte nicht angelegt werden (${status}).` });
 		}
-		redirect(303, `/chat?c=${data.id}`);
+		redirect(303, q ? `/chat?c=${data.id}&q=${encodeURIComponent(q)}` : `/chat?c=${data.id}`);
 	},
 
 	send: async ({ request, fetch }) => {

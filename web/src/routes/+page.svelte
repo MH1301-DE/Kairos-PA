@@ -26,6 +26,7 @@
 	// a user-picked "Stand" date, kept outside $state so reading it here doesn't
 	// make this effect depend on `tiles` itself (which it also writes to) --
 	// see mergeTileAsOf's doc comment for why this exists
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity -- deliberately not reactive, see above
 	const manualAsOf = new Map<string, string>();
 
 	$effect(() => {
@@ -113,11 +114,28 @@
 		editMode = true;
 	}
 
+	// only shown tiles take part in drag-and-drop; hidden ones live in the library
+	let shownItems = $derived(editItems.filter((i) => i.visible));
+	let hiddenItems = $derived(editItems.filter((i) => !i.visible));
+
 	function handleDndConsider(e: CustomEvent<{ items: EditItem[] }>) {
-		editItems = e.detail.items;
+		editItems = [...e.detail.items, ...hiddenItems];
 	}
 	function handleDndFinalize(e: CustomEvent<{ items: EditItem[] }>) {
-		editItems = e.detail.items;
+		editItems = [...e.detail.items, ...hiddenItems];
+	}
+
+	function hideItem(id: string) {
+		editItems = editItems.map((i) => (i.id === id ? { ...i, visible: false } : i));
+	}
+	function showItem(id: string) {
+		const item = editItems.find((i) => i.id === id);
+		if (!item) return;
+		editItems = [
+			...shownItems,
+			{ ...item, visible: true },
+			...hiddenItems.filter((i) => i.id !== id)
+		];
 	}
 
 	function layoutPayload(): string {
@@ -125,22 +143,54 @@
 			editItems.map((item, i) => ({ module_id: item.id, position: i, visible: item.visible }))
 		);
 	}
+
+	let garminExpired = $derived(
+		data.connections.some((c) => c.connector === 'garmin' && c.status === 'reauth_required')
+	);
 </script>
 
 <div class="dashboard-header">
-	<h1>Dashboard</h1>
-	{#if !editMode}
-		<div class="header-actions">
-			<button type="button" class="btn btn-ghost" onclick={enterEditMode}>Anpassen</button>
-			<button type="button" class="btn btn-secondary" onclick={refreshAll} disabled={refreshing}>
-				{refreshing ? 'Aktualisiert …' : '↻ Aktualisieren'}
+	<h1>Übersicht</h1>
+	<div class="header-actions">
+		{#if editMode}
+			<button type="button" class="btn btn-ghost" onclick={() => (editMode = false)}>
+				Abbrechen
 			</button>
-		</div>
-	{/if}
+			<button type="submit" form="layout-form" class="btn btn-primary" disabled={savingLayout}>
+				{savingLayout ? 'Speichert …' : 'Fertig'}
+			</button>
+		{:else}
+			<button type="button" class="btn btn-ghost" onclick={enterEditMode}>Anordnen</button>
+			<button type="button" class="btn btn-secondary" onclick={refreshAll} disabled={refreshing}>
+				{refreshing ? 'Wird abgeglichen …' : 'Aktualisieren'}
+			</button>
+		{/if}
+	</div>
 </div>
+
+{#snippet metricTile(tile: TileState, editing: boolean, onremove?: () => void)}
+	{@const module = moduleById(tile.moduleId)}
+	{#if module}
+		<MetricTile
+			{tile}
+			{module}
+			asOf={tile.asOf}
+			today={todayIso()}
+			{garminExpired}
+			{editing}
+			{onremove}
+			onretry={() => refetchTile(tile)}
+			onasof={(date) => {
+				tile.asOf = date;
+				refetchTile(tile);
+			}}
+		/>
+	{/if}
+{/snippet}
 
 {#if editMode}
 	<form
+		id="layout-form"
 		method="POST"
 		action="?/saveLayout"
 		use:enhance={() => {
@@ -153,70 +203,42 @@
 		}}
 	>
 		<input type="hidden" name="layout" value={layoutPayload()} />
-		<p class="edit-hint">Ziehen zum Sortieren, Häkchen zum Ein-/Ausblenden.</p>
-		<div
-			class="tile-grid edit-grid"
-			use:dndzone={{ items: editItems, flipDurationMs: 200 }}
-			onconsider={handleDndConsider}
-			onfinalize={handleDndFinalize}
-		>
-			{#each editItems as item (item.id)}
-				<div
-					class="edit-tile"
-					class:edit-tile-hidden={!item.visible}
-					animate:flip={{ duration: 200 }}
-				>
-					<span class="drag-handle" aria-label="Ziehen zum Sortieren">⠿</span>
-					<span class="edit-tile-title">{moduleById(item.id)?.title ?? item.id}</span>
-					<label class="visibility-toggle">
-						<input type="checkbox" bind:checked={item.visible} />
-						sichtbar
-					</label>
-				</div>
-			{/each}
-		</div>
-		{#if form?.layoutError}
-			<p class="status-error">{form.layoutError}</p>
-		{/if}
-		<div class="edit-actions">
-			<button type="submit" class="btn btn-primary" disabled={savingLayout}>
-				{savingLayout ? 'Speichert …' : 'Speichern'}
-			</button>
-			<button type="button" class="btn btn-ghost" onclick={() => (editMode = false)}>
-				Abbrechen
-			</button>
-		</div>
 	</form>
+	<p class="edit-hint">Ziehen zum Anordnen, × zum Entfernen.</p>
+	<div
+		class="tile-grid"
+		use:dndzone={{ items: shownItems, flipDurationMs: 200 }}
+		onconsider={handleDndConsider}
+		onfinalize={handleDndFinalize}
+	>
+		{#each shownItems as item (item.id)}
+			{@const tile = tiles.find((t) => t.moduleId === item.id)}
+			<div class="tile-slot" animate:flip={{ duration: 200 }}>
+				{#if tile}{@render metricTile(tile, true, () => hideItem(item.id))}{/if}
+			</div>
+		{/each}
+	</div>
+	{#if form?.layoutError}
+		<p class="status-error">{form.layoutError}</p>
+	{/if}
+	<section class="library">
+		<h2>Kachelbibliothek</h2>
+		{#if hiddenItems.length === 0}
+			<p class="t-caption">Alle Kacheln sind auf der Übersicht.</p>
+		{:else}
+			<div class="library-items">
+				{#each hiddenItems as item (item.id)}
+					<button type="button" class="btn btn-secondary" onclick={() => showItem(item.id)}>
+						+ {moduleById(item.id)?.title ?? item.id}
+					</button>
+				{/each}
+			</div>
+		{/if}
+	</section>
 {:else}
 	<div class="tile-grid">
 		{#each visibleTiles as tile (tile.moduleId)}
-			{@const module = moduleById(tile.moduleId)}
-			{#if module}
-				<div class="tile-card">
-					<label class="as-of-picker">
-						Stand
-						<input
-							type="date"
-							bind:value={tile.asOf}
-							max={todayIso()}
-							onchange={() => refetchTile(tile)}
-						/>
-					</label>
-					{#if tile.loading}
-						<div class="tile tile-loading">
-							<div class="skeleton skeleton-title"></div>
-							<div class="skeleton skeleton-body"></div>
-						</div>
-					{:else if tile.result}
-						<MetricTile result={tile.result} {module} />
-					{:else}
-						<div class="tile-error">
-							<h3>{module.title}</h3>
-							<p>{tile.error}</p>
-						</div>
-					{/if}
-				</div>
-			{/if}
+			<div class="tile-slot">{@render metricTile(tile, false)}</div>
 		{/each}
 	</div>
 {/if}
@@ -227,7 +249,10 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: var(--space-4);
-		margin-bottom: var(--space-4);
+		margin-bottom: var(--space-6);
+	}
+	.dashboard-header h1 {
+		margin: 0;
 	}
 	.header-actions {
 		display: flex;
@@ -235,86 +260,28 @@
 	}
 	.tile-grid {
 		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-		gap: var(--space-4);
+		grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
+		gap: var(--space-5);
 	}
-	.tile-card {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-2);
+	.tile-slot {
+		min-width: 0;
 	}
-	.as-of-picker {
-		align-self: flex-end;
-		display: flex;
-		align-items: center;
-		gap: var(--space-2);
-		font-size: var(--text-xs);
-		color: var(--color-text-muted);
-	}
-	.as-of-picker input {
-		font: var(--type-micro);
-		color: var(--text-secondary);
-		background: var(--surface);
-		border: none;
-		border-radius: var(--radius-sm);
-		padding: 4px 8px;
-	}
-	.tile-loading {
-		display: flex;
-		flex-direction: column;
-		flex: 1;
-		gap: var(--space-3);
-		min-height: 320px;
-	}
-	.skeleton-title {
-		width: 60%;
-		height: var(--text-lg);
-	}
-	.skeleton-body {
-		flex: 1;
-	}
-
 	.edit-hint {
-		color: var(--color-text-muted);
-		font-size: var(--text-sm);
+		color: var(--text-muted);
+		font: var(--type-caption);
 	}
-	.edit-grid {
-		grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-	}
-	.edit-tile {
+	.library {
+		margin-top: var(--space-10);
 		display: flex;
-		align-items: center;
+		flex-direction: column;
 		gap: var(--space-3);
-		background: var(--color-surface);
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-md, 8px);
-		padding: var(--space-3);
-		cursor: grab;
 	}
-	.edit-tile-hidden {
-		opacity: 0.5;
+	.library h2 {
+		margin: 0;
 	}
-	.drag-handle {
-		color: var(--color-text-faint);
-		touch-action: none;
-		font-size: var(--text-lg);
-		line-height: 1;
-	}
-	.edit-tile-title {
-		flex: 1;
-		font-size: var(--text-sm);
-	}
-	.visibility-toggle {
+	.library-items {
 		display: flex;
-		align-items: center;
-		gap: var(--space-1);
-		font-size: var(--text-xs);
-		color: var(--color-text-muted);
-		white-space: nowrap;
-	}
-	.edit-actions {
-		display: flex;
+		flex-wrap: wrap;
 		gap: var(--space-2);
-		margin-top: var(--space-4);
 	}
 </style>

@@ -2,15 +2,19 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
 	import type { PageData, ActionData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
-	function conversationHref(id: string): string {
-		return `${resolve('/chat')}?c=${id}`;
+	function conversationHref(id: string) {
+		return resolve(`/chat?c=${id}`);
 	}
 
 	let sending = $state(false);
+
+	// prefilled from a dashboard tile's "Dazu fragen →" link
+	let question = $derived(page.url.searchParams.get('q') ?? '');
 
 	// below 768px the conversation list becomes a drawer instead of a fixed
 	// left column -- see the max-width: 768px block in the style section below
@@ -47,6 +51,7 @@
 			</button>
 		</div>
 		<form method="POST" action="?/newConversation" use:enhance>
+			{#if question}<input type="hidden" name="q" value={question} />{/if}
 			<button type="submit" class="btn btn-secondary new-conversation-btn">
 				+ Neue Konversation
 			</button>
@@ -80,7 +85,18 @@
 
 	<div class="chat-main tile">
 		{#if !data.activeConversationId}
-			<p class="empty">Wähle links eine Konversation oder starte eine neue.</p>
+			{#if question}
+				<div class="ask-start">
+					<p class="t-caption">Deine Frage</p>
+					<p class="ask-question">{question}</p>
+					<form method="POST" action="?/newConversation" use:enhance>
+						<input type="hidden" name="q" value={question} />
+						<button type="submit" class="btn btn-primary">Neue Konversation dazu starten</button>
+					</form>
+				</div>
+			{:else}
+				<p class="empty">Wähle links eine Konversation oder starte eine neue.</p>
+			{/if}
 		{:else}
 			<div class="message-list">
 				{#each data.messages as m (m.id)}
@@ -154,6 +170,7 @@
 					type="text"
 					name="content"
 					placeholder="Frag Kairos..."
+					value={question}
 					required
 					disabled={sending}
 				/>
@@ -166,6 +183,19 @@
 </div>
 
 <style>
+	.ask-start {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-3);
+		max-width: 36rem;
+	}
+	.ask-start p {
+		margin: 0;
+	}
+	.ask-question {
+		font: var(--type-subtitle);
+		font-weight: 400;
+	}
 	.chat-layout {
 		display: grid;
 		grid-template-columns: 16rem 1fr;

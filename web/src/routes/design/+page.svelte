@@ -5,6 +5,62 @@
 	import FreshnessIndicator from '$lib/components/FreshnessIndicator.svelte';
 	import ContextChip from '$lib/components/ContextChip.svelte';
 	import { colors, hrZoneColors, sleepStageColors, heatColors } from '$lib/design/palette';
+	import MetricTile from '$lib/components/MetricTile.svelte';
+	import { moduleById } from '$lib/modules';
+	import type { MetricResult } from '$lib/types';
+
+	const TODAY = new Date().toISOString().slice(0, 10);
+	const res = (
+		metric_id: string,
+		value: MetricResult['value'],
+		have = 7,
+		need = 7
+	): MetricResult => ({
+		metric_id,
+		variant: 'default',
+		value,
+		unit: '',
+		confidence: 'high',
+		coverage_days: have,
+		coverage_required_days: need,
+		as_of: TODAY
+	});
+	const SAMPLES = [
+		{
+			id: 'hrv_baseline',
+			label: 'Rundanzeige · vollständig',
+			r: res('hrv_baseline', { today: 62, baseline_low: 55, baseline_high: 68 }, 60, 14)
+		},
+		{ id: 'acwr', label: 'Rundanzeige · teilweise', r: res('acwr', { ratio: 1.42 }, 5, 7) },
+		{ id: 'sleep_debt', label: 'Kennzahl', r: res('sleep_debt', 3.2) },
+		{
+			id: 'resting_hr_trend',
+			label: 'Kennzahl · mehrere Werte',
+			r: res('resting_hr_trend', { recent_avg: 52, prior_avg: 55, delta_bpm: -3 }, 37, 37)
+		},
+		{
+			id: 'training_load',
+			label: 'Belastung',
+			r: res('training_load', { ctl: 48, atl: 55, tsb: -7 }, 42, 42)
+		},
+		{
+			id: 'hr_zone_distribution',
+			label: 'Verteilung',
+			r: res(
+				'hr_zone_distribution',
+				{ zone_1: 8520, zone_2: 5760, zone_3: 3240, zone_4: 1320, zone_5: 480 },
+				1,
+				1
+			)
+		},
+		{
+			id: 'monotony_strain',
+			label: 'Leer',
+			r: { ...res('monotony_strain', null, 3, 7), confidence: 'insufficient_data' as const }
+		},
+		{ id: 'trimp', label: 'Fehler', r: null },
+		{ id: 'trimp', label: 'Laden', r: res('trimp', 42), loading: true }
+	];
 
 	const SWATCHES = [
 		'bg',
@@ -177,9 +233,59 @@
 			</div>
 		</div>
 	</section>
+
+	<section>
+		<h2>Kacheln · Zustände</h2>
+		<div class="tiles">
+			{#each SAMPLES as sample (sample.label)}
+				<div class="col">
+					<span class="t-caption">{sample.label}</span>
+					<div class="tile-wrap">
+						<MetricTile
+							tile={{
+								loading: sample.loading ?? false,
+								result: sample.r,
+								error: sample.r ? null : 'x'
+							}}
+							module={moduleById(sample.id)!}
+							asOf={TODAY}
+							today={TODAY}
+							onretry={() => {}}
+						/>
+					</div>
+				</div>
+			{/each}
+			<div class="col">
+				<span class="t-caption">Bearbeiten</span>
+				<div class="tile-wrap">
+					<MetricTile
+						tile={{ loading: false, result: res('sleep_debt', 1.4), error: null }}
+						module={moduleById('sleep_debt')!}
+						asOf={TODAY}
+						today={TODAY}
+						editing
+						onremove={() => {}}
+					/>
+				</div>
+			</div>
+		</div>
+	</section>
 </div>
 
 <style>
+	.tiles {
+		display: grid;
+		gap: var(--space-5);
+		grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
+	}
+	.tiles .col {
+		align-items: stretch;
+		gap: var(--space-2);
+	}
+	.tile-wrap {
+		display: flex;
+		flex-direction: column;
+	}
 	.ds {
 		display: flex;
 		flex-direction: column;
