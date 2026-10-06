@@ -73,6 +73,7 @@ export interface MemoryEntry {
 	source: 'user' | 'agent';
 	created_at: string;
 	updated_at: string;
+	expires_at: string | null;
 }
 
 export interface Conversation {

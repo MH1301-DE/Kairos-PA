@@ -1,0 +1,30 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from uuid import uuid4
+
+from kairos.agent.prompt import render_memory_block
+from kairos.db.models import AgentMemory
+
+
+def _entry(content: str, expires_at: datetime | None = None) -> AgentMemory:
+    return AgentMemory(
+        id=uuid4(), user_id=uuid4(), content=content, source="agent", expires_at=expires_at
+    )
+
+
+def test_memory_block_lists_entries_with_expiry_and_respects_budget() -> None:
+    entries = [
+        _entry("Ziel: Halbmarathon"),
+        _entry("Viel Stress", datetime(2026, 10, 11, 23, 59, 59, tzinfo=UTC)),
+    ]
+    block = render_memory_block(entries)
+    assert block.startswith("ERINNERUNGEN")
+    assert "- Ziel: Halbmarathon" in block
+    assert "- Viel Stress (gilt bis 11.10.2026)" in block
+    many = [_entry("x" * 400) for _ in range(50)]
+    assert len(render_memory_block(many, budget_tokens=300)) // 4 <= 300
+
+
+def test_empty_memory_block() -> None:
+    assert render_memory_block([]) == "ERINNERUNGEN: keine"

@@ -9,6 +9,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from kairos.agent.expiry import _parse_expiry
 from kairos.calendar.free_time import BusyBlock, CalendarPrefs, FreeBlock, compute_free_blocks
 from kairos.db.models import MetricDailyValue
 from kairos.metrics.bootstrap import build_default_registry
@@ -198,7 +199,7 @@ async def recall_handler(
     session: AsyncSession, *, user_id: UUID, query: str | None = None, limit: int = 10
 ) -> dict[str, Any]:
     repo = SqlMemoryRepository(session=session)
-    entries = await repo.list_for_user(user_id=user_id)
+    entries = await repo.list_active(user_id=user_id, now=datetime.now(UTC))
     if query:
         entries = [e for e in entries if query.lower() in e.content.lower()]
     entries = entries[:limit]
@@ -206,15 +207,24 @@ async def recall_handler(
     return _envelope(f"{len(data)} Gedächtnis-Einträge gefunden.", data)
 
 
-async def remember_handler(session: AsyncSession, *, user_id: UUID, content: str) -> dict[str, Any]:
+async def remember_handler(
+    session: AsyncSession, *, user_id: UUID, content: str, expires_at: str | None = None
+) -> dict[str, Any]:
     # write-class but executes immediately, no Proposal -- design spec
     # Scope-Entscheidung 4: visible undo chip in the frontend instead of a
     # pre-confirmation, dispatcher.py special-cases this tool by name
     repo = SqlMemoryRepository(session=session)
-    entry = await repo.create(user_id=user_id, content=content, source="agent")
+    expiry = _parse_expiry(expires_at) if expires_at else None
+    entry = await repo.create(user_id=user_id, content=content, source="agent", expires_at=expiry)
     await session.commit()
     return _envelope(
-        f"Gemerkt: {content}", {"id": str(entry.id), "content": entry.content, "source": "agent"}
+        f"Gemerkt: {content}",
+        {
+            "id": str(entry.id),
+            "content": entry.content,
+            "source": "agent",
+            "expires_at": entry.expires_at.isoformat() if entry.expires_at else None,
+        },
     )
 
 
@@ -522,7 +532,16 @@ CORE_TOOLS: tuple[ToolSpec, ...] = (
         risk_class="write", requires_confirmation=False,
         json_schema={
             "type": "object",
-            "properties": {"content": {"type": "string"}},
+            "properties": {
+                "content": {"type": "string"},
+                "expires_at": {
+                    "type": "string",
+                    "description": (
+                        "ISO-Datum, nur für zeitlich begrenzte Fakten (z.B. 'nächste Woche "
+                        "viel Stress' → Sonntag dieser Woche). Stabile Fakten ohne Ablauf."
+                    ),
+                },
+            },
             "required": ["content"],
         },
         handler=remember_handler,

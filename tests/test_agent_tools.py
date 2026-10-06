@@ -21,6 +21,7 @@ from kairos.agent.tools import (
     render_handler,
 )
 from kairos.repositories.calendar_event import CalendarEventRepository
+from kairos.repositories.memory import SqlMemoryRepository
 
 
 async def _insert_user(session: AsyncSession, user_id: UUID) -> None:
@@ -154,6 +155,41 @@ async def test_remember_handler_persists_with_agent_source(session: AsyncSession
     recalled = await recall_handler(session, user_id=user_id)
     assert recalled["data"][0]["content"] == "läuft ungern vor 7 Uhr"
     assert recalled["data"][0]["source"] == "agent"
+
+
+@pytest.mark.asyncio
+async def test_remember_handler_stores_expiry(session: AsyncSession) -> None:
+    user_id = uuid4()
+    await _insert_user(session, user_id)
+    await session.commit()
+
+    result = await remember_handler(
+        session, user_id=user_id, content="Stress", expires_at="2026-10-11"
+    )
+    expected = datetime(2026, 10, 11, 23, 59, 59, tzinfo=UTC)
+    assert result["data"]["expires_at"] == expected.isoformat()
+    entry = (await SqlMemoryRepository(session=session).list_for_user(user_id=user_id))[0]
+    assert entry.expires_at == expected
+
+
+@pytest.mark.asyncio
+async def test_remember_handler_rejects_bad_expiry(session: AsyncSession) -> None:
+    with pytest.raises(ValueError, match="expires_at"):
+        await remember_handler(
+            session, user_id=uuid4(), content="x", expires_at="nächste Woche"
+        )
+
+
+@pytest.mark.asyncio
+async def test_recall_handler_skips_expired(session: AsyncSession) -> None:
+    user_id = uuid4()
+    await _insert_user(session, user_id)
+    await session.commit()
+    await remember_handler(session, user_id=user_id, content="alt", expires_at="2020-01-01")
+    await remember_handler(session, user_id=user_id, content="aktuell")
+
+    result = await recall_handler(session, user_id=user_id)
+    assert [e["content"] for e in result["data"]] == ["aktuell"]
 
 
 @pytest.mark.asyncio

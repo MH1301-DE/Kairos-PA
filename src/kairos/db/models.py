@@ -424,6 +424,7 @@ class Conversation(Base):
     title: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    compacted_through_seq: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 
 class ConversationMessage(Base):
@@ -573,6 +574,7 @@ class AgentMemory(Base):
     source: Mapped[str] = mapped_column(Text, nullable=False, default="user")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         CheckConstraint("source IN ('user', 'agent')", name="agent_memory_source_check"),
