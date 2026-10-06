@@ -288,3 +288,24 @@ async def test_unanswered_proposal_is_closed_when_the_user_writes_again(
     assert len(closing) == 1
     sent = completion.call_args.kwargs["messages"]
     assert any(m["role"] == "tool" and m["tool_call_id"] == "call_p" for m in sent)
+
+
+@pytest.mark.asyncio
+async def test_failing_compaction_does_not_fail_the_turn(session: AsyncSession) -> None:
+    user_id, conversation_id = await _new_conversation(session)
+    with (
+        patch.object(
+            orchestrator_module, "get_completion",
+            new=AsyncMock(return_value=_fake_response("Alles gut.")),
+        ),
+        patch.object(
+            orchestrator_module, "compact_conversation",
+            new=AsyncMock(side_effect=RuntimeError("boom")),
+        ),
+    ):
+        result = await run_turn(session, user_id=user_id, conversation_id=conversation_id,
+                                user_message="Hallo")
+    assert result.reply_text == "Alles gut." and result.remembered == []
+    repo = ConversationRepository(session=session)
+    stored = await repo.list_messages(conversation_id=conversation_id, user_id=user_id)
+    assert [m.role for m in stored] == ["user", "assistant"]

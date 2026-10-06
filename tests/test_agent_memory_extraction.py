@@ -106,3 +106,19 @@ async def test_nothing_to_compact_makes_no_llm_call(session: AsyncSession) -> No
             session, user_id=user_id, conversation_id=conversation_id, now=_NOW
         ) == []
     llm.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_llm_exception_creates_nothing_and_does_not_advance(
+    session: AsyncSession,
+) -> None:
+    user_id, conversation_id = await _long_conversation(session)
+    repo = ConversationRepository(session=session)
+    llm = AsyncMock(side_effect=RuntimeError("provider down"))
+    with patch.object(memory_extraction, "get_completion", new=llm):
+        created = await compact_conversation(
+            session, user_id=user_id, conversation_id=conversation_id, now=_NOW
+        )
+    assert created == []
+    conversation = await repo.get(user_id=user_id, conversation_id=conversation_id)
+    assert conversation is not None and conversation.compacted_through_seq is None

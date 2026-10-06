@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -22,6 +23,8 @@ from kairos.agent.memory_extraction import compact_conversation
 from kairos.agent.prompt import build_system_prompt
 from kairos.agent.tools import CORE_TOOLS
 from kairos.repositories.conversation import ConversationRepository
+
+logger = logging.getLogger(__name__)
 
 # hardcap so a runaway tool-call cycle (model keeps calling tools without ever
 # producing a plain-text reply) can't loop forever
@@ -99,10 +102,17 @@ async def run_turn(
                 conversation_id=conversation_id, user_id=user_id, role="assistant",
                 content=message.content,
             )
-            extracted = await compact_conversation(
-                session, user_id=user_id, conversation_id=conversation_id,
-                now=datetime.now(UTC),
-            )
+            # persist the reply before extraction so a failing extraction cannot lose it
+            await session.commit()
+            try:
+                extracted = await compact_conversation(
+                    session, user_id=user_id, conversation_id=conversation_id,
+                    now=datetime.now(UTC),
+                )
+            except Exception:
+                await session.rollback()
+                logger.warning("Memory compaction failed", exc_info=True)
+                extracted = []
             remembered.extend(
                 {
                     "id": str(e.id), "content": e.content, "source": e.source,
