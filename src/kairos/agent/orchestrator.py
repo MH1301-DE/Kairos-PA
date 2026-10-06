@@ -162,7 +162,6 @@ async def _run_loop(
                 conversation_id=conversation_id, user_id=user_id, role="assistant",
                 content=content, tool_calls=tool_calls_data,
             )
-            await session.commit()
             messages.append(
                 {
                     "role": "assistant",
@@ -179,6 +178,8 @@ async def _run_loop(
                 }
             )
 
+            # one transaction per round: a disconnect never leaves tool calls without results
+            round_events: list[AgentEvent] = []
             for index, tc in enumerate(tool_calls):
                 name = tc.function.name
                 if name is None:
@@ -199,6 +200,8 @@ async def _run_loop(
                             tool_call_id=skipped.id,
                         )
                     await session.commit()
+                    for event in round_events:
+                        yield event
                     yield AgentEvent("proposal", {
                         "tool_call_id": result.tool_call_id or tc.id,
                         "tool_name": result.tool_name, "summary": result.summary,
@@ -212,10 +215,11 @@ async def _run_loop(
                     conversation_id=conversation_id, user_id=user_id, role="tool",
                     content=result_json, tool_call_id=tc.id,
                 )
-                await session.commit()
                 messages.append({"role": "tool", "tool_call_id": tc.id, "content": result_json})
-                for event in result_events(tc.id, name, result):
-                    yield event
+                round_events.extend(result_events(tc.id, name, result))
+            await session.commit()
+            for event in round_events:
+                yield event
 
         yield AgentEvent("token", {"text": TOO_MANY_TOOL_CALLS})
         yield AgentEvent("done", {})
@@ -257,11 +261,13 @@ async def _execute(
     except ValueError as exc:  # JSONDecodeError is a ValueError
         return tool_result(f"Ungültige JSON-Argumente: {exc}")
     try:
-        return await dispatch(
-            session, user_id=user_id,
-            tool_call=ToolCall(name=name, arguments=arguments, id=tool_call.id),
-            pending_confirmation=False,
-        )
+        # savepoint so a failing handler cannot poison the round's open transaction
+        async with session.begin_nested():
+            return await dispatch(
+                session, user_id=user_id,
+                tool_call=ToolCall(name=name, arguments=arguments, id=tool_call.id),
+                pending_confirmation=False,
+            )
     except Exception as exc:
         return tool_result(f"Fehler: {exc}")
 

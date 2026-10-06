@@ -216,7 +216,6 @@ async def remember_handler(
     repo = SqlMemoryRepository(session=session)
     expiry = _parse_expiry(expires_at) if expires_at else None
     entry = await repo.create(user_id=user_id, content=content, source="agent", expires_at=expiry)
-    await session.commit()
     return _envelope(
         f"Gemerkt: {content}",
         {
@@ -328,7 +327,6 @@ async def plan_propose_handler(
         user_id=user_id, title=f"Trainingsplan ab {start.isoformat()}", start_date=start,
         end_date=end, goal_date=goal, blocks=planned,
     )
-    await session.commit()
 
     lines = [
         f"{b.day.isoformat()}: {_WORKOUT_LABELS[b.workout_type]}"

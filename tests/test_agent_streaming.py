@@ -207,3 +207,99 @@ async def test_run_turn_assembles_reply_from_stream(session: AsyncSession) -> No
                                 user_message="Hi")
     assert result.reply_text == "Hallo"
     assert result.proposal is None
+
+
+def _two_call_round(first: tuple[str, str], second: tuple[str, str]) -> list:
+    return [
+        tool_call_chunk(0, "call_1", *first), tool_call_chunk(1, "call_2", *second),
+        finish_chunk("tool_calls"),
+    ]
+
+
+async def _close_at(agen, event_type: str, nth: int) -> None:
+    seen = 0
+    async for ev in agen:
+        if ev.type == event_type:
+            seen += 1
+            if seen == nth:
+                break
+    await agen.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("event_type", "nth", "expected_roles"), [
+    ("tool_start", 1, ["user"]),
+    ("tool_start", 2, ["user"]),
+    ("tool_end", 1, ["user", "assistant", "tool", "tool"]),
+])
+async def test_tool_round_is_persisted_all_or_nothing(
+    session: AsyncSession, event_type: str, nth: int, expected_roles: list[str]
+) -> None:
+    user_id, conversation_id = await _new_conversation(session)
+    args = '{"metric_id": "hrv_baseline"}'
+    rounds = _rounds(
+        _two_call_round(("query_health", args), ("query_health", args)), _text_round("x")
+    )
+    result = {"summary": "HRV 62ms", "data": {"value": 62}, "meta": {}}
+    with (
+        patch.object(orchestrator_module, "stream_completion", new=rounds),
+        patch.object(orchestrator_module, "dispatch", new=AsyncMock(return_value=result)),
+    ):
+        await _close_at(
+            stream_turn(session, user_id=user_id, conversation_id=conversation_id,
+                        user_message="Frage"),
+            event_type, nth,
+        )
+    await session.rollback()
+    stored = await ConversationRepository(session=session).list_messages(
+        conversation_id=conversation_id, user_id=user_id)
+    assert [m.role for m in stored] == expected_roles
+
+
+@pytest.mark.asyncio
+async def test_disconnect_mid_round_does_not_commit_a_remembered_entry(
+    session: AsyncSession,
+) -> None:
+    user_id, conversation_id = await _new_conversation(session)
+    rounds = _rounds(
+        _two_call_round(("remember", '{"content": "mag keine Sprints"}'),
+                        ("query_health", '{"metric_id": "hrv_baseline"}')),
+        _text_round("x"),
+    )
+    with patch.object(orchestrator_module, "stream_completion", new=rounds):
+        await _close_at(
+            stream_turn(session, user_id=user_id, conversation_id=conversation_id,
+                        user_message="Ich mag keine Sprints."),
+            "tool_start", 2,
+        )
+    await session.rollback()
+    count = await session.scalar(
+        text("SELECT count(*) FROM agent_memory WHERE user_id = :u"), {"u": str(user_id)}
+    )
+    assert count == 0
+
+
+@pytest.mark.asyncio
+async def test_handler_db_error_becomes_error_result_without_losing_the_round(
+    session: AsyncSession,
+) -> None:
+    user_id, conversation_id = await _new_conversation(session)
+
+    async def _broken_handler(sess: AsyncSession, **_kwargs: object) -> dict:
+        await sess.execute(text("SELECT * FROM table_that_does_not_exist"))
+        return {}
+
+    rounds = _rounds(
+        _tool_round("call_1", "query_health", '{"metric_id": "hrv_baseline"}'),
+        _text_round("Ging nicht."),
+    )
+    with (
+        patch.object(orchestrator_module, "stream_completion", new=rounds),
+        patch.object(orchestrator_module, "dispatch", new=_broken_handler),
+    ):
+        events = await _collect(session, user_id, conversation_id)
+    assert next(e for e in events if e.type == "tool_end").data["ok"] is False
+    assert events[-1].type == "done"
+    stored = await ConversationRepository(session=session).list_messages(
+        conversation_id=conversation_id, user_id=user_id)
+    assert [m.role for m in stored] == ["user", "assistant", "tool", "assistant"]
