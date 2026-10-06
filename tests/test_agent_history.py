@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from kairos.agent.history import repair_history
+from kairos.agent.history import repair_history, split_turns, window_turns
+from kairos.db.models import ConversationMessage
 
 
 def _assistant(*ids: str) -> dict:
@@ -43,3 +44,27 @@ def test_orphan_tool_message_without_preceding_call_is_dropped() -> None:
         {"role": "user", "content": "a"},
     ]
     assert repair_history(messages) == [{"role": "user", "content": "a"}]
+
+
+def _msg(seq: int, role: str, content: str = "x") -> ConversationMessage:
+    return ConversationMessage(
+        seq=seq, role=role, content=content, tool_calls=None, tool_call_id=None
+    )
+
+
+def test_split_turns_starts_a_turn_at_each_user_message() -> None:
+    msgs = [_msg(1, "user"), _msg(2, "assistant"), _msg(3, "tool"), _msg(4, "user")]
+    assert [[m.seq for m in t] for t in split_turns(msgs)] == [[1, 2, 3], [4]]
+
+
+def test_window_keeps_newest_turns_within_budget_and_evicts_oldest() -> None:
+    turns = [[_msg(i, "user", "y" * 400)] for i in range(1, 6)]
+    kept, evicted = window_turns(turns, budget_tokens=250)
+    assert [t[0].seq for t in kept] == [4, 5]
+    assert [t[0].seq for t in evicted] == [1, 2, 3]
+
+
+def test_window_always_keeps_the_newest_turn() -> None:
+    turns = [[_msg(1, "user", "z" * 10_000)]]
+    kept, evicted = window_turns(turns, budget_tokens=10)
+    assert len(kept) == 1 and evicted == []

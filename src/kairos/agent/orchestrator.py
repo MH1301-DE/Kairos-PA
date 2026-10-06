@@ -10,8 +10,15 @@ from litellm.types.utils import ChatCompletionMessageToolCall
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kairos.agent.dispatcher import Proposal, ToolCall, dispatch
-from kairos.agent.history import NOT_CONFIRMED, repair_history
+from kairos.agent.history import (
+    HISTORY_BUDGET_TOKENS,
+    NOT_CONFIRMED,
+    repair_history,
+    split_turns,
+    window_turns,
+)
 from kairos.agent.llm_client import get_completion
+from kairos.agent.memory_extraction import compact_conversation
 from kairos.agent.prompt import build_system_prompt
 from kairos.agent.tools import CORE_TOOLS
 from kairos.repositories.conversation import ConversationRepository
@@ -38,7 +45,11 @@ async def run_turn(
     session: AsyncSession, *, user_id: UUID, conversation_id: UUID, user_message: str
 ) -> OrchestratorResult:
     conv_repo = ConversationRepository(session=session)
-    history = await conv_repo.list_messages(conversation_id=conversation_id, user_id=user_id)
+    conversation = await conv_repo.get(user_id=user_id, conversation_id=conversation_id)
+    after_seq = conversation.compacted_through_seq if conversation else None
+    history = await conv_repo.list_messages_after(
+        conversation_id=conversation_id, user_id=user_id, after_seq=after_seq
+    )
 
     # an unanswered proposal leaves tool calls without results; close them in the DB
     answered = {m.tool_call_id for m in history if m.role == "tool"}
@@ -54,7 +65,11 @@ async def run_turn(
                     tool_call_id=open_call["id"],
                 )
     if closed_any:
-        history = await conv_repo.list_messages(conversation_id=conversation_id, user_id=user_id)
+        history = await conv_repo.list_messages_after(
+            conversation_id=conversation_id, user_id=user_id, after_seq=after_seq
+        )
+    kept_turns, _ = window_turns(split_turns(history), HISTORY_BUDGET_TOKENS)
+    history = [m for turn in kept_turns for m in turn]
 
     system_content = await build_system_prompt(session, user_id=user_id, now=datetime.now(UTC))
     history_messages = [
@@ -83,6 +98,17 @@ async def run_turn(
             await conv_repo.append_message(
                 conversation_id=conversation_id, user_id=user_id, role="assistant",
                 content=message.content,
+            )
+            extracted = await compact_conversation(
+                session, user_id=user_id, conversation_id=conversation_id,
+                now=datetime.now(UTC),
+            )
+            remembered.extend(
+                {
+                    "id": str(e.id), "content": e.content, "source": e.source,
+                    "expires_at": e.expires_at.isoformat() if e.expires_at else None,
+                }
+                for e in extracted
             )
             return OrchestratorResult(
                 reply_text=message.content, proposal=None, remembered=remembered
