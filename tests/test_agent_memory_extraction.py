@@ -72,7 +72,7 @@ async def test_evicted_turns_become_memories_and_compaction_advances(
     conversation = await repo.get(user_id=user_id, conversation_id=conversation_id)
     assert conversation is not None and conversation.compacted_through_seq is not None
     llm_input = llm.call_args.kwargs["messages"][-1]["content"]
-    assert "Frage 0" in llm_input and "Frage 5" not in llm_input
+    assert "Frage 2" in llm_input and "Frage 5" not in llm_input
 
 
 @pytest.mark.asyncio
@@ -122,3 +122,53 @@ async def test_llm_exception_creates_nothing_and_does_not_advance(
     assert created == []
     conversation = await repo.get(user_id=user_id, conversation_id=conversation_id)
     assert conversation is not None and conversation.compacted_through_seq is None
+
+
+@pytest.mark.asyncio
+async def test_invalid_items_are_skipped_and_compaction_still_advances(
+    session: AsyncSession,
+) -> None:
+    user_id, conversation_id = await _long_conversation(session)
+    repo = ConversationRepository(session=session)
+    llm = AsyncMock(return_value=_fake_response(
+        '[{"content": "Läuft gern morgens", "expires_at": null},'
+        ' {"content": "Erkältet", "expires_at": "nächste Woche"},'
+        ' "kein Objekt", {"expires_at": null},'
+        ' {"content": "Ziel: Halbmarathon", "expires_at": "2026-12-01"}]'
+    ))
+    with patch.object(memory_extraction, "get_completion", new=llm):
+        created = await compact_conversation(
+            session, user_id=user_id, conversation_id=conversation_id, now=_NOW
+        )
+    assert [m.content for m in created] == ["Läuft gern morgens", "Ziel: Halbmarathon"]
+    conversation = await repo.get(user_id=user_id, conversation_id=conversation_id)
+    assert conversation is not None and conversation.compacted_through_seq is not None
+
+
+@pytest.mark.asyncio
+async def test_extraction_transcript_is_capped_to_the_most_recent_part(
+    session: AsyncSession,
+) -> None:
+    user_id, conversation_id = await _new_conversation(session)
+    repo = ConversationRepository(session=session)
+    for i in range(12):
+        await repo.append_message(
+            conversation_id=conversation_id, user_id=user_id,
+            role="user", content=f"Frage {i} " + "w" * 12_000,
+        )
+    await session.commit()
+    llm = AsyncMock(return_value=_fake_response("[]"))
+    with patch.object(memory_extraction, "get_completion", new=llm):
+        await compact_conversation(
+            session, user_id=user_id, conversation_id=conversation_id, now=_NOW
+        )
+    llm_input = llm.call_args.kwargs["messages"][-1]["content"]
+    transcript = llm_input.split("GESPRÄCH:\n", 1)[1]
+    assert len(transcript) <= memory_extraction.TRANSCRIPT_MAX_CHARS
+    assert "Frage 0" not in transcript and "Frage 8" in transcript
+
+
+def test_extraction_prompt_only_trusts_user_lines() -> None:
+    prompt = memory_extraction._EXTRACTION_PROMPT
+    assert "ausschließlich aus Aussagen des Nutzers" in prompt
+    assert "assistant:" in prompt
