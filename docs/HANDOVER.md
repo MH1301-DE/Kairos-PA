@@ -1308,10 +1308,19 @@ Gesamtzeit 20 s:** Streaming funktioniert (Frage ohne Tools: TTFT 0,8 s), die Wa
 LLM-Runden vor dem ersten Text. Im Chat sieht der Nutzer stattdessen sofort `tool_start`-Statuszeilen — sobald Task 8 gebaut ist.
 
 **Offen / bekannt:**
-- **Task 8 fehlt → der Chat im Frontend ist bis dahin kaputt** (Seite ruft das entfernte `POST /{id}/messages` auf). `main` erst
-  zusammen mit Task 8 deployen.
+- ~~Task 8 fehlt~~ — **Task 8 umgesetzt (2026-10-06, `2b7a13e`, `91e41a6`):** `/chat` liest den SSE-Stream (Markdown via
+  `marked`+`DOMPurify`, nur im Browser — serverseitig escapter Klartext, sonst 500 beim SSR), Tool-Statuszeilen, Inline-Diagramme
+  (`web/src/lib/chat/`), offene Vorschläge erscheinen nach Reload wieder. Offen: kein Auto-Scroll, kein Abbruch beim
+  Konversationswechsel, Erinnerungs-Chips nach Reload weg.
+- **Nachtrag 2026-10-06 (`f25b2d9`, `a9ea598`):** Agent meldete "keine Trainingsdaten", weil `variants[0]` für `trimp` = `banister`
+  war (braucht `user_setting.sex`, beim Nutzer nicht gesetzt → immer leer). `MetricRegistry.default_variant()` bevorzugt jetzt
+  `trimp→edwards`, `hr_zone_distribution→percent_max`. Außerdem berechnet jeder Garmin-Backfill danach automatisch
+  `wellness_daily_stats`/`hr_bucket_seconds_daily`/`metric_daily_value` für `[frühestes geholtes Fenster, heute]` neu (vorher nur per
+  Dashboard-Button → Tabellen hingen seit 09-09 hinterher); der Button rechnet nur noch 60 Tage.
+- **Nächster sinnvoller Schritt:** Aktivitäten-Tool für den Agenten ("wie war mein letzter Lauf?" — Distanz, Dauer, Pace, ⌀HF aus
+  `activity`); heute kennt der Agent nur Tageswerte.
 - Bekannte Restpunkte (bewusst geparkt): `plan_commit` mit mehreren Blöcken — scheitert Block N, sind die Google-Termine 1..N-1
   angelegt, ihre lokalen Zeilen aber zurückgerollt (manuell aufräumen); das Extraktions-Transkript wird zeichenweise gekappt und kann
   mitten in einer Assistant-Nachricht beginnen; DB-Verbindung bleibt während des LLM-Streams in einer offenen Transaktion
   (unkritisch bei 1–5 Nutzern); ein `tool_end` ohne vorheriges `tool_start` ist möglich (bestätigungspflichtiges Tool mit kaputtem JSON).
-- Tests: **385 passed, 0 skipped** (mit Docker).
+- Tests: **394 passed, 0 skipped** (mit Docker); Frontend vitest 68 passed.

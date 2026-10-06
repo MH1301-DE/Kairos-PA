@@ -27,7 +27,7 @@ git show <hash>
 
 - **Language:** Python 3.12+ (`pyproject.toml` floor; mypy targets 3.12, this machine's venv is 3.13.7), FastAPI, SQLAlchemy async
 - **Linting:** `ruff` (line-length 100) + `mypy --strict`
-- **Tests:** `.venv/bin/python -m pytest -q` (Windows: `.venv/Scripts/python -m pytest -q`) → must be 385 passed, 0 skipped (0 skipped requires Docker running for the testcontainers tests)
+- **Tests:** `.venv/bin/python -m pytest -q` (Windows: `.venv/Scripts/python -m pytest -q`) → must be 394 passed, 0 skipped (0 skipped requires Docker running for the testcontainers tests)
 - **Commits:** conventional commits (`feat(scope):`, `fix:`, `chore:`)
 - **No docstrings** on code you didn't change
 - **Comments:** one short line only — state what the code cannot show, not what it does
