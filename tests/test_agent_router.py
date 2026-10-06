@@ -1,7 +1,9 @@
 # tests/test_agent_router.py
 from __future__ import annotations
 
+import json
 import uuid
+from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,8 +12,9 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from kairos.agent.dispatcher import Proposal
-from kairos.agent.orchestrator import OrchestratorResult
+from kairos.agent import orchestrator as orchestrator_module
+from kairos.agent.events import AgentEvent
+from kairos.agent.llm_client import NoLlmCredentialConfigured
 from kairos.api import app
 from kairos.auth.deps import current_user
 from kairos.db.session import get_session
@@ -81,111 +84,109 @@ async def test_messages_404_for_unknown_conversation(authed_client: AsyncClient)
     assert resp.status_code == 404
 
 
+def _parse_sse(body: str) -> list[tuple[str, dict]]:
+    events = []
+    for block in body.strip().split("\n\n"):
+        lines = dict(line.split(": ", 1) for line in block.splitlines())
+        events.append((lines["event"], json.loads(lines["data"])))
+    return events
+
+
+async def _events(*events: AgentEvent) -> AsyncIterator[AgentEvent]:
+    for ev in events:
+        yield ev
+
+
 @pytest.mark.asyncio
-async def test_send_message_returns_reply_and_persists_history(
-    authed_client: AsyncClient,
-) -> None:
+async def test_stream_returns_sse_body_and_sets_title(authed_client: AsyncClient) -> None:
     create_resp = await authed_client.post("/api/agent/conversations", json={})
     conversation_id = create_resp.json()["id"]
+    events = [AgentEvent("token", {"text": "Hallo"}), AgentEvent("done", {})]
 
-    fake_result = OrchestratorResult(reply_text="Du bist gut erholt.", proposal=None)
-    with patch(
-        "kairos.routers.agent.run_turn", new=AsyncMock(return_value=fake_result)
-    ) as mock_run_turn:
+    with patch.object(
+        agent_router_module, "stream_turn", new=MagicMock(return_value=_events(*events))
+    ) as mock_stream_turn:
         resp = await authed_client.post(
-            f"/api/agent/conversations/{conversation_id}/messages",
+            f"/api/agent/conversations/{conversation_id}/stream",
             json={"content": "Wie erholt bin ich?"},
         )
     assert resp.status_code == 200
-    body = resp.json()
-    assert body["reply"] == "Du bist gut erholt."
-    assert body["proposal"] is None
-    mock_run_turn.assert_called_once()
+    assert resp.headers["content-type"].startswith("text/event-stream")
+    assert resp.text == "".join(ev.to_sse() for ev in events)
+    assert mock_stream_turn.call_args.kwargs["user_message"] == "Wie erholt bin ich?"
 
-    messages_resp = await authed_client.get(f"/api/agent/conversations/{conversation_id}/messages")
-    # run_turn itself is mocked (doesn't persist anything), but the conversation's
-    # title must still be set from the first message
     list_resp = await authed_client.get("/api/agent/conversations")
     assert list_resp.json()["conversations"][0]["title"] == "Wie erholt bin ich?"
-    del messages_resp
 
 
 @pytest.mark.asyncio
-async def test_send_message_returns_proposal_shape(authed_client: AsyncClient) -> None:
+async def test_stream_404_for_unknown_conversation(authed_client: AsyncClient) -> None:
+    with patch.object(agent_router_module, "stream_turn", new=MagicMock()) as mock_stream_turn:
+        resp = await authed_client.post(
+            f"/api/agent/conversations/{uuid.uuid4()}/stream", json={"content": "Hi"}
+        )
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "conversation_not_found"
+    mock_stream_turn.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_non_streaming_send_endpoint_is_gone(authed_client: AsyncClient) -> None:
     create_resp = await authed_client.post("/api/agent/conversations", json={})
     conversation_id = create_resp.json()["id"]
-
-    proposal = Proposal(
-        tool_name="propose_calendar_event", arguments={"summary": "Long Run"},
-        summary="Termin \"Long Run\" anlegen",
-    )
-    fake_result = OrchestratorResult(reply_text=None, proposal=proposal)
-    with patch("kairos.routers.agent.run_turn", new=AsyncMock(return_value=fake_result)):
-        resp = await authed_client.post(
-            f"/api/agent/conversations/{conversation_id}/messages",
-            json={"content": "Plan mir einen Lauf."},
-        )
-    body = resp.json()
-    assert body["reply"] is None
-    assert body["proposal"]["tool_name"] == "propose_calendar_event"
-
-
-@pytest.mark.asyncio
-async def test_send_message_404_for_unknown_conversation(authed_client: AsyncClient) -> None:
     resp = await authed_client.post(
-        f"/api/agent/conversations/{uuid.uuid4()}/messages", json={"content": "Hi"}
+        f"/api/agent/conversations/{conversation_id}/messages", json={"content": "Hi"}
     )
-    assert resp.status_code == 404
+    assert resp.status_code in (404, 405)
 
 
 @pytest.mark.asyncio
-async def test_send_message_returns_503_without_an_llm_credential(
+async def test_stream_reports_missing_llm_credential_as_error_event(
     authed_client: AsyncClient,
 ) -> None:
     """Regression test: found via a live smoke test against a user with no
-    connection row -- run_turn's NoLlmCredentialConfigured must surface as a
-    clean 503, not an unhandled 500."""
+    connection row -- NoLlmCredentialConfigured must surface as a clean
+    error event, not an unhandled 500."""
     create_resp = await authed_client.post("/api/agent/conversations", json={})
     conversation_id = create_resp.json()["id"]
 
-    from kairos.agent.llm_client import NoLlmCredentialConfigured
-
-    with patch(
-        "kairos.routers.agent.run_turn",
-        new=AsyncMock(side_effect=NoLlmCredentialConfigured("no key")),
+    with patch.object(
+        orchestrator_module, "stream_completion",
+        new=MagicMock(side_effect=NoLlmCredentialConfigured("no key")),
     ):
         resp = await authed_client.post(
-            f"/api/agent/conversations/{conversation_id}/messages", json={"content": "Hi"}
+            f"/api/agent/conversations/{conversation_id}/stream", json={"content": "Hi"}
         )
-    assert resp.status_code == 503
-    assert resp.json()["detail"] == "no_llm_provider_configured"
+    assert resp.status_code == 200
+    assert _parse_sse(resp.text) == [
+        ("error", {"detail": "no_llm_provider_configured"}), ("done", {}),
+    ]
 
 
 @pytest.mark.asyncio
-async def test_send_message_returns_502_on_llm_provider_error(authed_client: AsyncClient) -> None:
+async def test_stream_reports_llm_provider_error_as_error_event(
+    authed_client: AsyncClient,
+) -> None:
     """Regression test: found via a live smoke test with a dummy API key --
     litellm.exceptions.AuthenticationError (and every other litellm error, all
-    on the openai.OpenAIError hierarchy) must surface as a clean 502, not an
-    unhandled 500."""
+    on the openai.OpenAIError hierarchy) must surface as a clean error event."""
     import openai
 
     create_resp = await authed_client.post("/api/agent/conversations", json={})
     conversation_id = create_resp.json()["id"]
 
     fake_response = MagicMock(status_code=401, headers={})
-    with patch(
-        "kairos.routers.agent.run_turn",
-        new=AsyncMock(
-            side_effect=openai.AuthenticationError(
-                message="invalid key", response=fake_response, body=None
-            )
-        ),
+    with patch.object(
+        orchestrator_module, "stream_completion",
+        new=MagicMock(side_effect=openai.AuthenticationError(
+            message="invalid key", response=fake_response, body=None
+        )),
     ):
         resp = await authed_client.post(
-            f"/api/agent/conversations/{conversation_id}/messages", json={"content": "Hi"}
+            f"/api/agent/conversations/{conversation_id}/stream", json={"content": "Hi"}
         )
-    assert resp.status_code == 502
-    assert resp.json()["detail"] == "llm_provider_error"
+    assert resp.status_code == 200
+    assert _parse_sse(resp.text) == [("error", {"detail": "llm_provider_error"}), ("done", {})]
 
 
 async def _conversation_with_pending_proposal(
@@ -211,11 +212,22 @@ async def test_confirm_executes_stored_arguments_and_answers_the_original_call(
 ) -> None:
     conversation_id = await _conversation_with_pending_proposal(db_session, test_user_id)
     executed = AsyncMock(return_value={"summary": "Termin angelegt", "data": {}, "meta": {}})
-    with patch.object(agent_router_module, "dispatch", new=executed):
+    continuation = MagicMock(return_value=_events(AgentEvent("done", {})))
+    with (
+        patch.object(agent_router_module, "dispatch", new=executed),
+        patch.object(agent_router_module, "stream_continuation", new=continuation),
+    ):
         resp = await authed_client.post(
             f"/api/agent/conversations/{conversation_id}/proposals/call_p/confirm"
         )
     assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/event-stream")
+    assert _parse_sse(resp.text) == [
+        ("tool_end", {"id": "call_p", "name": "propose_calendar_event",
+                      "summary": "Termin angelegt", "ok": True}),
+        ("done", {}),
+    ]
+    continuation.assert_called_once()
     call = executed.call_args.kwargs["tool_call"]
     assert call.name == "propose_calendar_event"
     assert call.arguments["summary"] == "Lauf"
@@ -231,7 +243,11 @@ async def test_second_confirm_is_rejected_without_executing_twice(
 ) -> None:
     conversation_id = await _conversation_with_pending_proposal(db_session, test_user_id)
     executed = AsyncMock(return_value={"summary": "ok", "data": {}, "meta": {}})
-    with patch.object(agent_router_module, "dispatch", new=executed):
+    with (
+        patch.object(agent_router_module, "dispatch", new=executed),
+        patch.object(agent_router_module, "stream_continuation",
+                     new=MagicMock(side_effect=lambda *_a, **_k: _events(AgentEvent("done", {})))),
+    ):
         first = await authed_client.post(
             f"/api/agent/conversations/{conversation_id}/proposals/call_p/confirm")
         second = await authed_client.post(
@@ -247,10 +263,15 @@ async def test_reject_records_rejection_and_unknown_proposal_is_404(
     authed_client: AsyncClient, db_session: AsyncSession, test_user_id: uuid.UUID
 ) -> None:
     conversation_id = await _conversation_with_pending_proposal(db_session, test_user_id)
-    resp = await authed_client.post(
-        f"/api/agent/conversations/{conversation_id}/proposals/call_p/reject")
+    continuation = MagicMock(return_value=_events(AgentEvent("done", {})))
+    with patch.object(agent_router_module, "stream_continuation", new=continuation):
+        resp = await authed_client.post(
+            f"/api/agent/conversations/{conversation_id}/proposals/call_p/reject")
     assert resp.status_code == 200
-    assert resp.json() == {"rejected": True}
+    first_type, first_data = _parse_sse(resp.text)[0]
+    assert first_type == "tool_end"
+    assert first_data["id"] == "call_p"
+    assert "abgelehnt" in first_data["summary"]
     tool_rows = [
         m for m in await ConversationRepository(session=db_session).list_messages(
             conversation_id=conversation_id, user_id=test_user_id

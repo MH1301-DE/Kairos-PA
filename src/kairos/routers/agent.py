@@ -2,17 +2,23 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import AsyncIterator
 from typing import Any
 from uuid import UUID
 
-import openai
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kairos.agent.dispatcher import Proposal, ToolCall, dispatch, needs_confirmation
-from kairos.agent.llm_client import NoLlmCredentialConfigured
-from kairos.agent.orchestrator import run_turn, tool_result
+from kairos.agent.events import AgentEvent
+from kairos.agent.orchestrator import (
+    result_events,
+    stream_continuation,
+    stream_turn,
+    tool_result,
+)
 from kairos.agent.tools import TOOLS_BY_NAME
 from kairos.auth.deps import current_user
 from kairos.db.rls import install_rls_listener
@@ -32,13 +38,6 @@ class CreateConversationRequest(BaseModel):
 
 class SendMessageRequest(BaseModel):
     content: str
-
-
-def _proposal_to_dict(p: Proposal) -> dict[str, Any]:
-    return {
-        "tool_name": p.tool_name, "arguments": p.arguments, "summary": p.summary,
-        "tool_call_id": p.tool_call_id,
-    }
 
 
 @router.post("", status_code=201)
@@ -99,13 +98,13 @@ async def list_messages(
     }
 
 
-@router.post("/{conversation_id}/messages")
-async def send_message(
+@router.post("/{conversation_id}/stream")
+async def stream_message(
     conversation_id: UUID,
     req: SendMessageRequest,
     user: dict[str, Any] = Depends(current_user),
     session: AsyncSession = Depends(get_session),
-) -> dict[str, Any]:
+) -> StreamingResponse:
     user_id = UUID(user["user_id"])
     install_rls_listener(session, user_id)
     repo = ConversationRepository(session=session)
@@ -114,25 +113,33 @@ async def send_message(
         raise HTTPException(status_code=404, detail="conversation_not_found")
     if conversation.title is None:
         conversation.title = req.content[:_TITLE_MAX_LEN]
-
-    try:
-        result = await run_turn(
+        await session.commit()
+    return _event_stream(
+        stream_turn(
             session, user_id=user_id, conversation_id=conversation_id, user_message=req.content
         )
-    except NoLlmCredentialConfigured as exc:
-        raise HTTPException(status_code=503, detail="no_llm_provider_configured") from exc
-    except openai.OpenAIError as exc:
-        # litellm normalizes every provider's errors onto the openai.* hierarchy
-        # (AuthenticationError, RateLimitError, APIConnectionError, ...) -- a
-        # wrong/expired key or an upstream outage must not surface as a raw 500
-        logger.warning("LLM call failed for user %s: %s", user_id, exc)
-        raise HTTPException(status_code=502, detail="llm_provider_error") from exc
-    await session.commit()
-    return {
-        "reply": result.reply_text,
-        "proposal": _proposal_to_dict(result.proposal) if result.proposal else None,
-        "remembered": result.remembered,
-    }
+    )
+
+
+def _event_stream(events: AsyncIterator[AgentEvent]) -> StreamingResponse:
+    return StreamingResponse(
+        _sse(events), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+async def _sse(events: AsyncIterator[AgentEvent]) -> AsyncIterator[str]:
+    async for event in events:
+        yield event.to_sse()
+
+
+async def _prefixed(
+    first: list[AgentEvent], rest: AsyncIterator[AgentEvent]
+) -> AsyncIterator[AgentEvent]:
+    for event in first:
+        yield event
+    async for event in rest:
+        yield event
 
 
 async def _load_pending_proposal(
@@ -161,7 +168,7 @@ async def confirm_proposal(
     tool_call_id: str,
     user: dict[str, Any] = Depends(current_user),
     session: AsyncSession = Depends(get_session),
-) -> dict[str, Any]:
+) -> StreamingResponse:
     user_id = UUID(user["user_id"])
     install_rls_listener(session, user_id)
     repo = ConversationRepository(session=session)
@@ -186,7 +193,10 @@ async def confirm_proposal(
         content=json.dumps(result, ensure_ascii=False), tool_call_id=tool_call_id,
     )
     await session.commit()
-    return result
+    return _event_stream(_prefixed(
+        result_events(tool_call_id, call["name"], result),
+        stream_continuation(session, user_id=user_id, conversation_id=conversation_id),
+    ))
 
 
 @router.post("/{conversation_id}/proposals/{tool_call_id}/reject")
@@ -195,19 +205,22 @@ async def reject_proposal(
     tool_call_id: str,
     user: dict[str, Any] = Depends(current_user),
     session: AsyncSession = Depends(get_session),
-) -> dict[str, Any]:
+) -> StreamingResponse:
     user_id = UUID(user["user_id"])
     install_rls_listener(session, user_id)
     repo = ConversationRepository(session=session)
     if await repo.get(user_id=user_id, conversation_id=conversation_id) is None:
         raise HTTPException(status_code=404, detail="conversation_not_found")
-    await _load_pending_proposal(
+    call = await _load_pending_proposal(
         repo, conversation_id=conversation_id, user_id=user_id, tool_call_id=tool_call_id
     )
+    result = tool_result("Vom Nutzer abgelehnt.")
     await repo.append_message(
         conversation_id=conversation_id, user_id=user_id, role="tool",
-        content=json.dumps(tool_result("Vom Nutzer abgelehnt."), ensure_ascii=False),
-        tool_call_id=tool_call_id,
+        content=json.dumps(result, ensure_ascii=False), tool_call_id=tool_call_id,
     )
     await session.commit()
-    return {"rejected": True}
+    return _event_stream(_prefixed(
+        result_events(tool_call_id, call["name"], result),
+        stream_continuation(session, user_id=user_id, conversation_id=conversation_id),
+    ))
