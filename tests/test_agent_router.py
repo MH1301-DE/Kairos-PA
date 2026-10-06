@@ -84,6 +84,28 @@ async def test_messages_404_for_unknown_conversation(authed_client: AsyncClient)
     assert resp.status_code == 404
 
 
+@pytest.mark.asyncio
+async def test_messages_expose_tool_name_for_tool_rows(
+    authed_client: AsyncClient, db_session: AsyncSession, test_user_id: uuid.UUID
+) -> None:
+    repo = ConversationRepository(session=db_session)
+    conversation = await repo.create(user_id=test_user_id, title="t")
+    await repo.append_message(
+        conversation_id=conversation.id, user_id=test_user_id, role="assistant", content=None,
+        tool_calls=[{"id": "call_r", "name": "render", "arguments": "{}"}],
+    )
+    await repo.append_message(conversation_id=conversation.id, user_id=test_user_id,
+                              role="tool", content="{}", tool_call_id="call_r")
+    await repo.append_message(conversation_id=conversation.id, user_id=test_user_id,
+                              role="tool", content="{}", tool_call_id="call_unknown")
+    await db_session.commit()
+    resp = await authed_client.get(f"/api/agent/conversations/{conversation.id}/messages")
+    msgs = resp.json()["messages"]
+    assert [(m["role"], m["tool_call_id"], m["tool_name"]) for m in msgs] == [
+        ("assistant", None, None), ("tool", "call_r", "render"), ("tool", "call_unknown", None),
+    ]
+
+
 def _parse_sse(body: str) -> list[tuple[str, dict]]:
     events = []
     for block in body.strip().split("\n\n"):

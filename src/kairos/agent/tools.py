@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kairos.agent.expiry import _parse_expiry
+from kairos.agent.render_schemas import RENDER_COMPONENTS, validate_render_config
 from kairos.calendar.free_time import BusyBlock, CalendarPrefs, FreeBlock, compute_free_blocks
 from kairos.db.models import MetricDailyValue
 from kairos.metrics.bootstrap import build_default_registry
@@ -34,9 +35,7 @@ _STRESS_KEYWORDS = ("stress", "krank", "müde", "muede", "erkält", "erkaeltet")
 # time series beyond this, the caller re-queries with a narrower window instead
 _MAX_ANALYZE_DAYS_RETURNED = 60
 
-_RENDER_COMPONENTS = frozenset(
-    {"Gauge", "TimeSeriesChart", "BarChart", "ScatterChart", "StatCard", "Table", "ActivityList"}
-)
+_RENDER_COMPONENTS = RENDER_COMPONENTS
 
 
 @dataclass(frozen=True)
@@ -231,9 +230,8 @@ async def render_handler(
     session: AsyncSession, *, user_id: UUID, component: str, config: dict[str, Any]
 ) -> dict[str, Any]:
     del session, user_id  # no data fetching of its own -- data comes from a prior tool call
-    if component not in _RENDER_COMPONENTS:
-        raise ValueError(f"Unknown render component: {component!r}")
-    return _envelope(f"{component}-Chart erzeugt.", {"component": component, "config": config})
+    normalized = validate_render_config(component, config)
+    return _envelope(f"{component}-Chart erzeugt.", {"component": component, "config": normalized})
 
 
 async def propose_calendar_event_handler(
@@ -548,7 +546,14 @@ CORE_TOOLS: tuple[ToolSpec, ...] = (
         name="render",
         description=(
             "Zeigt Daten aus einem vorherigen Tool-Ergebnis als Diagramm oder Karte im "
-            "Chat. Nur Zahlen aus Tool-Ergebnissen dieses Turns verwenden."
+            "Chat. Nur Zahlen aus Tool-Ergebnissen dieses Turns verwenden. "
+            "config je Komponente: "
+            "TimeSeriesChart {title, unit, points:[{date:'YYYY-MM-DD', value}]} (1-366 Punkte); "
+            "BarChart {title, unit, bars:[{label, value}]} (1-50); "
+            "Gauge {title, unit, value, min, max} mit min<max; "
+            "StatCard {title, items:[{label, value (Text oder Zahl), unit?}]} (1-8); "
+            "Table {title, columns:[Text] (1-8), rows:[[Text oder Zahl]]} "
+            "(Zeilenlänge = Spaltenzahl, max 50 Zeilen)."
         ),
         risk_class="read", requires_confirmation=False,
         json_schema={

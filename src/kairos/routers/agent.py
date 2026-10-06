@@ -87,11 +87,18 @@ async def list_messages(
     if conversation is None:
         raise HTTPException(status_code=404, detail="conversation_not_found")
     messages = await repo.list_messages(conversation_id=conversation_id, user_id=user_id, limit=200)
+    tool_names = {
+        call["id"]: call["name"]
+        for m in messages if m.role == "assistant" for call in (m.tool_calls or [])
+        if isinstance(call, dict) and "id" in call and "name" in call
+    }
     return {
         "messages": [
             {
                 "id": str(m.id), "role": m.role, "content": m.content,
                 "tool_calls": m.tool_calls, "created_at": m.created_at.isoformat(),
+                "tool_call_id": m.tool_call_id,
+                "tool_name": tool_names.get(m.tool_call_id) if m.role == "tool" else None,
             }
             for m in messages
         ]

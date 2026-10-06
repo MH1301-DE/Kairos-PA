@@ -207,14 +207,15 @@ async def test_recall_handler_filters_by_query(session: AsyncSession) -> None:
 
 @pytest.mark.asyncio
 async def test_render_handler_rejects_unknown_component(session: AsyncSession) -> None:
-    with pytest.raises(ValueError, match="Unknown render component"):
+    with pytest.raises(ValueError, match="Unbekannte Render-Komponente"):
         await render_handler(session, user_id=uuid4(), component="NotAComponent", config={})
 
 
 @pytest.mark.asyncio
 async def test_render_handler_accepts_known_component(session: AsyncSession) -> None:
     result = await render_handler(
-        session, user_id=uuid4(), component="Gauge", config={"series": ["hrv_5min"]}
+        session, user_id=uuid4(), component="Gauge",
+        config={"title": "HRV", "unit": "ms", "value": 60, "min": 0, "max": 100},
     )
     assert result["data"]["component"] == "Gauge"
 

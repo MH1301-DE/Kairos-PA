@@ -114,7 +114,7 @@ async def test_failed_tool_call_reports_not_ok(session: AsyncSession) -> None:
 @pytest.mark.asyncio
 async def test_render_call_emits_render_event(session: AsyncSession) -> None:
     user_id, conversation_id = await _new_conversation(session)
-    config = {"title": "HRV", "value": 62, "unit": "ms"}
+    config = {"title": "HRV", "items": [{"label": "HRV", "value": 62, "unit": "ms"}]}
     rounds = _rounds(
         _tool_round("call_r", "render", json.dumps({"component": "StatCard", "config": config})),
         _text_round("Hier."),
