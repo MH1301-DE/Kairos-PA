@@ -8,6 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from kairos.metrics.types import MetricResult
 
+# Edwards is the canonical TRIMP; Banister needs user_setting.sex and is often insufficient_data
+_PREFERRED_DEFAULT_VARIANTS = {"trimp": "edwards", "hr_zone_distribution": "percent_max"}
+
 
 class MetricVariant(Protocol):
     metric_id: str
@@ -33,6 +36,13 @@ class MetricRegistry:
 
     def variants_for(self, metric_id: str) -> list[str]:
         return sorted(v for (m, v) in self._variants if m == metric_id)
+
+    def default_variant(self, metric_id: str) -> str:
+        variants = self.variants_for(metric_id)
+        if not variants:
+            raise KeyError(metric_id)
+        preferred = _PREFERRED_DEFAULT_VARIANTS.get(metric_id)
+        return preferred if preferred in variants else variants[0]
 
     def metric_ids(self) -> list[str]:
         return sorted({m for (m, _v) in self._variants})

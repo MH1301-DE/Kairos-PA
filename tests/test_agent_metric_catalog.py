@@ -12,7 +12,7 @@ def test_every_registered_metric_has_a_catalog_entry() -> None:
 
 def test_rendered_catalog_lists_ids_variants_and_series_flag() -> None:
     text = render_metric_catalog()
-    assert "trimp (Varianten: banister, edwards)" in text
+    assert "trimp (Varianten: banister, edwards; Standard: edwards)" in text
     assert "hrv_baseline" in text
     assert "Zeitreihe: ja" in text and "Zeitreihe: nein" in text
 

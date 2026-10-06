@@ -56,8 +56,9 @@ def render_metric_catalog() -> str:
         info = METRIC_CATALOG[metric_id]
         variants = ", ".join(registry.variants_for(metric_id))
         series = "ja" if info.daily_series else "nein"
+        default = registry.default_variant(metric_id)
         lines.append(
-            f"- {metric_id} (Varianten: {variants}): {info.description} "
+            f"- {metric_id} (Varianten: {variants}; Standard: {default}): {info.description} "
             f"Wert: {info.value_shape}. Zeitreihe: {series}."
         )
     lines.append(

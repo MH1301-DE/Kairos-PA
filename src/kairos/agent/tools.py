@@ -75,7 +75,7 @@ async def query_health_handler(
     variants = registry.variants_for(metric_id)
     if not variants:
         raise ValueError(f"Unknown metric_id: {metric_id!r}")
-    chosen = variant or variants[0]
+    chosen = variant or registry.default_variant(metric_id)
     if chosen not in variants:
         raise ValueError(f"Unknown variant {chosen!r} for metric {metric_id!r}")
 
@@ -106,7 +106,7 @@ async def analyze_records_handler(
     variants = registry.variants_for(metric_id)
     if not variants:
         raise ValueError(f"Unknown metric_id: {metric_id!r}")
-    chosen = variant or variants[0]
+    chosen = variant or registry.default_variant(metric_id)
     window_days = min(window_days, _MAX_ANALYZE_DAYS_RETURNED)
 
     end = date.today()

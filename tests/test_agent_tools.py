@@ -98,6 +98,27 @@ async def test_analyze_records_handler_computes_stats(session: AsyncSession) -> 
 
 
 @pytest.mark.asyncio
+async def test_analyze_records_handler_defaults_trimp_to_edwards(session: AsyncSession) -> None:
+    user_id = uuid4()
+    await _insert_user(session, user_id)
+    await session.commit()
+
+    today = date.today()
+    for variant, value in (("edwards", 50.0), ("banister", None)):
+        await session.execute(
+            text(
+                "INSERT INTO metric_daily_value (user_id, metric_id, variant_id, day, value, "
+                "confidence) VALUES (:uid, 'trimp', :variant, :day, :val, 'high')"
+            ),
+            {"uid": str(user_id), "variant": variant, "day": today, "val": value},
+        )
+    await session.commit()
+
+    result = await analyze_records_handler(session, user_id=user_id, metric_id="trimp")
+    assert result["data"]["mean"] == pytest.approx(50.0)
+
+
+@pytest.mark.asyncio
 async def test_analyze_records_handler_handles_empty_series(session: AsyncSession) -> None:
     user_id = uuid4()
     await _insert_user(session, user_id)
