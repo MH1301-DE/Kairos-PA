@@ -89,6 +89,9 @@ export interface ChatMessage {
 	role: 'user' | 'assistant' | 'tool';
 	content: string | null;
 	tool_calls: { id: string; name: string; arguments: string }[] | null;
+	tool_call_id: string | null;
+	// null for rows written before the column existed
+	tool_name: string | null;
 	created_at: string;
 }
 
