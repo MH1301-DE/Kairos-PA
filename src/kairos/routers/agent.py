@@ -185,12 +185,16 @@ async def confirm_proposal(
         repo, conversation_id=conversation_id, user_id=user_id, tool_call_id=tool_call_id
     )
     try:
-        result = await dispatch(
-            session, user_id=user_id,
-            tool_call=ToolCall(name=call["name"], arguments=json.loads(call["arguments"] or "{}"),
-                               id=tool_call_id),
-            pending_confirmation=True,
-        )
+        # savepoint: a handler DB error must not abort the transaction holding the row lock
+        async with session.begin_nested():
+            result = await dispatch(
+                session, user_id=user_id,
+                tool_call=ToolCall(
+                    name=call["name"], arguments=json.loads(call["arguments"] or "{}"),
+                    id=tool_call_id,
+                ),
+                pending_confirmation=True,
+            )
     except Exception as exc:
         result = tool_result(f"Fehler: {exc}")
     if isinstance(result, Proposal):

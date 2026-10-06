@@ -281,6 +281,33 @@ async def test_second_confirm_is_rejected_without_executing_twice(
 
 
 @pytest.mark.asyncio
+async def test_confirm_handler_db_error_becomes_error_result(
+    authed_client: AsyncClient, db_session: AsyncSession, test_user_id: uuid.UUID
+) -> None:
+    conversation_id = await _conversation_with_pending_proposal(db_session, test_user_id)
+
+    async def _failing_dispatch(session: AsyncSession, **_kwargs: object) -> dict:
+        await session.execute(text("SELECT 1 / 0"))
+        return {"summary": "unreachable", "data": None, "meta": {}}
+
+    with (
+        patch.object(agent_router_module, "dispatch", new=_failing_dispatch),
+        patch.object(agent_router_module, "stream_continuation",
+                     new=MagicMock(return_value=_events(AgentEvent("done", {})))),
+    ):
+        resp = await authed_client.post(
+            f"/api/agent/conversations/{conversation_id}/proposals/call_p/confirm")
+    assert resp.status_code == 200
+    tool_end = _parse_sse(resp.text)[0]
+    assert tool_end[0] == "tool_end"
+    assert tool_end[1]["ok"] is False
+    assert tool_end[1]["summary"].startswith("Fehler")
+    assert await ConversationRepository(session=db_session).has_tool_result(
+        conversation_id=conversation_id, user_id=test_user_id, tool_call_id="call_p"
+    )
+
+
+@pytest.mark.asyncio
 async def test_reject_records_rejection_and_unknown_proposal_is_404(
     authed_client: AsyncClient, db_session: AsyncSession, test_user_id: uuid.UUID
 ) -> None:

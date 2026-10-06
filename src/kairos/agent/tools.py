@@ -363,7 +363,6 @@ async def plan_commit_handler(
     await repo.commit(
         user_id=user_id, plan_id=plan_uuid, event_ids_by_block_id=event_ids_by_block_id
     )
-    await session.commit()
     return _envelope(
         f"Plan bestätigt, {len(event_ids_by_block_id)} Termine angelegt.",
         {"plan_id": plan_id, "events_created": len(event_ids_by_block_id)},
@@ -392,7 +391,6 @@ async def plan_adjust_handler(
         # event's title keeps showing the pre-adjustment TRIMP estimate.
         # The plan data itself (and plan_progress's comparison) reflects the
         # adjustment correctly regardless.
-    await session.commit()
     return _envelope(
         f"{adjusted} künftige Blöcke angepasst (Faktor {multiplier}, Grund: \"{reason}\").",
         {"plan_id": plan_id, "adjusted_blocks": adjusted, "multiplier": multiplier},
