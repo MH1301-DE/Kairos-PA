@@ -12,29 +12,42 @@ NOT_CONFIRMED = (
 )
 
 
-def _synthetic_result(tool_call_id: str) -> dict[str, Any]:
-    return {
-        "role": "tool", "tool_call_id": tool_call_id,
-        "content": json.dumps({"summary": NOT_CONFIRMED, "data": None, "meta": {}}),
-    }
+def tool_result(summary: str) -> dict[str, Any]:
+    return {"summary": summary, "data": None, "meta": {}}
+
+
+def tool_result_json(summary: str) -> str:
+    return json.dumps(tool_result(summary), ensure_ascii=False)
+
+
+def _is_not_confirmed(message: dict[str, Any]) -> bool:
+    try:
+        parsed = json.loads(message.get("content") or "")
+    except ValueError:
+        return False
+    return isinstance(parsed, dict) and parsed.get("summary") == NOT_CONFIRMED
 
 
 def repair_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    # providers reject tool calls without results and results without calls
-    answered = {m["tool_call_id"] for m in messages if m["role"] == "tool"}
-    known_calls: set[str] = set()
+    # providers need every call answered directly after its assistant message, exactly once
+    results: dict[str, dict[str, Any]] = {}
+    for m in messages:
+        if m["role"] != "tool":
+            continue
+        current = results.get(m["tool_call_id"])
+        if current is None or (_is_not_confirmed(current) and not _is_not_confirmed(m)):
+            results[m["tool_call_id"]] = m
     repaired: list[dict[str, Any]] = []
     for m in messages:
         if m["role"] == "tool":
-            if m["tool_call_id"] in known_calls:
-                repaired.append(m)
             continue
         repaired.append(m)
         if m["role"] == "assistant" and m.get("tool_calls"):
             for tc in m["tool_calls"]:
-                known_calls.add(tc["id"])
-                if tc["id"] not in answered:
-                    repaired.append(_synthetic_result(tc["id"]))
+                repaired.append(results.get(tc["id"]) or {
+                    "role": "tool", "tool_call_id": tc["id"],
+                    "content": tool_result_json(NOT_CONFIRMED),
+                })
     return repaired
 
 

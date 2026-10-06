@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from kairos.agent.history import repair_history, split_turns, window_turns
+import json
+
+from kairos.agent.history import NOT_CONFIRMED, repair_history, split_turns, window_turns
 from kairos.db.models import ConversationMessage
 
 
@@ -44,6 +46,54 @@ def test_orphan_tool_message_without_preceding_call_is_dropped() -> None:
         {"role": "user", "content": "a"},
     ]
     assert repair_history(messages) == [{"role": "user", "content": "a"}]
+
+
+def test_late_result_of_a_mid_history_call_is_moved_right_after_the_call() -> None:
+    late = {"role": "tool", "tool_call_id": "call_p", "content": "{}"}
+    messages = [
+        {"role": "user", "content": "a"},
+        _assistant("call_p"),
+        {"role": "user", "content": "b"},
+        {"role": "assistant", "content": "c"},
+        late,
+    ]
+    repaired = repair_history(messages)
+    assert [m["role"] for m in repaired] == ["user", "assistant", "tool", "user", "assistant"]
+    assert repaired[2] is late
+
+
+def test_results_follow_the_order_of_the_calls() -> None:
+    messages = [
+        _assistant("call_1", "call_2"),
+        {"role": "tool", "tool_call_id": "call_2", "content": "2"},
+        {"role": "tool", "tool_call_id": "call_1", "content": "1"},
+    ]
+    assert [m["tool_call_id"] for m in repair_history(messages)[1:]] == ["call_1", "call_2"]
+
+
+def test_duplicate_results_keep_the_real_one_over_not_confirmed() -> None:
+    closing = {
+        "role": "tool", "tool_call_id": "call_p",
+        "content": json.dumps({"summary": NOT_CONFIRMED, "data": None, "meta": {}},
+                              ensure_ascii=False),
+    }
+    real = {"role": "tool", "tool_call_id": "call_p", "content": '{"summary": "angelegt"}'}
+    messages = [_assistant("call_p"), closing, real, {"role": "user", "content": "x"}]
+    repaired = repair_history(messages)
+    assert repaired == [messages[0], real, {"role": "user", "content": "x"}]
+
+
+def test_duplicate_real_results_keep_the_first() -> None:
+    first = {"role": "tool", "tool_call_id": "call_1", "content": "1"}
+    second = {"role": "tool", "tool_call_id": "call_1", "content": "2"}
+    repaired = repair_history([_assistant("call_1"), first, second])
+    assert repaired[1:] == [first]
+
+
+def test_synthetic_result_keeps_umlauts_unescaped() -> None:
+    repaired = repair_history([_assistant("call_1")])
+    assert json.loads(repaired[1]["content"])["summary"] == NOT_CONFIRMED
+    assert "bestätigt" in repaired[1]["content"]
 
 
 def _msg(seq: int, role: str, content: str = "x") -> ConversationMessage:

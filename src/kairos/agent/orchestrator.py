@@ -20,6 +20,8 @@ from kairos.agent.history import (
     NOT_CONFIRMED,
     repair_history,
     split_turns,
+    tool_result,
+    tool_result_json,
     window_turns,
 )
 from kairos.agent.llm_client import NoLlmCredentialConfigured, stream_completion
@@ -36,10 +38,6 @@ _MAX_LOOP_ITERATIONS = 8
 
 SKIPPED_PENDING_PROPOSAL = "Nicht ausgeführt: wartet auf Bestätigung eines anderen Vorschlags."
 TOO_MANY_TOOL_CALLS = "Zu viele Tool-Aufrufe in diesem Turn -- bitte die Frage neu formulieren."
-
-
-def tool_result(summary: str) -> dict[str, Any]:
-    return {"summary": summary, "data": None, "meta": {}}
 
 
 @dataclass(frozen=True)
@@ -194,9 +192,7 @@ async def _run_loop(
                     for skipped in tool_calls[index + 1:]:
                         await conv_repo.append_message(
                             conversation_id=conversation_id, user_id=user_id, role="tool",
-                            content=json.dumps(
-                                tool_result(SKIPPED_PENDING_PROPOSAL), ensure_ascii=False
-                            ),
+                            content=tool_result_json(SKIPPED_PENDING_PROPOSAL),
                             tool_call_id=skipped.id,
                         )
                     await session.commit()
@@ -283,6 +279,7 @@ async def _load_llm_messages(
     )
 
     # an unanswered proposal leaves tool calls without results; close them in the DB
+    # (the closing row lands at the end; repair_history moves it next to its call)
     answered = {m.tool_call_id for m in history if m.role == "tool"}
     closed_any = False
     for m in history:
@@ -292,7 +289,7 @@ async def _load_llm_messages(
                 closed_any = True
                 await conv_repo.append_message(
                     conversation_id=conversation_id, user_id=user_id, role="tool",
-                    content=json.dumps(tool_result(NOT_CONFIRMED), ensure_ascii=False),
+                    content=tool_result_json(NOT_CONFIRMED),
                     tool_call_id=open_call["id"],
                 )
     if closed_any:

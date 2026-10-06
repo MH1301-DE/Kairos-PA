@@ -293,6 +293,35 @@ async def test_unanswered_proposal_is_closed_when_the_user_writes_again(
 
 
 @pytest.mark.asyncio
+async def test_legacy_open_proposal_mid_history_is_answered_right_after_its_call(
+    session: AsyncSession,
+) -> None:
+    user_id, conversation_id = await _new_conversation(session)
+    repo = ConversationRepository(session=session)
+    await repo.append_message(conversation_id=conversation_id, user_id=user_id, role="user",
+                              content="plan")
+    await repo.append_message(
+        conversation_id=conversation_id, user_id=user_id, role="assistant", content=None,
+        tool_calls=[{"id": "call_p", "name": "propose_calendar_event", "arguments": "{}"}],
+    )
+    await repo.append_message(conversation_id=conversation_id, user_id=user_id, role="user",
+                              content="und sonst?")
+    await repo.append_message(conversation_id=conversation_id, user_id=user_id,
+                              role="assistant", content="Alles gut.")
+    await session.commit()
+    completion = stream_forever(_fake_response("Ok."))
+    with patch.object(orchestrator_module, "stream_completion", new=completion):
+        await run_turn(session, user_id=user_id, conversation_id=conversation_id,
+                       user_message="weiter")
+    sent = completion.call_args.kwargs["messages"]
+    assert [m["role"] for m in sent] == [
+        "system", "user", "assistant", "tool", "user", "assistant", "user",
+    ]
+    assert sent[2]["tool_calls"][0]["id"] == "call_p"
+    assert sent[3]["tool_call_id"] == "call_p"
+
+
+@pytest.mark.asyncio
 async def test_failing_compaction_does_not_fail_the_turn(session: AsyncSession) -> None:
     user_id, conversation_id = await _new_conversation(session)
     with (

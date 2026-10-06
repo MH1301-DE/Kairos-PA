@@ -43,7 +43,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from kairos.agent import tools as tools_module
 from kairos.agent.dispatcher import Proposal, ToolCall, dispatch
 from kairos.agent.events import AgentEvent
-from kairos.agent.orchestrator import stream_continuation, stream_turn, tool_result
+from kairos.agent.history import tool_result
+from kairos.agent.orchestrator import stream_continuation, stream_turn
 from kairos.config import settings
 from kairos.db.rls import install_rls_listener
 from kairos.db.session import async_session_factory
