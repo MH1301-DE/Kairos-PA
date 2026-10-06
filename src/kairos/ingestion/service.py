@@ -112,6 +112,8 @@ class BackfillResult:
     windows_processed: int
     completed: bool
     next_cursor: datetime | None
+    # earliest window start actually fetched; drives the post-sync metric recompute
+    fetched_from: datetime | None = None
 
 
 class SyncService:
@@ -216,6 +218,7 @@ class SyncService:
                     windows_processed=windows_processed,
                     completed=False,
                     next_cursor=cursor,
+                    fetched_from=cursor,
                 )
 
         await self._sync_state_repo.mark_backfill_complete(
@@ -225,7 +228,12 @@ class SyncService:
             complete_from=from_date,
             complete_to=to_date,
         )
-        return BackfillResult(windows_processed=windows_processed, completed=True, next_cursor=None)
+        return BackfillResult(
+            windows_processed=windows_processed,
+            completed=True,
+            next_cursor=None,
+            fetched_from=cursor if windows_processed else None,
+        )
 
     async def run_window(
         self,

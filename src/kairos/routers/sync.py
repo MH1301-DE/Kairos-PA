@@ -28,6 +28,11 @@ from kairos.ingestion.job_registry import SyncJob, SyncJobRegistry, get_registry
 from kairos.ingestion.service import SyncService
 from kairos.repositories.calendar_event import CalendarEventRepository
 from kairos.repositories.canonical import SqlCanonicalRepository
+from kairos.repositories.metrics_recompute import (
+    recompute_hr_bucket_seconds_daily,
+    recompute_metric_daily_values,
+    recompute_wellness_daily_stats,
+)
 from kairos.repositories.raw_payload import SqlRawPayloadRepository
 from kairos.repositories.sync_state import SqlSyncStateRepository
 
@@ -220,6 +225,7 @@ async def _run_backfill_task(
             hash_payload=payload_sha256,
         )
 
+        fetched_froms: list[datetime] = []
         for job in jobs:
             lock = registry.get_lock(user_id, "garmin", job.kind)
             if lock.locked():
@@ -250,12 +256,33 @@ async def _run_backfill_task(
                     await session.commit()
                     job.status = "done"
                     job.windows_processed = result.windows_processed
+                    if result.fetched_from is not None:
+                        fetched_froms.append(result.fetched_from)
                 except Exception as exc:
                     await session.rollback()
                     job.status = "failed"
                     job.error = str(exc)
                 finally:
                     job.finished_at = datetime.now(UTC).isoformat()
+
+        if fetched_froms:
+            await _recompute_after_sync(
+                session, user_id, start=min(fetched_froms).date(), end=date.today()
+            )
+
+
+async def _recompute_after_sync(
+    session: AsyncSession, user_id: UUID, *, start: date, end: date
+) -> None:
+    # derived tables are best-effort: a failure here must not flip the finished sync jobs
+    try:
+        await recompute_wellness_daily_stats(session, user_id=user_id, start=start, end=end)
+        await recompute_hr_bucket_seconds_daily(session, user_id=user_id, start=start, end=end)
+        await recompute_metric_daily_values(session, user_id=user_id, start=start, end=end)
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        logger.exception("Metric recompute after backfill failed for user %s", user_id)
 
 
 async def _build_garmin_client(

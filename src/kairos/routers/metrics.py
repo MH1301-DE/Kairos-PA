@@ -26,7 +26,7 @@ _registry: MetricRegistry = build_default_registry()
 # the daily-aggregate tables that feed every dashboard tile stay empty after
 # a sync unless something calls this. 2 years matches the current default
 # backfill window (see routers/sync.py _DEFAULT_BACKFILL_MONTHS).
-_RECOMPUTE_DEFAULT_DAYS = 730
+_RECOMPUTE_DEFAULT_DAYS = 60
 
 
 @router.post("/recompute")

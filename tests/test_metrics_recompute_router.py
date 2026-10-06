@@ -107,12 +107,12 @@ async def test_recompute_populates_daily_stats_from_wellness_samples(
 
 
 @pytest.mark.asyncio
-async def test_recompute_defaults_to_two_year_window(authed_client: AsyncClient) -> None:
+async def test_recompute_defaults_to_sixty_day_window(authed_client: AsyncClient) -> None:
     resp = await authed_client.post("/api/metrics/recompute")
     assert resp.status_code == 200
     body = resp.json()
     from datetime import date, timedelta
 
-    expected_start = date.today() - timedelta(days=730)
+    expected_start = date.today() - timedelta(days=60)
     assert body["from_date"] == expected_start.isoformat()
     assert body["to_date"] == date.today().isoformat()
