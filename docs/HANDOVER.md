@@ -1324,3 +1324,9 @@ LLM-Runden vor dem ersten Text. Im Chat sieht der Nutzer stattdessen sofort `too
   mitten in einer Assistant-Nachricht beginnen; DB-Verbindung bleibt während des LLM-Streams in einer offenen Transaktion
   (unkritisch bei 1–5 Nutzern); ein `tool_end` ohne vorheriges `tool_start` ist möglich (bestätigungspflichtiges Tool mit kaputtem JSON).
 - Tests: **394 passed, 0 skipped** (mit Docker); Frontend vitest 68 passed.
+
+**Merge nach `main` (2026-10-07, `4f322b5`):** `agent-harness-v2` und das "Ruhe"-Designsystem (vorher Worktree
+`frontend-designsystem`, bereits per Fast-Forward auf `main`) sind zusammengeführt. Einziger Konflikt `/chat/+page.svelte`:
+Ruhe-Layout + `?q=`-Übergabe von den Dashboard-Kacheln behalten, Nachrichtenliste durch den streamenden `ChatThread` ersetzt
+(neuer Prop `initialDraft`, auf Ruhe-Tokens umgestellt). Beide Branches und der Worktree sind gelöscht; Dev-Frontend läuft
+wieder aus `web/` auf **:5173**. Verifiziert: pytest 394 passed, vitest 94 passed, svelte-check 0/0, eslint 0.
