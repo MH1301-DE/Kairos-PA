@@ -51,3 +51,45 @@ async def test_get_completion_passes_model_key_messages_tools_through() -> None:
     assert call_kwargs["tools"] == tools
     assert call_kwargs["api_key"] == "sk-deployment-key"
     assert call_kwargs["stream"] is False
+
+
+@pytest.mark.asyncio
+async def test_stream_completion_raises_without_a_deployment_api_key() -> None:
+    with (
+        patch.object(llm_client.settings, "llm_api_key", None),
+        pytest.raises(llm_client.NoLlmCredentialConfigured),
+    ):
+        async for _ in llm_client.stream_completion(
+            MagicMock(), user_id=uuid4(), messages=[{"role": "user", "content": "hi"}]
+        ):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_stream_completion_streams_chunks_from_acompletion() -> None:
+    async def _chunks():
+        yield "a"
+        yield "b"
+
+    fake_setting = MagicMock(llm_model="anthropic/claude-sonnet-5")
+    with (
+        patch.object(llm_client.settings, "llm_api_key", "sk-deployment-key"),
+        patch.object(
+            llm_client, "get_or_default_user_setting", new=AsyncMock(return_value=fake_setting)
+        ),
+        patch.object(
+            llm_client.litellm, "acompletion", new=AsyncMock(return_value=_chunks())
+        ) as mock_acompletion,
+    ):
+        chunks = [
+            c async for c in llm_client.stream_completion(
+                MagicMock(), user_id=uuid4(), messages=[{"role": "user", "content": "hi"}],
+                tools=[],
+            )
+        ]
+
+    assert chunks == ["a", "b"]
+    call_kwargs = mock_acompletion.call_args.kwargs
+    assert call_kwargs["model"] == "anthropic/claude-sonnet-5"
+    assert call_kwargs["api_key"] == "sk-deployment-key"
+    assert call_kwargs["stream"] is True

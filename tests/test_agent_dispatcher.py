@@ -14,7 +14,7 @@ def _fake_spec(
     name: str, risk_class: str, requires_confirmation: bool, handler: AsyncMock
 ) -> ToolSpec:
     return ToolSpec(
-        name=name, risk_class=risk_class,  # type: ignore[arg-type]
+        name=name, description="fake tool for dispatcher tests", risk_class=risk_class,  # type: ignore[arg-type]
         requires_confirmation=requires_confirmation, json_schema={}, handler=handler,
     )
 

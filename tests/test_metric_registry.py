@@ -51,3 +51,28 @@ async def test_compute_returns_metric_result() -> None:
 
     assert result.confidence == "high"
     assert result.value == 1.0
+
+
+def test_default_variant_prefers_configured_variant() -> None:
+    registry = MetricRegistry()
+    registry.register(_StubVariant("trimp", "banister"))
+    registry.register(_StubVariant("trimp", "edwards"))
+
+    assert registry.default_variant("trimp") == "edwards"
+
+
+def test_default_variant_falls_back_when_preferred_absent() -> None:
+    registry = MetricRegistry()
+    registry.register(_StubVariant("trimp", "banister"))
+    registry.register(_StubVariant("trimp", "zeta"))
+
+    assert registry.default_variant("trimp") == "banister"
+
+
+def test_default_variant_single_variant_and_unknown_metric() -> None:
+    registry = MetricRegistry()
+    registry.register(_StubVariant("acwr", "default"))
+
+    assert registry.default_variant("acwr") == "default"
+    with pytest.raises(KeyError):
+        registry.default_variant("nope")

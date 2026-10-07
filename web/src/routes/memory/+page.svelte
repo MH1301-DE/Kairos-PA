@@ -103,7 +103,8 @@
 								{entry.source === 'agent' ? 'von Kairos' : 'von dir'}
 							</span>
 							<p>{entry.content}</p>
-							<span class="memory-meta">Zuletzt geändert: {formatDate(entry.updated_at)}</span>
+							<span class="memory-meta">Zuletzt geändert: {formatDate(entry.updated_at)}{#if entry.expires_at}
+								· Gilt bis {formatDate(entry.expires_at)}{/if}</span>
 						</div>
 						<div class="memory-actions">
 							<button

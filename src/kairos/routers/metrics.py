@@ -26,7 +26,7 @@ _registry: MetricRegistry = build_default_registry()
 # the daily-aggregate tables that feed every dashboard tile stay empty after
 # a sync unless something calls this. 2 years matches the current default
 # backfill window (see routers/sync.py _DEFAULT_BACKFILL_MONTHS).
-_RECOMPUTE_DEFAULT_DAYS = 730
+_RECOMPUTE_DEFAULT_DAYS = 60
 
 
 @router.post("/recompute")
@@ -79,7 +79,7 @@ async def get_metric(
     variants = _registry.variants_for(metric_id)
     if not variants:
         raise HTTPException(status_code=404, detail=f"Unknown metric: {metric_id}")
-    chosen_variant = variant or variants[0]
+    chosen_variant = variant or _registry.default_variant(metric_id)
     if chosen_variant not in variants:
         raise HTTPException(status_code=404, detail=f"Unknown variant: {chosen_variant}")
 

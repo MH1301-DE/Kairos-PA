@@ -1269,3 +1269,58 @@ echte DB mit gemocktem Google-Calendar-Client), `ruff`/`mypy --strict` auf
 `src` grün. Referenzfragen 13/15 sind inzwischen zurück in
 `scripts/agent_eval_suite.py`s `CASES` (alle 15 jetzt drin) — noch nicht live
 gelaufen, da `LLM_API_KEY` noch nicht gesetzt war.
+
+## Agent-Harness v2 (2026-10-05/06, Branch `agent-harness-v2`)
+
+Spec: `docs/superpowers/specs/2026-10-05-agent-harness-v2-design.md`, Plan:
+`docs/superpowers/plans/2026-10-05-agent-harness-v2.md`. Ausgeführt per Subagent-Driven-Development
+(Tasks 1–7 + 9, je Task-Review, finales Whole-Branch-Review + eine Fix-Welle). **Task 8 (Streaming-Chat-UI)
+bewusst übersprungen** — parallel lief eine zweite Session am Frontend im selben Checkout.
+
+**Was jetzt gilt:**
+- **Proposals** sind an die `tool_call_id` des Modells gebunden. `POST /api/agent/conversations/{id}/proposals/{tool_call_id}/confirm|reject`
+  lesen Tool-Name + Argumente aus der gespeicherten Assistant-Nachricht (nie vom Client), halten eine `FOR UPDATE`-Sperre bis zum
+  einzigen Commit (Doppelklick → 409 `proposal_already_resolved`, genau eine Ausführung). Dafür committen `_create_calendar_event`,
+  `_delete_calendar_event`, `plan_commit`, `plan_adjust` **nicht mehr selbst** — ihre HTTP-Aufrufer committen.
+- **Historie:** `repair_history` stellt jedes Tool-Ergebnis direkt hinter seinen Aufruf, synthetisiert fehlende, entfernt Waisen und
+  Dubletten — heilt auch Alt-Konversationen aus dem früheren `/confirm`-Flow. Offene Aufrufe werden beim nächsten Turn mit
+  "nicht bestätigt" geschlossen. Ungültiges Tool-JSON geht als Fehlerergebnis ans Modell zurück.
+- **Systemprompt** (`src/kairos/agent/prompt.py`): Persona + `VERFÜGBARE KENNZAHLEN` (`metric_catalog.py`, Test erzwingt Eintrag je
+  registrierter Kennzahl; nur `trimp`/`sleep_debt` haben eine Tages-Zeitreihe) + `ERINNERUNGEN` (aktive, ≤ ~1 500 Tokens) + Lagebild.
+  Jedes Tool hat eine echte deutsche `description`.
+- **Gedächtnis:** `agent_memory.expires_at` (NULL = dauerhaft); abgelaufene werden beim Turn-Aufbau gelöscht. Historie ist auf
+  12 000 geschätzte Tokens begrenzt (Schnitt nur an Turn-Grenzen); herausfallende Turns werden **nach** der Antwort per LLM zu
+  Erinnerungen extrahiert (nur Fakten aus Nutzerzeilen, Transkript ≤ 24 000 Zeichen), `conversation.compacted_through_seq` merkt den Stand.
+- **Streaming:** `POST /api/agent/conversations/{id}/stream` (SSE; Events `token`, `tool_start`, `tool_end`, `render`, `memory`,
+  `proposal`, `error`, `done`). Confirm/Reject streamen die Fortsetzung. `POST /{id}/messages` **existiert nicht mehr**.
+  Jede Tool-Runde ist eine Transaktion (Abbruch durch den Client → Runde komplett verworfen). Die User-Nachricht wird **vor** dem
+  LLM-Aufruf committet. Ein Stream ohne `done` ist als Fehler zu behandeln.
+- **render** kennt nur noch `TimeSeriesChart`, `BarChart`, `Gauge`, `StatCard`, `Table`, mit serverseitig validiertem Schema;
+  `GET .../messages` liefert `tool_name`/`tool_call_id`, damit Diagramme beim Neuladen wieder gezeichnet werden können.
+- Migration `7a1c2e9d4b30` (`agent_memory.expires_at`, `conversation.compacted_through_seq`) — **vor dem Deploy `alembic upgrade head`**.
+  Dev-DB ist bereits migriert.
+
+**Live-Eval (2026-10-06, `scripts/agent_eval_suite.py`, jetzt mit echten Seed-Daten):** 15/16 Tool-Accuracy, Antworten mit echten
+Werten (vorher: alles "keine Daten"). Fall 16 (Vorschlag → Bestätigen → Folgefrage in derselben Konversation) läuft ohne
+Anbieterfehler — der Historien-Bug ist live widerlegt. Frage 7 (beste 5-km-Zeit) ruft korrekt kein Tool auf: es gibt kein Daten-Tool
+für Aktivitäten/Bestzeiten (ebenso Frage 10 nur eingeschränkt) → Folge-Spec "Aktivitäts-Tools". **Median TTFT 10,2 s, Median
+Gesamtzeit 20 s:** Streaming funktioniert (Frage ohne Tools: TTFT 0,8 s), die Wartezeit entsteht durch 2–8 Tool-Aufrufe in mehreren
+LLM-Runden vor dem ersten Text. Im Chat sieht der Nutzer stattdessen sofort `tool_start`-Statuszeilen — sobald Task 8 gebaut ist.
+
+**Offen / bekannt:**
+- ~~Task 8 fehlt~~ — **Task 8 umgesetzt (2026-10-06, `2b7a13e`, `91e41a6`):** `/chat` liest den SSE-Stream (Markdown via
+  `marked`+`DOMPurify`, nur im Browser — serverseitig escapter Klartext, sonst 500 beim SSR), Tool-Statuszeilen, Inline-Diagramme
+  (`web/src/lib/chat/`), offene Vorschläge erscheinen nach Reload wieder. Offen: kein Auto-Scroll, kein Abbruch beim
+  Konversationswechsel, Erinnerungs-Chips nach Reload weg.
+- **Nachtrag 2026-10-06 (`f25b2d9`, `a9ea598`):** Agent meldete "keine Trainingsdaten", weil `variants[0]` für `trimp` = `banister`
+  war (braucht `user_setting.sex`, beim Nutzer nicht gesetzt → immer leer). `MetricRegistry.default_variant()` bevorzugt jetzt
+  `trimp→edwards`, `hr_zone_distribution→percent_max`. Außerdem berechnet jeder Garmin-Backfill danach automatisch
+  `wellness_daily_stats`/`hr_bucket_seconds_daily`/`metric_daily_value` für `[frühestes geholtes Fenster, heute]` neu (vorher nur per
+  Dashboard-Button → Tabellen hingen seit 09-09 hinterher); der Button rechnet nur noch 60 Tage.
+- **Nächster sinnvoller Schritt:** Aktivitäten-Tool für den Agenten ("wie war mein letzter Lauf?" — Distanz, Dauer, Pace, ⌀HF aus
+  `activity`); heute kennt der Agent nur Tageswerte.
+- Bekannte Restpunkte (bewusst geparkt): `plan_commit` mit mehreren Blöcken — scheitert Block N, sind die Google-Termine 1..N-1
+  angelegt, ihre lokalen Zeilen aber zurückgerollt (manuell aufräumen); das Extraktions-Transkript wird zeichenweise gekappt und kann
+  mitten in einer Assistant-Nachricht beginnen; DB-Verbindung bleibt während des LLM-Streams in einer offenen Transaktion
+  (unkritisch bei 1–5 Nutzern); ein `tool_end` ohne vorheriges `tool_start` ist möglich (bestätigungspflichtiges Tool mit kaputtem JSON).
+- Tests: **394 passed, 0 skipped** (mit Docker); Frontend vitest 68 passed.

@@ -30,6 +30,7 @@ def _memory_to_dict(entry: Any) -> dict[str, Any]:
         "source": entry.source,
         "created_at": entry.created_at.isoformat(),
         "updated_at": entry.updated_at.isoformat(),
+        "expires_at": entry.expires_at.isoformat() if entry.expires_at else None,
     }
 
 

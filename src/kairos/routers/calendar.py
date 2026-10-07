@@ -93,7 +93,9 @@ async def create_event(
 ) -> dict[str, Any]:
     user_id = UUID(user["user_id"])
     install_rls_listener(session, user_id)
-    return await _create_calendar_event(session, user_id, req)
+    created = await _create_calendar_event(session, user_id, req)
+    await session.commit()
+    return created
 
 
 @router.delete("/events/{event_id}", status_code=204)
@@ -106,12 +108,14 @@ async def delete_event(
     user_id = UUID(user["user_id"])
     install_rls_listener(session, user_id)
     await _delete_calendar_event(session, user_id, event_id, confirm)
+    await session.commit()
 
 
 # plain functions (not FastAPI endpoints) so src/kairos/agent/tools.py's
 # propose_calendar_event/delete_calendar_event handlers can call the exact same
 # logic instead of duplicating it -- no behavior change from the router's point
 # of view, both endpoints above just forward into these unchanged.
+# They never commit: the agent's confirm endpoint must hold its row lock until its own commit.
 
 
 async def _create_calendar_event(
@@ -148,7 +152,6 @@ async def _create_calendar_event(
         req.end_at,
         req.description,
     )
-    await session.commit()
     return _event_to_dict(row)
 
 
@@ -179,7 +182,6 @@ async def _delete_calendar_event(
     if client is not None:
         await asyncio.to_thread(client.delete_event, event.calendar_id, event.external_id)
     await repo.mark_deleted(user_id, event.connector, event.external_id)
-    await session.commit()
 
 
 def _event_to_dict(e: CalendarEvent) -> dict[str, Any]:

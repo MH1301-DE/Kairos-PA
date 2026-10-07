@@ -21,6 +21,7 @@ from kairos.agent.tools import (
     render_handler,
 )
 from kairos.repositories.calendar_event import CalendarEventRepository
+from kairos.repositories.memory import SqlMemoryRepository
 
 
 async def _insert_user(session: AsyncSession, user_id: UUID) -> None:
@@ -97,6 +98,27 @@ async def test_analyze_records_handler_computes_stats(session: AsyncSession) -> 
 
 
 @pytest.mark.asyncio
+async def test_analyze_records_handler_defaults_trimp_to_edwards(session: AsyncSession) -> None:
+    user_id = uuid4()
+    await _insert_user(session, user_id)
+    await session.commit()
+
+    today = date.today()
+    for variant, value in (("edwards", 50.0), ("banister", None)):
+        await session.execute(
+            text(
+                "INSERT INTO metric_daily_value (user_id, metric_id, variant_id, day, value, "
+                "confidence) VALUES (:uid, 'trimp', :variant, :day, :val, 'high')"
+            ),
+            {"uid": str(user_id), "variant": variant, "day": today, "val": value},
+        )
+    await session.commit()
+
+    result = await analyze_records_handler(session, user_id=user_id, metric_id="trimp")
+    assert result["data"]["mean"] == pytest.approx(50.0)
+
+
+@pytest.mark.asyncio
 async def test_analyze_records_handler_handles_empty_series(session: AsyncSession) -> None:
     user_id = uuid4()
     await _insert_user(session, user_id)
@@ -157,6 +179,41 @@ async def test_remember_handler_persists_with_agent_source(session: AsyncSession
 
 
 @pytest.mark.asyncio
+async def test_remember_handler_stores_expiry(session: AsyncSession) -> None:
+    user_id = uuid4()
+    await _insert_user(session, user_id)
+    await session.commit()
+
+    result = await remember_handler(
+        session, user_id=user_id, content="Stress", expires_at="2026-10-11"
+    )
+    expected = datetime(2026, 10, 11, 23, 59, 59, tzinfo=UTC)
+    assert result["data"]["expires_at"] == expected.isoformat()
+    entry = (await SqlMemoryRepository(session=session).list_for_user(user_id=user_id))[0]
+    assert entry.expires_at == expected
+
+
+@pytest.mark.asyncio
+async def test_remember_handler_rejects_bad_expiry(session: AsyncSession) -> None:
+    with pytest.raises(ValueError, match="expires_at"):
+        await remember_handler(
+            session, user_id=uuid4(), content="x", expires_at="nächste Woche"
+        )
+
+
+@pytest.mark.asyncio
+async def test_recall_handler_skips_expired(session: AsyncSession) -> None:
+    user_id = uuid4()
+    await _insert_user(session, user_id)
+    await session.commit()
+    await remember_handler(session, user_id=user_id, content="alt", expires_at="2020-01-01")
+    await remember_handler(session, user_id=user_id, content="aktuell")
+
+    result = await recall_handler(session, user_id=user_id)
+    assert [e["content"] for e in result["data"]] == ["aktuell"]
+
+
+@pytest.mark.asyncio
 async def test_recall_handler_filters_by_query(session: AsyncSession) -> None:
     user_id = uuid4()
     await _insert_user(session, user_id)
@@ -171,14 +228,15 @@ async def test_recall_handler_filters_by_query(session: AsyncSession) -> None:
 
 @pytest.mark.asyncio
 async def test_render_handler_rejects_unknown_component(session: AsyncSession) -> None:
-    with pytest.raises(ValueError, match="Unknown render component"):
+    with pytest.raises(ValueError, match="Unbekannte Render-Komponente"):
         await render_handler(session, user_id=uuid4(), component="NotAComponent", config={})
 
 
 @pytest.mark.asyncio
 async def test_render_handler_accepts_known_component(session: AsyncSession) -> None:
     result = await render_handler(
-        session, user_id=uuid4(), component="Gauge", config={"series": ["hrv_5min"]}
+        session, user_id=uuid4(), component="Gauge",
+        config={"title": "HRV", "unit": "ms", "value": 60, "min": 0, "max": 100},
     )
     assert result["data"]["component"] == "Gauge"
 

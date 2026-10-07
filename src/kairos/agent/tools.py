@@ -9,6 +9,8 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from kairos.agent.expiry import _parse_expiry
+from kairos.agent.render_schemas import RENDER_COMPONENTS, validate_render_config
 from kairos.calendar.free_time import BusyBlock, CalendarPrefs, FreeBlock, compute_free_blocks
 from kairos.db.models import MetricDailyValue
 from kairos.metrics.bootstrap import build_default_registry
@@ -33,14 +35,13 @@ _STRESS_KEYWORDS = ("stress", "krank", "müde", "muede", "erkält", "erkaeltet")
 # time series beyond this, the caller re-queries with a narrower window instead
 _MAX_ANALYZE_DAYS_RETURNED = 60
 
-_RENDER_COMPONENTS = frozenset(
-    {"Gauge", "TimeSeriesChart", "BarChart", "ScatterChart", "StatCard", "Table", "ActivityList"}
-)
+_RENDER_COMPONENTS = RENDER_COMPONENTS
 
 
 @dataclass(frozen=True)
 class ToolSpec:
     name: str
+    description: str
     risk_class: Literal["read", "write", "destructive"]
     requires_confirmation: bool
     json_schema: dict[str, Any]
@@ -74,7 +75,7 @@ async def query_health_handler(
     variants = registry.variants_for(metric_id)
     if not variants:
         raise ValueError(f"Unknown metric_id: {metric_id!r}")
-    chosen = variant or variants[0]
+    chosen = variant or registry.default_variant(metric_id)
     if chosen not in variants:
         raise ValueError(f"Unknown variant {chosen!r} for metric {metric_id!r}")
 
@@ -105,7 +106,7 @@ async def analyze_records_handler(
     variants = registry.variants_for(metric_id)
     if not variants:
         raise ValueError(f"Unknown metric_id: {metric_id!r}")
-    chosen = variant or variants[0]
+    chosen = variant or registry.default_variant(metric_id)
     window_days = min(window_days, _MAX_ANALYZE_DAYS_RETURNED)
 
     end = date.today()
@@ -197,7 +198,7 @@ async def recall_handler(
     session: AsyncSession, *, user_id: UUID, query: str | None = None, limit: int = 10
 ) -> dict[str, Any]:
     repo = SqlMemoryRepository(session=session)
-    entries = await repo.list_for_user(user_id=user_id)
+    entries = await repo.list_active(user_id=user_id, now=datetime.now(UTC))
     if query:
         entries = [e for e in entries if query.lower() in e.content.lower()]
     entries = entries[:limit]
@@ -205,15 +206,23 @@ async def recall_handler(
     return _envelope(f"{len(data)} Gedächtnis-Einträge gefunden.", data)
 
 
-async def remember_handler(session: AsyncSession, *, user_id: UUID, content: str) -> dict[str, Any]:
+async def remember_handler(
+    session: AsyncSession, *, user_id: UUID, content: str, expires_at: str | None = None
+) -> dict[str, Any]:
     # write-class but executes immediately, no Proposal -- design spec
     # Scope-Entscheidung 4: visible undo chip in the frontend instead of a
     # pre-confirmation, dispatcher.py special-cases this tool by name
     repo = SqlMemoryRepository(session=session)
-    entry = await repo.create(user_id=user_id, content=content, source="agent")
-    await session.commit()
+    expiry = _parse_expiry(expires_at) if expires_at else None
+    entry = await repo.create(user_id=user_id, content=content, source="agent", expires_at=expiry)
     return _envelope(
-        f"Gemerkt: {content}", {"id": str(entry.id), "content": entry.content, "source": "agent"}
+        f"Gemerkt: {content}",
+        {
+            "id": str(entry.id),
+            "content": entry.content,
+            "source": "agent",
+            "expires_at": entry.expires_at.isoformat() if entry.expires_at else None,
+        },
     )
 
 
@@ -221,9 +230,8 @@ async def render_handler(
     session: AsyncSession, *, user_id: UUID, component: str, config: dict[str, Any]
 ) -> dict[str, Any]:
     del session, user_id  # no data fetching of its own -- data comes from a prior tool call
-    if component not in _RENDER_COMPONENTS:
-        raise ValueError(f"Unknown render component: {component!r}")
-    return _envelope(f"{component}-Chart erzeugt.", {"component": component, "config": config})
+    normalized = validate_render_config(component, config)
+    return _envelope(f"{component}-Chart erzeugt.", {"component": component, "config": normalized})
 
 
 async def propose_calendar_event_handler(
@@ -317,7 +325,6 @@ async def plan_propose_handler(
         user_id=user_id, title=f"Trainingsplan ab {start.isoformat()}", start_date=start,
         end_date=end, goal_date=goal, blocks=planned,
     )
-    await session.commit()
 
     lines = [
         f"{b.day.isoformat()}: {_WORKOUT_LABELS[b.workout_type]}"
@@ -356,7 +363,6 @@ async def plan_commit_handler(
     await repo.commit(
         user_id=user_id, plan_id=plan_uuid, event_ids_by_block_id=event_ids_by_block_id
     )
-    await session.commit()
     return _envelope(
         f"Plan bestätigt, {len(event_ids_by_block_id)} Termine angelegt.",
         {"plan_id": plan_id, "events_created": len(event_ids_by_block_id)},
@@ -385,7 +391,6 @@ async def plan_adjust_handler(
         # event's title keeps showing the pre-adjustment TRIMP estimate.
         # The plan data itself (and plan_progress's comparison) reflects the
         # adjustment correctly regardless.
-    await session.commit()
     return _envelope(
         f"{adjusted} künftige Blöcke angepasst (Faktor {multiplier}, Grund: \"{reason}\").",
         {"plan_id": plan_id, "adjusted_blocks": adjusted, "multiplier": multiplier},
@@ -434,7 +439,13 @@ async def plan_progress_handler(
 
 CORE_TOOLS: tuple[ToolSpec, ...] = (
     ToolSpec(
-        name="query_health", risk_class="read", requires_confirmation=False,
+        name="query_health",
+        description=(
+            "Wert einer Kennzahl an einem Tag (Default heute). metric_id aus VERFÜGBARE "
+            "KENNZAHLEN. Für Erholung: hrv_baseline, resting_hr_trend, sleep_debt; "
+            "für Belastung: training_load, acwr."
+        ),
+        risk_class="read", requires_confirmation=False,
         json_schema={
             "type": "object",
             "properties": {
@@ -449,7 +460,12 @@ CORE_TOOLS: tuple[ToolSpec, ...] = (
         handler=query_health_handler,
     ),
     ToolSpec(
-        name="analyze_records", risk_class="read", requires_confirmation=False,
+        name="analyze_records",
+        description=(
+            "Tages-Zeitreihe einer Kennzahl über window_days (max. 60) mit "
+            "Mittelwert/Min/Max. Nur für Kennzahlen mit 'Zeitreihe: ja' (trimp, sleep_debt)."
+        ),
+        risk_class="read", requires_confirmation=False,
         json_schema={
             "type": "object",
             "properties": {
@@ -462,7 +478,12 @@ CORE_TOOLS: tuple[ToolSpec, ...] = (
         handler=analyze_records_handler,
     ),
     ToolSpec(
-        name="query_calendar", risk_class="read", requires_confirmation=False,
+        name="query_calendar",
+        description=(
+            "Termine zwischen from_date und to_date; mit duration_minutes zusätzlich "
+            "freie Blöcke mindestens dieser Länge (für Trainingsplanung)."
+        ),
+        risk_class="read", requires_confirmation=False,
         json_schema={
             "type": "object",
             "properties": {
@@ -481,7 +502,12 @@ CORE_TOOLS: tuple[ToolSpec, ...] = (
         handler=query_calendar_handler,
     ),
     ToolSpec(
-        name="recall", risk_class="read", requires_confirmation=False,
+        name="recall",
+        description=(
+            "Durchsucht gespeicherte Erinnerungen über den Nutzer (Ziele, Vorlieben, "
+            "Einschränkungen). Ohne query: die neuesten Einträge."
+        ),
+        risk_class="read", requires_confirmation=False,
         json_schema={
             "type": "object",
             "properties": {
@@ -492,16 +518,42 @@ CORE_TOOLS: tuple[ToolSpec, ...] = (
         handler=recall_handler,
     ),
     ToolSpec(
-        name="remember", risk_class="write", requires_confirmation=False,
+        name="remember",
+        description=(
+            "Speichert einen Fakt über den Nutzer, der in späteren Gesprächen wichtig "
+            "ist (Ziel, Verletzung, Vorliebe). Keine Messwerte speichern."
+        ),
+        risk_class="write", requires_confirmation=False,
         json_schema={
             "type": "object",
-            "properties": {"content": {"type": "string"}},
+            "properties": {
+                "content": {"type": "string"},
+                "expires_at": {
+                    "type": "string",
+                    "description": (
+                        "ISO-Datum, nur für zeitlich begrenzte Fakten (z.B. 'nächste Woche "
+                        "viel Stress' → Sonntag dieser Woche). Stabile Fakten ohne Ablauf."
+                    ),
+                },
+            },
             "required": ["content"],
         },
         handler=remember_handler,
     ),
     ToolSpec(
-        name="render", risk_class="read", requires_confirmation=False,
+        name="render",
+        description=(
+            "Zeigt Daten aus einem vorherigen Tool-Ergebnis als Diagramm oder Karte im "
+            "Chat. Nur Zahlen aus Tool-Ergebnissen dieses Turns verwenden. "
+            "config je Komponente: "
+            "TimeSeriesChart {title, unit, points:[{date:'YYYY-MM-DD', value}]} (1-366 Punkte); "
+            "BarChart {title, unit, bars:[{label, value}]} (1-50); "
+            "Gauge {title, unit, value, min, max} mit min<max; "
+            "StatCard {title, items:[{label, value (Text oder Zahl), unit?}]} (1-8); "
+            "Table {title, columns:[Text] (1-8), rows:[[Text oder Zahl]]} "
+            "(Zeilenlänge = Spaltenzahl, max 50 Zeilen)."
+        ),
+        risk_class="read", requires_confirmation=False,
         json_schema={
             "type": "object",
             "properties": {
@@ -513,7 +565,12 @@ CORE_TOOLS: tuple[ToolSpec, ...] = (
         handler=render_handler,
     ),
     ToolSpec(
-        name="propose_calendar_event", risk_class="write", requires_confirmation=True,
+        name="propose_calendar_event",
+        description=(
+            "Schlägt einen Kalendertermin vor; wird erst nach Bestätigung durch den "
+            "Nutzer in Google Calendar angelegt."
+        ),
+        risk_class="write", requires_confirmation=True,
         json_schema={
             "type": "object",
             "properties": {
@@ -527,7 +584,12 @@ CORE_TOOLS: tuple[ToolSpec, ...] = (
         handler=propose_calendar_event_handler,
     ),
     ToolSpec(
-        name="delete_calendar_event", risk_class="destructive", requires_confirmation=True,
+        name="delete_calendar_event",
+        description=(
+            "Schlägt das Löschen eines Kalendertermins vor; wird erst nach Bestätigung "
+            "ausgeführt."
+        ),
+        risk_class="destructive", requires_confirmation=True,
         json_schema={
             "type": "object",
             "properties": {
@@ -539,7 +601,12 @@ CORE_TOOLS: tuple[ToolSpec, ...] = (
         handler=delete_calendar_event_handler,
     ),
     ToolSpec(
-        name="plan_propose", risk_class="read", requires_confirmation=False,
+        name="plan_propose",
+        description=(
+            "Erstellt einen Trainingsplan-Entwurf für weeks Wochen auf Basis freier "
+            "Kalenderzeit und aktueller Belastung, optional bis goal_date."
+        ),
+        risk_class="read", requires_confirmation=False,
         json_schema={
             "type": "object",
             "properties": {
@@ -551,7 +618,12 @@ CORE_TOOLS: tuple[ToolSpec, ...] = (
         handler=plan_propose_handler,
     ),
     ToolSpec(
-        name="plan_commit", risk_class="write", requires_confirmation=True,
+        name="plan_commit",
+        description=(
+            "Überträgt einen Plan-Entwurf in den Kalender; wird erst nach Bestätigung "
+            "ausgeführt."
+        ),
+        risk_class="write", requires_confirmation=True,
         json_schema={
             "type": "object",
             "properties": {"plan_id": {"type": "string"}},
@@ -560,7 +632,12 @@ CORE_TOOLS: tuple[ToolSpec, ...] = (
         handler=plan_commit_handler,
     ),
     ToolSpec(
-        name="plan_adjust", risk_class="write", requires_confirmation=True,
+        name="plan_adjust",
+        description=(
+            "Reduziert die Belastung künftiger Einheiten eines Plans (z.B. bei Stress "
+            "oder Krankheit); wird erst nach Bestätigung ausgeführt."
+        ),
+        risk_class="write", requires_confirmation=True,
         json_schema={
             "type": "object",
             "properties": {
@@ -572,7 +649,12 @@ CORE_TOOLS: tuple[ToolSpec, ...] = (
         handler=plan_adjust_handler,
     ),
     ToolSpec(
-        name="plan_progress", risk_class="read", requires_confirmation=False,
+        name="plan_progress",
+        description=(
+            "Soll/Ist-Vergleich des aktiven (oder angegebenen) Trainingsplans für die "
+            "laufende Woche."
+        ),
+        risk_class="read", requires_confirmation=False,
         json_schema={
             "type": "object",
             "properties": {

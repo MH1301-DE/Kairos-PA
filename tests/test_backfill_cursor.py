@@ -124,7 +124,10 @@ async def test_run_backfill_decrements_cursor_until_from_date() -> None:
         step=timedelta(days=1),
     )
 
-    assert result == BackfillResult(windows_processed=3, completed=True, next_cursor=None)
+    assert result == BackfillResult(
+        windows_processed=3, completed=True, next_cursor=None,
+        fetched_from=datetime(2026, 8, 1, tzinfo=UTC),
+    )
     assert connector.windows == [
         Window(start=datetime(2026, 8, 3, tzinfo=UTC), end=datetime(2026, 8, 4, tzinfo=UTC)),
         Window(start=datetime(2026, 8, 2, tzinfo=UTC), end=datetime(2026, 8, 3, tzinfo=UTC)),
@@ -197,6 +200,7 @@ async def test_run_backfill_can_stop_and_resume_from_cursor() -> None:
         windows_processed=1,
         completed=False,
         next_cursor=datetime(2026, 8, 3, tzinfo=UTC),
+        fetched_from=datetime(2026, 8, 3, tzinfo=UTC),
     )
     assert repo.complete_updates == []
 
@@ -210,7 +214,10 @@ async def test_run_backfill_can_stop_and_resume_from_cursor() -> None:
         step=timedelta(days=1),
     )
 
-    assert second_run == BackfillResult(windows_processed=2, completed=True, next_cursor=None)
+    assert second_run == BackfillResult(
+        windows_processed=2, completed=True, next_cursor=None,
+        fetched_from=datetime(2026, 8, 1, tzinfo=UTC),
+    )
     assert resumed_connector.windows == [
         Window(start=datetime(2026, 8, 2, tzinfo=UTC), end=datetime(2026, 8, 3, tzinfo=UTC)),
         Window(start=datetime(2026, 8, 1, tzinfo=UTC), end=datetime(2026, 8, 2, tzinfo=UTC)),
@@ -262,7 +269,10 @@ async def test_run_backfill_extends_further_into_the_past_when_requested() -> No
         step=timedelta(days=1),
     )
 
-    assert result == BackfillResult(windows_processed=1, completed=True, next_cursor=None)
+    assert result == BackfillResult(
+        windows_processed=1, completed=True, next_cursor=None,
+        fetched_from=datetime(2026, 8, 1, tzinfo=UTC),
+    )
     assert connector.windows == [
         Window(start=datetime(2026, 8, 1, tzinfo=UTC), end=datetime(2026, 8, 2, tzinfo=UTC)),
     ]
@@ -305,7 +315,10 @@ async def test_run_backfill_only_fetches_gap_after_covered_range() -> None:
         Window(start=datetime(2026, 8, 4, tzinfo=UTC), end=datetime(2026, 8, 5, tzinfo=UTC)),
     ]
     assert totals == [4]
-    assert result == BackfillResult(windows_processed=4, completed=True, next_cursor=None)
+    assert result == BackfillResult(
+        windows_processed=4, completed=True, next_cursor=None,
+        fetched_from=datetime(2026, 8, 4, tzinfo=UTC),
+    )
     assert repo.complete_updates == [
         (datetime(2026, 8, 4, tzinfo=UTC), datetime(2026, 8, 8, tzinfo=UTC)),
     ]

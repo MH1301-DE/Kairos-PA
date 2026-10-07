@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any, cast
 from uuid import UUID
 
-from sqlalchemy import CursorResult, delete, select, update
+from sqlalchemy import CursorResult, delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kairos.db.models import AgentMemory
@@ -23,8 +23,38 @@ class SqlMemoryRepository:
         )
         return list(result.scalars().all())
 
-    async def create(self, *, user_id: UUID, content: str, source: str) -> AgentMemory:
-        entry = AgentMemory(id=uuid.uuid4(), user_id=user_id, content=content, source=source)
+    async def list_active(self, *, user_id: UUID, now: datetime) -> list[AgentMemory]:
+        result = await self._session.execute(
+            select(AgentMemory)
+            .where(
+                AgentMemory.user_id == user_id,
+                or_(AgentMemory.expires_at.is_(None), AgentMemory.expires_at > now),
+            )
+            .order_by(AgentMemory.created_at.desc())
+        )
+        return list(result.scalars().all())
+
+    async def delete_expired(self, *, user_id: UUID, now: datetime) -> int:
+        result = await self._session.execute(
+            delete(AgentMemory).where(
+                AgentMemory.user_id == user_id,
+                AgentMemory.expires_at.is_not(None),
+                AgentMemory.expires_at <= now,
+            )
+        )
+        rowcount: int = cast(CursorResult[Any], result).rowcount
+        return rowcount
+
+    async def create(
+        self, *, user_id: UUID, content: str, source: str, expires_at: datetime | None = None
+    ) -> AgentMemory:
+        entry = AgentMemory(
+            id=uuid.uuid4(),
+            user_id=user_id,
+            content=content,
+            source=source,
+            expires_at=expires_at,
+        )
         self._session.add(entry)
         await self._session.flush()
         return entry

@@ -73,6 +73,7 @@ export interface MemoryEntry {
 	source: 'user' | 'agent';
 	created_at: string;
 	updated_at: string;
+	expires_at: string | null;
 }
 
 export interface Conversation {
@@ -88,6 +89,9 @@ export interface ChatMessage {
 	role: 'user' | 'assistant' | 'tool';
 	content: string | null;
 	tool_calls: { id: string; name: string; arguments: string }[] | null;
+	tool_call_id: string | null;
+	// null for rows written before the column existed
+	tool_name: string | null;
 	created_at: string;
 }
 
@@ -95,6 +99,7 @@ export interface Proposal {
 	tool_name: string;
 	arguments: Record<string, unknown>;
 	summary: string;
+	tool_call_id: string;
 }
 
 // the tool result shape from src/kairos/agent/tools.py's _envelope()

@@ -1,6 +1,6 @@
 """
-Manuelles Eval-Skript: alle 15 Referenzfragen aus docs/00-vision-und-scope.md §5
-(13 und 15 kamen mit Phase 5 Planung dazu, siehe
+Manuelles Eval-Skript: alle 15 Referenzfragen aus docs/00-vision-und-scope.md §5 plus
+Fall 16 (Proposal-Dialog) (13 und 15 kamen mit Phase 5 Planung dazu, siehe
 docs/superpowers/specs/2026-09-12-phase-5-planning-design.md) gegen einen
 festen Testdatensatz, mit echten LLM-Calls.
 
@@ -26,22 +26,34 @@ NoLlmCredentialConfigured ab.
 from __future__ import annotations
 
 import asyncio
+import json
+import statistics
 import sys
 import time
 import uuid
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from kairos.agent import orchestrator as orchestrator_module
-from kairos.agent.dispatcher import ToolCall, dispatch
-from kairos.agent.orchestrator import run_turn
+from kairos.agent import tools as tools_module
+from kairos.agent.dispatcher import Proposal, ToolCall, dispatch
+from kairos.agent.events import AgentEvent
+from kairos.agent.history import tool_result
+from kairos.agent.orchestrator import stream_continuation, stream_turn
 from kairos.config import settings
+from kairos.db.rls import install_rls_listener
 from kairos.db.session import async_session_factory
 from kairos.repositories.conversation import ConversationRepository
+from kairos.repositories.metrics_recompute import (
+    recompute_hr_bucket_seconds_daily,
+    recompute_metric_daily_values,
+    recompute_wellness_daily_stats,
+)
 
 
 @dataclass(frozen=True)
@@ -59,6 +71,7 @@ class EvalResult:
     proposal: str | None = None
     error: str | None = None
     seconds: float = 0.0
+    ttft: float | None = None
 
     @property
     def tool_selection_ok(self) -> bool:
@@ -115,6 +128,13 @@ CASES: tuple[EvalCase, ...] = (
     ),
 )
 
+_CREATE_EVENT_ATTR = "_create_calendar_event"  # patched in tools' namespace
+FOLLOW_UP_QUESTION = "Danke, und wie erholt bin ich?"
+PROPOSAL_CASE = EvalCase(
+    16, "Trag mir morgen um 7 Uhr einen lockeren Lauf von 45 Minuten ein.",
+    ("propose_calendar_event",),
+)
+
 
 async def _insert_user(session: AsyncSession, user_id: UUID) -> None:
     await session.execute(
@@ -126,42 +146,111 @@ async def _insert_user(session: AsyncSession, user_id: UUID) -> None:
     )
 
 
+_SEED_DAYS = 60
+
+
+async def _seed_history(session: AsyncSession, user_id: UUID, today: date) -> None:
+    uid = str(user_id)
+    # inert connection row: tools check for an active garmin connection, nothing decrypts it here
+    await session.execute(
+        text(
+            "INSERT INTO connection (id, user_id, connector, external_account, status, "
+            "credentials_enc, config) "
+            "VALUES (:id, :uid, 'garmin', 'eval', 'active', :cred, '{}'::jsonb)"
+        ),
+        {"id": str(uuid.uuid4()), "uid": uid, "cred": b"eval-dummy"},
+    )
+    activities: list[dict[str, object]] = []
+    records: list[dict[str, object]] = []
+    wellness_hr: list[dict[str, object]] = []
+    wellness_hrv: list[dict[str, object]] = []
+    sleeps: list[dict[str, object]] = []
+    for days_ago in range(_SEED_DAYS, -1, -1):
+        day = today - timedelta(days=days_ago)
+        at = datetime(day.year, day.month, day.day, tzinfo=UTC)
+        activities.append(
+            {"uid": uid, "ext": f"eval-activity-{day.isoformat()}", "start_at": at.replace(hour=9)}
+        )
+        # hrv_baseline/resting_hr_trend read wellness_daily_stats (hrv_5min, hr), not activity data
+        wellness_hrv.append({"uid": uid, "ts": at.replace(hour=3), "v": 55.0 + (days_ago * 7) % 11})
+        for hour, bpm in ((3, 50.0 + days_ago % 4), (12, 70.0), (18, 82.0)):
+            wellness_hr.append({"uid": uid, "ts": at.replace(hour=hour), "v": bpm})
+        sleeps.append(
+            {
+                "uid": uid, "ext": f"eval-sleep-{day.isoformat()}",
+                "start_at": at.replace(minute=30), "end_at": at.replace(hour=7, minute=30),
+                "dur": 25200 + (days_ago % 3) * 900,
+            }
+        )
+    await session.execute(
+        text(
+            "INSERT INTO activity (user_id, external_id, start_at) "
+            "VALUES (:uid, :ext, :start_at)"
+        ),
+        activities,
+    )
+    ids = {
+        row[0]: row[1]
+        for row in (
+            await session.execute(
+                text("SELECT external_id, id FROM activity WHERE user_id = :uid"), {"uid": uid}
+            )
+        ).all()
+    }
+    for item in activities:
+        start_at = item["start_at"]
+        assert isinstance(start_at, datetime)
+        for i in range(300):  # 5 minutes of HR data -> hr_bucket_seconds_daily / TRIMP
+            records.append(
+                {
+                    "uid": uid, "aid": ids[str(item["ext"])],
+                    "ts": start_at + timedelta(seconds=i),
+                }
+            )
+    await session.execute(
+        text(
+            "INSERT INTO activity_record (user_id, activity_id, recorded_at, metric, value) "
+            "VALUES (:uid, :aid, :ts, 'hr', 140.0)"
+        ),
+        records,
+    )
+    for code, rows in (("hr", wellness_hr), ("hrv_5min", wellness_hrv)):
+        await session.execute(
+            text(
+                "INSERT INTO wellness_sample (user_id, metric_id, observed_at, value) "
+                "SELECT :uid, id, :ts, :v FROM metric_def WHERE code = '" + code + "'"
+            ),
+            rows,
+        )
+    await session.execute(
+        text(
+            "INSERT INTO sleep_session (user_id, external_id, start_at, end_at, duration_seconds) "
+            "VALUES (:uid, :ext, :start_at, :end_at, :dur)"
+        ),
+        sleeps,
+    )
+    await session.commit()
+
+
 async def seed_test_data(session: AsyncSession, user_id: UUID) -> None:
+    install_rls_listener(session, user_id)
     await _insert_user(session, user_id)
     await session.execute(
-        text("INSERT INTO user_setting (user_id, hr_max_override) VALUES (:uid, 190)"),
+        text(  # sex is required by the Banister TRIMP variant
+            "INSERT INTO user_setting (user_id, hr_max_override, sex) VALUES (:uid, 190, 'male')"
+        ),
         {"uid": str(user_id)},
     )
-
-    # 60 days of daily activity + HR data so HRV baseline/training-load/etc. have
-    # enough history to leave insufficient_data
     today = date.today()
-    for days_ago in range(60, -1, -1):
-        day = today - timedelta(days=days_ago)
-        activity_id = (
-            await session.execute(
-                text(
-                    "INSERT INTO activity (user_id, external_id, start_at) "
-                    "VALUES (:uid, :ext, :start_at) RETURNING id"
-                ),
-                {
-                    "uid": str(user_id), "ext": f"eval-activity-{day.isoformat()}",
-                    "start_at": datetime(day.year, day.month, day.day, 9, 0, tzinfo=UTC),
-                },
-            )
-        ).scalar_one()
-        for i in range(300):  # 5 minutes of HR data
-            recorded_at = (
-                datetime(day.year, day.month, day.day, 9, 0, tzinfo=UTC) + timedelta(seconds=i)
-            )
-            await session.execute(
-                text(
-                    "INSERT INTO activity_record "
-                    "(user_id, activity_id, recorded_at, metric, value) "
-                    "VALUES (:uid, :aid, :ts, 'hr', 140.0)"
-                ),
-                {"uid": str(user_id), "aid": activity_id, "ts": recorded_at},
-            )
+    await _seed_history(session, user_id, today)
+
+    # variants read these aggregates, so they must be rebuilt after the raw rows exist
+    start = today - timedelta(days=_SEED_DAYS)
+    await recompute_hr_bucket_seconds_daily(session, user_id=user_id, start=start, end=today)
+    await recompute_wellness_daily_stats(session, user_id=user_id, start=start, end=today)
+    await session.commit()
+    await recompute_metric_daily_values(session, user_id=user_id, start=start, end=today)
+    await session.commit()
 
     # calendar event tomorrow, and a goal, so query_calendar/recall have something real
     tomorrow = today + timedelta(days=1)
@@ -191,72 +280,192 @@ async def seed_test_data(session: AsyncSession, user_id: UUID) -> None:
     await session.commit()
 
 
+async def _drain(
+    stream: AsyncIterator[AgentEvent], result: EvalResult, started: float
+) -> dict[str, Any] | None:
+    # returns the proposal event data (if any); reply keeps only the final round's text
+    proposal: dict[str, Any] | None = None
+    parts: list[str] = []
+    async for event in stream:
+        if event.type == "token":
+            if result.ttft is None:
+                result.ttft = time.monotonic() - started
+            parts.append(event.data["text"])
+        elif event.type == "tool_start":
+            result.tools_called.append(event.data["name"])
+            parts = []
+        elif event.type == "proposal":
+            proposal = event.data
+            result.tools_called.append(event.data["tool_name"])
+            result.proposal = event.data["summary"]
+        elif event.type == "error":
+            result.error = str(event.data.get("detail"))
+    if parts:
+        result.reply = "".join(parts)
+    return proposal
+
+
 async def run_eval_case(
     session: AsyncSession, user_id: UUID, conversation_id: UUID, case: EvalCase
 ) -> EvalResult:
-    tools_called: list[str] = []
-    original_dispatch = dispatch
-
-    async def _recording_dispatch(
-        session_arg: AsyncSession, *, user_id: UUID, tool_call: ToolCall, pending_confirmation: bool
-    ) -> object:
-        tools_called.append(tool_call.name)
-        return await original_dispatch(
-            session_arg, user_id=user_id, tool_call=tool_call,
-            pending_confirmation=pending_confirmation,
-        )
-
-    # orchestrator binds `dispatch` at import time, so patch it there, not on the dispatcher module
-    orchestrator_module.dispatch = _recording_dispatch
+    result = EvalResult(case=case)
     started = time.monotonic()
     try:
-        result = await run_turn(
-            session, user_id=user_id, conversation_id=conversation_id, user_message=case.question
+        await _drain(
+            stream_turn(
+                session, user_id=user_id, conversation_id=conversation_id,
+                user_message=case.question,
+            ),
+            result, started,
         )
         await session.commit()
-        return EvalResult(
-            case=case, tools_called=tools_called, reply=result.reply_text,
-            proposal=result.proposal.summary if result.proposal else None,
-            seconds=time.monotonic() - started,
-        )
     except Exception as exc:  # noqa: BLE001 -- eval harness must not crash on one bad case
         await session.rollback()
-        return EvalResult(
-            case=case, tools_called=tools_called, error=f"{type(exc).__name__}: {exc}",
-            seconds=time.monotonic() - started,
+        result.error = f"{type(exc).__name__}: {exc}"
+    result.seconds = time.monotonic() - started
+    return result
+
+
+async def _fake_create_calendar_event(
+    session: AsyncSession, user_id: UUID, req: Any
+) -> dict[str, Any]:
+    # same shape as routers.calendar._event_to_dict; no real Google write in the eval
+    return {
+        "id": str(uuid.uuid4()), "summary": req.summary, "description": req.description,
+        "location": None, "start_at": req.start_at.isoformat(), "end_at": req.end_at.isoformat(),
+        "all_day": False, "status": "confirmed", "source": "kairos",
+    }
+
+
+async def _confirm_proposal(
+    session: AsyncSession, repo: ConversationRepository, *, user_id: UUID,
+    conversation_id: UUID, tool_call_id: str,
+) -> str | None:
+    # mirrors the /confirm endpoint; returns an error text or None
+    call = await repo.find_tool_call(
+        conversation_id=conversation_id, user_id=user_id, tool_call_id=tool_call_id
+    )
+    if call is None:
+        return "Tool-Call des Proposals nicht gefunden"
+    original = getattr(tools_module, _CREATE_EVENT_ATTR)
+    setattr(tools_module, _CREATE_EVENT_ATTR, _fake_create_calendar_event)
+    try:
+        executed = await dispatch(
+            session, user_id=user_id,
+            tool_call=ToolCall(
+                name=call["name"], arguments=json.loads(call["arguments"] or "{}"),
+                id=tool_call_id,
+            ),
+            pending_confirmation=True,
         )
+    except Exception as exc:  # noqa: BLE001 -- the endpoint stores the failure as the result
+        executed = tool_result(f"Fehler: {exc}")
     finally:
-        orchestrator_module.dispatch = original_dispatch
+        setattr(tools_module, _CREATE_EVENT_ATTR, original)
+    if isinstance(executed, Proposal):
+        return "unerwartetes Proposal beim Bestätigen"
+    await repo.append_message(
+        conversation_id=conversation_id, user_id=user_id, role="tool",
+        content=json.dumps(executed, ensure_ascii=False), tool_call_id=tool_call_id,
+    )
+    await session.commit()
+    return None
+
+
+async def run_proposal_case(
+    session: AsyncSession, user_id: UUID, conversation_id: UUID, case: EvalCase
+) -> EvalResult:
+    """Proposal, confirm, continuation and a follow-up turn in one conversation."""
+    result = EvalResult(case=case)
+    started = time.monotonic()
+    repo = ConversationRepository(session=session)
+    try:
+        proposal = await _drain(
+            stream_turn(
+                session, user_id=user_id, conversation_id=conversation_id,
+                user_message=case.question,
+            ),
+            result, started,
+        )
+        await session.commit()
+        if proposal is None:
+            result.error = result.error or "kein proposal-Event erhalten"
+            return result
+        confirm_error = await _confirm_proposal(
+            session, repo, user_id=user_id, conversation_id=conversation_id,
+            tool_call_id=proposal["tool_call_id"],
+        )
+        if confirm_error:
+            result.error = confirm_error
+            return result
+
+        continuation = EvalResult(case=case)
+        await _drain(
+            stream_continuation(session, user_id=user_id, conversation_id=conversation_id),
+            continuation, time.monotonic(),
+        )
+        await session.commit()
+        if continuation.error or not continuation.reply:
+            result.error = continuation.error or "leere Antwort nach Bestätigung"
+            return result
+        result.reply = continuation.reply
+
+        # regression check for the history bug: the follow-up replays the whole proposal history
+        follow_up = EvalResult(case=case)
+        await _drain(
+            stream_turn(
+                session, user_id=user_id, conversation_id=conversation_id,
+                user_message=FOLLOW_UP_QUESTION,
+            ),
+            follow_up, time.monotonic(),
+        )
+        await session.commit()
+        result.tools_called.extend(follow_up.tools_called)
+        if follow_up.error:
+            result.error = f"Folgefrage: {follow_up.error}"
+        elif "query_health" not in follow_up.tools_called:
+            result.error = f"Folgefrage ohne query_health (Tools: {follow_up.tools_called or '-'})"
+        else:
+            result.reply = follow_up.reply
+    except Exception as exc:  # noqa: BLE001 -- eval harness must not crash on one bad case
+        await session.rollback()
+        result.error = f"{type(exc).__name__}: {exc}"
+    finally:
+        result.seconds = time.monotonic() - started
+    return result
 
 
 async def main() -> None:
-    print("Phase-4-MVP Eval-Suite -- macht echte, kostenpflichtige LLM-Calls.")
+    print("Agent-Eval-Suite -- macht echte, kostenpflichtige LLM-Calls.")
     if not settings.llm_api_key:
         sys.exit("LLM_API_KEY ist in .env nicht gesetzt, Abbruch.")
 
     user_id = uuid.uuid4()
     results: list[EvalResult] = []
+    all_cases = (*CASES, PROPOSAL_CASE)
     async with async_session_factory() as session:
         try:
-            print("Seede Testdatensatz (60 Tage Trainingsdaten) ...")
+            print("Seede Testdatensatz (60 Tage Trainings-, Schlaf- und Wellnessdaten) ...")
             await seed_test_data(session, user_id)
 
             conv_repo = ConversationRepository(session=session)
-            for case in CASES:
+            for case in all_cases:
                 # fresh conversation per case: measures tool selection, not history carry-over
                 conversation = await conv_repo.create(user_id=user_id, title=f"Eval {case.number}")
                 await session.commit()
-                print(f"[{case.number}/15] {case.question}")
-                result = await run_eval_case(session, user_id, conversation.id, case)
+                print(f"[{case.number}/{len(all_cases)}] {case.question}")
+                runner = run_proposal_case if case is PROPOSAL_CASE else run_eval_case
+                result = await runner(session, user_id, conversation.id, case)
                 results.append(result)
-                if result.tool_selection_ok:
-                    status = "OK"
-                elif result.error:
+                if result.error:
                     status = "FEHLER"
+                elif result.tool_selection_ok:
+                    status = "OK"
                 else:
                     status = "TOOL-MISMATCH"
+                ttft = f"{result.ttft:.1f}s" if result.ttft is not None else "-"
                 print(
-                    f"    -> {status} in {result.seconds:.1f}s "
+                    f"    -> {status} in {result.seconds:.1f}s, TTFT {ttft} "
                     f"(Tools: {result.tools_called or '-'})"
                 )
                 if result.error:
@@ -274,10 +483,15 @@ async def main() -> None:
             await session.commit()
             print("Eval-Nutzer und Testdaten entfernt.")
 
-    passed = sum(1 for r in results if r.tool_selection_ok)
-    print(f"\n{passed}/{len(results)} Fragen mit erwartetem Tool beantwortet.")
+    passed = sum(1 for r in results if r.tool_selection_ok and not r.error)
+    print(f"\n{passed}/{len(results)} Fragen fehlerfrei mit erwartetem Tool (Tool-Accuracy).")
+    ttfts = [r.ttft for r in results if r.ttft is not None]
+    if ttfts:
+        print(f"Median TTFT: {statistics.median(ttfts):.1f}s")
+    if results:
+        print(f"Median Gesamtzeit: {statistics.median(r.seconds for r in results):.1f}s")
     for r in results:
-        if not r.tool_selection_ok:
+        if r.error or not r.tool_selection_ok:
             reason = r.error or f"Tools aufgerufen: {r.tools_called or 'keine'}"
             print(f"  Frage {r.case.number}: {reason}")
 

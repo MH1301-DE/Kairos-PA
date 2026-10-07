@@ -2,18 +2,20 @@ from __future__ import annotations
 
 import json
 import logging
-import uuid
+from collections.abc import AsyncIterator
 from typing import Any
 from uuid import UUID
 
-import openai
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from kairos.agent.dispatcher import Proposal, ToolCall, dispatch
-from kairos.agent.llm_client import NoLlmCredentialConfigured
-from kairos.agent.orchestrator import run_turn
+from kairos.agent.dispatcher import Proposal, ToolCall, dispatch, needs_confirmation
+from kairos.agent.events import AgentEvent
+from kairos.agent.history import tool_result
+from kairos.agent.orchestrator import result_events, stream_continuation, stream_turn
+from kairos.agent.tools import TOOLS_BY_NAME
 from kairos.auth.deps import current_user
 from kairos.db.rls import install_rls_listener
 from kairos.db.session import get_session
@@ -32,15 +34,6 @@ class CreateConversationRequest(BaseModel):
 
 class SendMessageRequest(BaseModel):
     content: str
-
-
-class ConfirmRequest(BaseModel):
-    tool_name: str
-    arguments: dict[str, Any]
-
-
-def _proposal_to_dict(p: Proposal) -> dict[str, Any]:
-    return {"tool_name": p.tool_name, "arguments": p.arguments, "summary": p.summary}
 
 
 @router.post("", status_code=201)
@@ -90,24 +83,31 @@ async def list_messages(
     if conversation is None:
         raise HTTPException(status_code=404, detail="conversation_not_found")
     messages = await repo.list_messages(conversation_id=conversation_id, user_id=user_id, limit=200)
+    tool_names = {
+        call["id"]: call["name"]
+        for m in messages if m.role == "assistant" for call in (m.tool_calls or [])
+        if isinstance(call, dict) and "id" in call and "name" in call
+    }
     return {
         "messages": [
             {
                 "id": str(m.id), "role": m.role, "content": m.content,
                 "tool_calls": m.tool_calls, "created_at": m.created_at.isoformat(),
+                "tool_call_id": m.tool_call_id,
+                "tool_name": tool_names.get(m.tool_call_id) if m.role == "tool" else None,
             }
             for m in messages
         ]
     }
 
 
-@router.post("/{conversation_id}/messages")
-async def send_message(
+@router.post("/{conversation_id}/stream")
+async def stream_message(
     conversation_id: UUID,
     req: SendMessageRequest,
     user: dict[str, Any] = Depends(current_user),
     session: AsyncSession = Depends(get_session),
-) -> dict[str, Any]:
+) -> StreamingResponse:
     user_id = UUID(user["user_id"])
     install_rls_listener(session, user_id)
     repo = ConversationRepository(session=session)
@@ -116,71 +116,118 @@ async def send_message(
         raise HTTPException(status_code=404, detail="conversation_not_found")
     if conversation.title is None:
         conversation.title = req.content[:_TITLE_MAX_LEN]
-
-    try:
-        result = await run_turn(
+        await session.commit()
+    return _event_stream(
+        stream_turn(
             session, user_id=user_id, conversation_id=conversation_id, user_message=req.content
         )
-    except NoLlmCredentialConfigured as exc:
-        raise HTTPException(status_code=503, detail="no_llm_provider_configured") from exc
-    except openai.OpenAIError as exc:
-        # litellm normalizes every provider's errors onto the openai.* hierarchy
-        # (AuthenticationError, RateLimitError, APIConnectionError, ...) -- a
-        # wrong/expired key or an upstream outage must not surface as a raw 500
-        logger.warning("LLM call failed for user %s: %s", user_id, exc)
-        raise HTTPException(status_code=502, detail="llm_provider_error") from exc
-    await session.commit()
-    return {
-        "reply": result.reply_text,
-        "proposal": _proposal_to_dict(result.proposal) if result.proposal else None,
-        "remembered": result.remembered,
-    }
+    )
 
 
-@router.post("/{conversation_id}/confirm")
+def _event_stream(events: AsyncIterator[AgentEvent]) -> StreamingResponse:
+    return StreamingResponse(
+        _sse(events), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+async def _sse(events: AsyncIterator[AgentEvent]) -> AsyncIterator[str]:
+    async for event in events:
+        yield event.to_sse()
+
+
+async def _prefixed(
+    first: list[AgentEvent], rest: AsyncIterator[AgentEvent]
+) -> AsyncIterator[AgentEvent]:
+    for event in first:
+        yield event
+    async for event in rest:
+        yield event
+
+
+async def _load_pending_proposal(
+    repo: ConversationRepository, *, conversation_id: UUID, user_id: UUID, tool_call_id: str
+) -> dict[str, Any]:
+    # row lock serializes concurrent confirms so has_tool_result below can't race
+    call = await repo.find_tool_call(
+        conversation_id=conversation_id, user_id=user_id, tool_call_id=tool_call_id,
+        for_update=True,
+    )
+    if call is None:
+        raise HTTPException(status_code=404, detail="proposal_not_found")
+    spec = TOOLS_BY_NAME.get(call["name"])
+    if spec is None or not needs_confirmation(spec):
+        raise HTTPException(status_code=409, detail="not_a_proposal")
+    if await repo.has_tool_result(
+        conversation_id=conversation_id, user_id=user_id, tool_call_id=tool_call_id
+    ):
+        raise HTTPException(status_code=409, detail="proposal_already_resolved")
+    return call
+
+
+@router.post("/{conversation_id}/proposals/{tool_call_id}/confirm")
 async def confirm_proposal(
     conversation_id: UUID,
-    req: ConfirmRequest,
+    tool_call_id: str,
     user: dict[str, Any] = Depends(current_user),
     session: AsyncSession = Depends(get_session),
-) -> dict[str, Any]:
+) -> StreamingResponse:
     user_id = UUID(user["user_id"])
     install_rls_listener(session, user_id)
-    conv_repo = ConversationRepository(session=session)
-    conversation = await conv_repo.get(user_id=user_id, conversation_id=conversation_id)
-    if conversation is None:
+    repo = ConversationRepository(session=session)
+    if await repo.get(user_id=user_id, conversation_id=conversation_id) is None:
         raise HTTPException(status_code=404, detail="conversation_not_found")
-
-    # a fresh tool_call_id -- the Proposal's originating assistant tool_call was
-    # already persisted (without a matching tool result) when run_turn() returned
-    # early; this records the confirmed execution as its own well-formed
-    # assistant/tool pair rather than threading the original id through
-    tool_call_id = str(uuid.uuid4())
-    tool_calls_data = [
-        {"id": tool_call_id, "name": req.tool_name, "arguments": json.dumps(req.arguments)}
-    ]
-    await conv_repo.append_message(
-        conversation_id=conversation_id, user_id=user_id, role="assistant", content=None,
-        tool_calls=tool_calls_data,
+    call = await _load_pending_proposal(
+        repo, conversation_id=conversation_id, user_id=user_id, tool_call_id=tool_call_id
     )
-
     try:
-        result = await dispatch(
-            session, user_id=user_id,
-            tool_call=ToolCall(name=req.tool_name, arguments=req.arguments),
-            pending_confirmation=True,
-        )
+        # savepoint: a handler DB error must not abort the transaction holding the row lock
+        async with session.begin_nested():
+            result = await dispatch(
+                session, user_id=user_id,
+                tool_call=ToolCall(
+                    name=call["name"], arguments=json.loads(call["arguments"] or "{}"),
+                    id=tool_call_id,
+                ),
+                pending_confirmation=True,
+            )
     except Exception as exc:
-        result = {"summary": f"Fehler: {exc}", "data": None, "meta": {}}
-
+        result = tool_result(f"Fehler: {exc}")
     if isinstance(result, Proposal):
-        # confirm always executes -- dispatch only returns another Proposal if
-        # the tool name doesn't actually require one, which would be a bug
         raise HTTPException(status_code=500, detail="unexpected_proposal_on_confirm")
-
-    await conv_repo.append_message(
+    await repo.append_message(
         conversation_id=conversation_id, user_id=user_id, role="tool",
-        content=json.dumps(result), tool_call_id=tool_call_id,
+        content=json.dumps(result, ensure_ascii=False), tool_call_id=tool_call_id,
     )
     await session.commit()
-    return result
+    return _event_stream(_prefixed(
+        result_events(tool_call_id, call["name"], result),
+        stream_continuation(session, user_id=user_id, conversation_id=conversation_id),
+    ))
+
+
+@router.post("/{conversation_id}/proposals/{tool_call_id}/reject")
+async def reject_proposal(
+    conversation_id: UUID,
+    tool_call_id: str,
+    user: dict[str, Any] = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> StreamingResponse:
+    user_id = UUID(user["user_id"])
+    install_rls_listener(session, user_id)
+    repo = ConversationRepository(session=session)
+    if await repo.get(user_id=user_id, conversation_id=conversation_id) is None:
+        raise HTTPException(status_code=404, detail="conversation_not_found")
+    call = await _load_pending_proposal(
+        repo, conversation_id=conversation_id, user_id=user_id, tool_call_id=tool_call_id
+    )
+    result = tool_result("Vom Nutzer abgelehnt.")
+    await repo.append_message(
+        conversation_id=conversation_id, user_id=user_id, role="tool",
+        content=json.dumps(result, ensure_ascii=False), tool_call_id=tool_call_id,
+    )
+    await session.commit()
+    return _event_stream(_prefixed(
+        result_events(tool_call_id, call["name"], result),
+        stream_continuation(session, user_id=user_id, conversation_id=conversation_id),
+    ))

@@ -80,3 +80,59 @@ class ConversationRepository:
             .limit(limit)
         )
         return list(reversed(result.scalars().all()))
+
+    async def list_messages_after(
+        self, *, conversation_id: UUID, user_id: UUID, after_seq: int | None
+    ) -> list[ConversationMessage]:
+        stmt = select(ConversationMessage).where(
+            ConversationMessage.conversation_id == conversation_id,
+            ConversationMessage.user_id == user_id,
+        )
+        if after_seq is not None:
+            stmt = stmt.where(ConversationMessage.seq > after_seq)
+        result = await self._session.execute(stmt.order_by(ConversationMessage.seq.asc()))
+        return list(result.scalars().all())
+
+    async def set_compacted_through(
+        self, *, conversation_id: UUID, user_id: UUID, seq: int
+    ) -> None:
+        await self._session.execute(
+            update(Conversation)
+            .where(Conversation.id == conversation_id, Conversation.user_id == user_id)
+            .values(compacted_through_seq=seq)
+        )
+
+    async def find_tool_call(
+        self,
+        *,
+        conversation_id: UUID,
+        user_id: UUID,
+        tool_call_id: str,
+        for_update: bool = False,
+    ) -> dict[str, Any] | None:
+        stmt = select(ConversationMessage).where(
+            ConversationMessage.conversation_id == conversation_id,
+            ConversationMessage.user_id == user_id,
+            ConversationMessage.role == "assistant",
+            ConversationMessage.tool_calls.contains([{"id": tool_call_id}]),
+        )
+        if for_update:
+            stmt = stmt.with_for_update()
+        result = await self._session.execute(stmt)
+        message = result.scalars().first()
+        if message is None or not message.tool_calls:
+            return None
+        return next((tc for tc in message.tool_calls if tc["id"] == tool_call_id), None)
+
+    async def has_tool_result(
+        self, *, conversation_id: UUID, user_id: UUID, tool_call_id: str
+    ) -> bool:
+        result = await self._session.execute(
+            select(ConversationMessage.id).where(
+                ConversationMessage.conversation_id == conversation_id,
+                ConversationMessage.user_id == user_id,
+                ConversationMessage.role == "tool",
+                ConversationMessage.tool_call_id == tool_call_id,
+            )
+        )
+        return result.first() is not None

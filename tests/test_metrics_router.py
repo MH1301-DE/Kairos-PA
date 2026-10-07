@@ -80,3 +80,21 @@ async def test_get_metric_unknown_variant_returns_404() -> None:
         )
 
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_metric_defaults_to_preferred_variant(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Banister(_StubVariant):
+        variant_id = "banister"
+
+    registry = MetricRegistry()
+    registry.register(_Banister())
+    registry.register(_StubVariant())
+    monkeypatch.setattr(metrics_router_module, "_registry", registry)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/api/metrics/trimp", cookies={"session_id": "valid"})
+
+    assert resp.status_code == 200
+    assert resp.json()["variant"] == "edwards"

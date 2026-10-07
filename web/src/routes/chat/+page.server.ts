@@ -1,7 +1,7 @@
 import type { Actions, PageServerLoad } from './$types';
 import { redirect, fail } from '@sveltejs/kit';
 import { apiDelete, apiGet, apiPost, ApiError } from '$lib/api';
-import type { ChatMessage, Conversation, MemoryEntry, Proposal, ToolResult } from '$lib/types';
+import type { ChatMessage, Conversation } from '$lib/types';
 
 export const load: PageServerLoad = async ({ fetch, url, depends }) => {
 	depends('chat:conversations');
@@ -40,43 +40,6 @@ export const actions: Actions = {
 			return fail(status, { error: `Konversation konnte nicht angelegt werden (${status}).` });
 		}
 		redirect(303, q ? `/chat?c=${data.id}&q=${encodeURIComponent(q)}` : `/chat?c=${data.id}`);
-	},
-
-	send: async ({ request, fetch }) => {
-		const form = await request.formData();
-		const conversationId = String(form.get('conversation_id') ?? '');
-		const content = String(form.get('content') ?? '').trim();
-		if (!content) {
-			return fail(400, { error: 'Nachricht darf nicht leer sein.' });
-		}
-		const { status, data } = await apiPost<{
-			reply: string | null;
-			proposal: Proposal | null;
-			remembered: MemoryEntry[];
-			detail?: string;
-		}>(fetch, `/api/agent/conversations/${conversationId}/messages`, { content });
-		if (status === 401) redirect(302, '/auth/login');
-		if (status !== 200) {
-			return fail(status, { error: `Nachricht konnte nicht gesendet werden (${status}).` });
-		}
-		return { reply: data.reply, proposal: data.proposal, remembered: data.remembered };
-	},
-
-	confirm: async ({ request, fetch }) => {
-		const form = await request.formData();
-		const conversationId = String(form.get('conversation_id') ?? '');
-		const toolName = String(form.get('tool_name') ?? '');
-		const argumentsJson = String(form.get('arguments') ?? '{}');
-		const { status, data } = await apiPost<ToolResult & { detail?: string }>(
-			fetch,
-			`/api/agent/conversations/${conversationId}/confirm`,
-			{ tool_name: toolName, arguments: JSON.parse(argumentsJson) }
-		);
-		if (status === 401) redirect(302, '/auth/login');
-		if (status !== 200) {
-			return fail(status, { error: `Aktion konnte nicht bestätigt werden (${status}).` });
-		}
-		return { confirmResult: data };
 	},
 
 	// reuses the /memory page's delete endpoint -- the undo chip on a

@@ -3,15 +3,10 @@
 	import { enhance } from '$app/forms';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
+	import ChatThread from '$lib/chat/ChatThread.svelte';
 	import type { PageData, ActionData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
-
-	function conversationHref(id: string) {
-		return resolve(`/chat?c=${id}`);
-	}
-
-	let sending = $state(false);
 
 	// prefilled from a dashboard tile's "Dazu fragen →" link
 	let question = $derived(page.url.searchParams.get('q') ?? '');
@@ -62,13 +57,16 @@
 			<ul>
 				{#each data.conversations as c (c.id)}
 					<li>
+						<!-- resolve() takes no query string; the path part below is resolved -->
+						<!-- eslint-disable svelte/no-navigation-without-resolve -->
 						<a
-							href={conversationHref(c.id)}
+							href={`${resolve('/chat')}?c=${c.id}`}
 							class:active={c.id === data.activeConversationId}
 							onclick={() => (mobileListOpen = false)}
 						>
 							{c.title ?? 'Neue Konversation'}
 						</a>
+						<!-- eslint-enable svelte/no-navigation-without-resolve -->
 					</li>
 				{/each}
 			</ul>
@@ -98,86 +96,16 @@
 				<p class="empty">Wähle links eine Konversation oder starte eine neue.</p>
 			{/if}
 		{:else}
-			<div class="message-list">
-				{#each data.messages as m (m.id)}
-					{#if m.role === 'user'}
-						<div class="message message-user">{m.content}</div>
-					{:else if m.role === 'assistant' && m.content}
-						<div class="message message-assistant">{m.content}</div>
-					{/if}
-				{/each}
-
-				{#if form?.remembered}
-					{#each form.remembered as entry (entry.id)}
-						<div class="memory-chip">
-							<span>📝 Gemerkt: {entry.content}</span>
-							<form method="POST" action="?/forgetRemembered" use:enhance>
-								<input type="hidden" name="memory_id" value={entry.id} />
-								<button type="submit" class="chip-undo">Rückgängig</button>
-							</form>
-						</div>
-					{/each}
-				{/if}
-
-				{#if form?.reply}
-					<div class="message message-assistant">{form.reply}</div>
-				{/if}
-
-				{#if form?.proposal}
-					<div class="proposal-card">
-						<p>{form.proposal.summary}</p>
-						<div class="proposal-actions">
-							<form method="POST" action="?/confirm" use:enhance>
-								<input type="hidden" name="conversation_id" value={data.activeConversationId} />
-								<input type="hidden" name="tool_name" value={form.proposal.tool_name} />
-								<input
-									type="hidden"
-									name="arguments"
-									value={JSON.stringify(form.proposal.arguments)}
-								/>
-								<button type="submit" class="btn btn-primary">Bestätigen</button>
-							</form>
-							<a href={conversationHref(data.activeConversationId)} class="btn btn-ghost">
-								Ablehnen
-							</a>
-						</div>
-					</div>
-				{/if}
-
-				{#if form?.confirmResult}
-					<div class="message message-assistant">{form.confirmResult.summary}</div>
-				{/if}
-
-				{#if form?.error}
-					<p class="status-error">{form.error}</p>
-				{/if}
-			</div>
-
-			<form
-				method="POST"
-				action="?/send"
-				use:enhance={() => {
-					sending = true;
-					return async ({ update }) => {
-						await update();
-						sending = false;
-					};
-				}}
-				class="chat-input-form"
-			>
-				<input type="hidden" name="conversation_id" value={data.activeConversationId} />
-				<input
-					type="text"
-					name="content"
-					placeholder="Frag Kairos..."
-					value={question}
-					required
-					disabled={sending}
+			{#if form?.error}
+				<p class="status-error">{form.error}</p>
+			{/if}
+			{#key data.activeConversationId}
+				<ChatThread
+					conversationId={data.activeConversationId}
+					messages={data.messages}
+					initialDraft={question}
 				/>
-				<button type="submit" class="btn btn-primary" disabled={sending}>
-					{sending ? 'Sendet …' : 'Senden'}
-				</button>
-			</form>
+			{/key}
 		{/if}
 	</div>
 </div>
@@ -242,72 +170,6 @@
 		flex-direction: column;
 		gap: var(--space-4);
 		min-height: 24rem;
-	}
-	.message-list {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-3);
-		flex: 1;
-	}
-	.message {
-		padding: var(--space-3);
-		border-radius: var(--radius-md, 8px);
-		max-width: 80%;
-	}
-	.message-user {
-		align-self: flex-end;
-		background: var(--surface-raised);
-	}
-	.message-assistant {
-		align-self: flex-start;
-		background: var(--color-surface-raised);
-	}
-	.memory-chip {
-		align-self: flex-start;
-		display: flex;
-		align-items: center;
-		gap: var(--space-2);
-		padding: var(--space-2) var(--space-3);
-		border-radius: 999px;
-		background: var(--color-border);
-		font-size: var(--text-xs);
-		color: var(--color-text-muted);
-	}
-	.chip-undo {
-		background: none;
-		border: none;
-		color: var(--color-accent);
-		cursor: pointer;
-		font-size: var(--text-xs);
-		text-decoration: underline;
-		padding: 0;
-	}
-	.proposal-card {
-		align-self: flex-start;
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-3);
-		padding: var(--space-3);
-		border: 1px solid var(--accent);
-		border-radius: 18px;
-		max-width: 80%;
-	}
-	.proposal-actions {
-		display: flex;
-		gap: var(--space-2);
-	}
-	.chat-input-form {
-		display: flex;
-		gap: var(--space-2);
-	}
-	.chat-input-form input[type='text'] {
-		flex: 1;
-		font: inherit;
-		background: var(--color-surface);
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-sm);
-		padding: var(--space-2);
-		color: var(--color-text);
 	}
 
 	.mobile-list-toggle,
