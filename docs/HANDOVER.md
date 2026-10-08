@@ -34,7 +34,7 @@ Der Agent soll Trainingslast erkennen, Erholung bewerten und Termine vorschlagen
 
 | Schicht | Technologie |
 |---|---|
-| Backend | Python 3.14.6, FastAPI, SQLAlchemy[asyncio], asyncpg, Alembic |
+| Backend | Python ≥ 3.12 (`pyproject.toml`; CI 3.12; lokal 3.13 unter Windows bzw. 3.14.6 auf dem Mac), FastAPI, SQLAlchemy[asyncio], asyncpg, Alembic |
 | DB | PostgreSQL + TimescaleDB + pgvector |
 | Cache/Sessions | Redis |
 | Auth | Google OIDC (kein eigenes Passwort-Management) |
@@ -43,7 +43,7 @@ Der Agent soll Trainingslast erkennen, Erholung bewerten und Termine vorschlagen
 | Verschlüsselung | AES-256-GCM (cryptography >=42), Envelope-Encryption |
 | Linter/Typen | ruff, mypy (strict) |
 | Tests | pytest + pytest-asyncio, testcontainers[postgres] |
-| venv | `.venv/` mit Python 3.14.6, `pip` via `.venv/bin/python -m pip` |
+| venv | `.venv/` (Windows: Python 3.13, `.venv/Scripts/python`; Mac: 3.14.6, `.venv/bin/python`), `pip` via `<venv-python> -m pip` |
 
 ---
 
@@ -395,11 +395,13 @@ Entscheidung zu blockieren:
    Migrations-Versuch); `_build_garmin_client`s `bare except Exception` verschluckt
    weiterhin den echten Fehlertyp (nächster sinnvoller Folge-Fix: `logger.exception(...)`
    statt stillem `return None`); 401→Redirect-Fix hat keinen automatisierten Test (nur
-   Code-Lesen + eine manuelle Live-Prüfung); **Produktions-Deployment (Caddyfile,
-   `web/Dockerfile`, `api`-Dockerfile, `ORIGIN`-Env-Wiring) existiert noch nicht** —
-   `deploy/docker-compose.yml` referenziert sie, aber die Dateien selbst fehlen. Braucht
-   einen eigenen Folge-Task/Plan, bevor die Same-Origin-Cookie-Architektur produktiv
-   getestet werden kann.
+   Code-Lesen + eine manuelle Live-Prüfung); ~~**Produktions-Deployment (Caddyfile,
+   `web/Dockerfile`, `api`-Dockerfile, `ORIGIN`-Env-Wiring) existiert noch nicht**~~ —
+   **Nachtrag 2026-10:** inzwischen vorhanden (`deploy/Caddyfile` in `82326df`,
+   `deploy/Dockerfile` in `8470373`, `web/Dockerfile` in `3338ee4`, Stack lokal
+   verifiziert). Das Caddyfile enthält **kein Rate-Limit** (Standard-Caddy hat keine
+   Direktive dafür, siehe `docs/06` §4.3); auf einer echten VM ist der Stack noch nicht
+   gelaufen.
 
    Bemerkenswerte Funde während der einzelnen Task-Reviews (vor dem finalen Review,
    alle bereits damals behoben): eine SvelteKit-Serialisierungs-Falle (Funktionen können
@@ -909,7 +911,10 @@ Anfrage über beide Seiten, läuft weiterhin der volle Bereich. Neuer
 Fensterzahl — die beim Request zurückgegebene Zahl ist nur noch eine Obergrenze. 5 neue Tests
 in `tests/test_backfill_cursor.py`, Suite **307 passed**.
 
-**6. Performance-Falle in `activity_fit` gefunden, noch nicht gefixt:**
+**6. Performance-Falle in `activity_fit`** — *Nachtrag: für `activity_record` behoben
+(`5b57d89`, Bulk-Insert in `canonical.py:156-204`); `wellness_sample` wird weiterhin
+zeilenweise geschrieben (`canonical.py:50-52`), was bei wenigen hundert Zeilen/Tag
+unkritisch ist.* Ursprünglicher Befund:
 `SqlCanonicalRepository.upsert_many()` (`src/kairos/repositories/canonical.py`) schreibt
 jeden `CanonicalRecord` einzeln (`await self._session.execute(stmt)` in einer
 `for record in records`-Schleife) — für `wellness_sample`/`sleep_session`/`daily_summary`
@@ -1330,3 +1335,45 @@ LLM-Runden vor dem ersten Text. Im Chat sieht der Nutzer stattdessen sofort `too
 Ruhe-Layout + `?q=`-Übergabe von den Dashboard-Kacheln behalten, Nachrichtenliste durch den streamenden `ChatThread` ersetzt
 (neuer Prop `initialDraft`, auf Ruhe-Tokens umgestellt). Beide Branches und der Worktree sind gelöscht; Dev-Frontend läuft
 wieder aus `web/` auf **:5173**. Verifiziert: pytest 394 passed, vitest 94 passed, svelte-check 0/0, eslint 0.
+
+---
+
+## Doku-Abgleich und Aktivitäts-Befunde (2026-10-07/08)
+
+**Prüfbericht (2026-10-07):** 26 Fragen zu Code vs. Doku, beantwortet am Code und an der
+Entwicklungs-DB. Daraus entstanden die Spec
+`docs/superpowers/specs/2026-10-07-aktivitaeten-und-workouts-design.md` (Aktivitäts-Tools,
+Garmin-Workouts, Plan → Garmin; Tool-Satz 12 → 26) und der Plan
+`docs/superpowers/plans/2026-10-07-doku-abgleich.md`, der `00`–`08`, HANDOVER und ADR-0004
+auf den Ist-Stand bringt (ein Commit pro Datei, 2026-10-08).
+
+**Aktivitäts-Befunde (alle offen, Umsetzung in Spec Teil A):**
+- `activity.activity_type` ist **immer NULL** (0 von 136): `normalize.py:295` erwartet einen
+  String, Garmin liefert `activityType` als Dict. Der `typeKey` landet korrekt in `sport`.
+- Das FIT-Feld **`distance` wird nicht gespeichert** (fehlt in `_FIT_FIELDS`,
+  `normalize.py:309-320`), steht aber in jedem Record im `raw_payload` → per Reprocess ohne
+  Garmin-Request nachholbar.
+- **Kein Lösch-Abgleich:** bei Garmin gelöschte Aktivitäten bleiben lokal; es gibt kein
+  `deleted_at` auf `activity`.
+- **`sync_failure` wird nie geschrieben** (`SyncService` ohne `sync_failure_repo`,
+  `routers/sync.py:221`).
+- Der Upsert in `_write_activity` aktualisiert **`start_at`/`end_at` nicht**
+  (`canonical.py:140-151`).
+- Zeitzone (`timeZoneId`, `startTimeLocal`) und Felder wie `movingDuration`,
+  `averageSpeed`, `fastestSplit_*` liegen nur im `raw_payload`.
+- FIT-Downloads innerhalb eines Tagesfensters laufen **ohne Pause**
+  (`connector.py:74-89`).
+
+**Weitere Befunde aus dem Doku-Abgleich (2026-10-08):**
+- Tagesaggregate und Schlafzuordnung schneiden Tage nach **UTC**, nicht nach lokaler Zeit
+  (`metrics_recompute.py:29,63`, `metrics_data.py:93`).
+- Der Google-Calendar-Sync ist **nicht inkrementell**: der Connector übergibt nie einen
+  `syncToken` (`google_calendar/connector.py:28-30`), jeder Abruf holt −7 bis +83 Tage.
+- `quality = 'suspect'` wird nur für HF gesetzt und in den Aggregaten nicht gefiltert.
+- Kein Prompt-Caching (`cache_control`), keine Token-Telemetrie.
+- `pgvector` ist nicht installiert; es gibt kein `audit_log`, kein Rate-Limit, keine
+  HSTS-/CSP-Header, keinen Backup-Container.
+- **Speicher gemessen:** `activity_record` 224 B/Zeile, ≈ 3,5 MB je Aktivität; Hochrechnung
+  5 Nutzer × 5 Jahre ≈ 14 GB (reale Rate) bis ≈ 30 GB (Doku-Szenario) statt der früher
+  dokumentierten 7–9 GB → VM mit ≥ 80 GB SSD empfohlen; welche VM gebucht wird, ist offen.
+- Das leere Verzeichnis `deploy/Caddyfile;C` wurde entfernt.
