@@ -1,16 +1,22 @@
 # 01 — Architektur
 
+> **Stand 2026-10-08.** Dieses Dokument beschreibt den Ist-Stand im Code. Nicht
+> gebaute Teile des ursprünglichen Entwurfs sind als **Zielbild (nicht umgesetzt)**
+> markiert.
+
 ## 1. Architekturprinzipien
 
 Diese fünf Prinzipien entscheiden im Zweifel jede Detailfrage:
 
 1. **Determinismus vor Intelligenz.** Alles, was berechenbar ist, wird berechnet.
    Das LLM interpretiert Ergebnisse, es erzeugt sie nicht.
-2. **Eine Datenbank.** Postgres deckt Relationen, Zeitreihen (TimescaleDB), Volltext
-   und Vektoren (`pgvector`) ab. Kein zweites Datensystem ohne zwingenden Grund.
+2. **Eine Datenbank.** Postgres deckt Relationen und Zeitreihen (TimescaleDB) ab.
+   Kein zweites Datensystem ohne zwingenden Grund. *Zielbild (nicht umgesetzt):*
+   Vektoren über `pgvector` — die Extension ist heute nicht installiert.
 3. **Die Integrationsgrenze ist ein Modul, nicht eine Funktion.** Jede externe
    Anbindung implementiert ein einheitliches `Connector`-Protocol und lebt in einem
-   eigenen Package. Der Import-Linter erzwingt die Grenze; kein externer Prozess nötig.
+   eigenen Package; kein externer Prozess nötig. *Zielbild (nicht umgesetzt):* ein
+   Import-Linter in CI, der die Grenze erzwingt — heute gilt sie nur per Konvention.
 4. **Der Kontext ist die knappste Ressource.** Jede Komponente, die etwas in den
    Agentenkontext schreibt, hat ein Token-Budget und hält es ein.
 5. **Rohdaten sind unantastbar.** Was importiert wurde, wird nie überschrieben.
@@ -26,11 +32,14 @@ Diese fünf Prinzipien entscheiden im Zweifel jede Detailfrage:
                  └───┬───────────┬───────────┬───────────┬───┘
                      │           │           │           │
                      ▼           ▼           ▼           ▼
-                ┌────────┐ ┌──────────┐ ┌────────┐ ┌──────────┐
-                │ Garmin │ │  Google  │ │ Apple  │ │ LLM-API  │
-                │Connect │ │ Cal/Mail │ │ CalDAV │ │(Anthropic)│
-                └────────┘ └──────────┘ └────────┘ └──────────┘
-                  Pull       Push+Pull      Pull      Request/Resp
+                ┌────────┐ ┌──────────┐ ┌────────┐ ┌───────────────┐
+                │ Garmin │ │  Google  │ │ Apple  │ │    LLM-API    │
+                │Connect │ │ Calendar │ │CalDAV *│ │ (über litellm,│
+                │        │ │          │ │        │ │ Anbieter frei)│
+                └────────┘ └──────────┘ └────────┘ └───────────────┘
+                  Pull     Pull + Write    Pull      Request/Resp
+
+  * Apple CalDAV und Gmail: Zielbild (nicht umgesetzt).
 ```
 
 **Vertrauensgrenzen:** Alles innerhalb der VM ist vertrauenswürdig. Alles außerhalb
@@ -39,17 +48,23 @@ die als potenzielle Prompt-Injection behandelt werden ([06](06-sicherheit-und-da
 
 ## 3. Containerdiagramm (C4 Level 2)
 
+**Ist-Stand:** `deploy/docker-compose.yml` enthält Caddy, Web (SvelteKit), API
+(FastAPI), Postgres (TimescaleDB) und Redis. Syncs laufen als FastAPI-
+`BackgroundTasks` im API-Prozess. Mit `*` markierte Teile sind **Zielbild (nicht
+umgesetzt)**: kein Worker/Scheduler (kein `arq` in den Dependencies), kein Object
+Store, kein CalDAV-Connector, kein Rate-Limit in Caddy, kein `pgvector`.
+
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │ VM (Docker Compose)                                                 │
 │                                                                     │
 │  ┌───────────┐                                                      │
-│  │  Caddy    │  TLS-Terminierung, Reverse Proxy, Basic Rate Limit   │
+│  │  Caddy    │  TLS-Terminierung, Reverse Proxy (Rate Limit *)      │
 │  └─────┬─────┘                                                      │
 │        │                                                            │
 │  ┌─────▼──────────┐        ┌──────────────────┐                     │
 │  │  Web (PWA)     │        │  Auth            │                     │
-│  │  React/Svelte  │◀──────▶│  Google OIDC     │                     │
+│  │  SvelteKit     │◀──────▶│  Google OIDC     │                     │
 │  └─────┬──────────┘        └──────────────────┘                     │
 │        │ REST / SSE                                                 │
 │  ┌─────▼──────────────────────────────────────────┐                 │
@@ -62,16 +77,16 @@ die als potenzielle Prompt-Injection behandelt werden ([06](06-sicherheit-und-da
 │  └───┬───────────────────────────────────────────────┬──────┘         │
 │      │  (Connector-Protocol, Import-Linter-Grenze)  │               │
 │  ┌───▼──────────────────────────────────────┐  ┌────▼───────┐       │
-│  │  kairos/connectors/                      │  │  Worker    │       │
-│  │  ┌──────────┬───────────┬─────────────┐  │  │  Scheduler │  arq  │
-│  │  │  garmin  │  google   │   caldav    │  │  └────┬───────┘       │
+│  │  kairos/connectors/                      │  │  Worker *  │       │
+│  │  ┌──────────┬───────────┬─────────────┐  │  │ Scheduler *│ arq * │
+│  │  │  garmin  │  google   │   caldav *  │  │  └────┬───────┘       │
 │  │  └──────────┴───────────┴─────────────┘  │       │               │
 │  └──────────────────────────────────────────┘       │               │
 │                                            │                        │
 │  ┌──────────────────────┐  ┌───────────────▼─────┐  ┌────────────┐  │
 │  │ Postgres 16          │  │ Redis               │  │ Object     │  │
-│  │ + TimescaleDB        │  │ Queue, Cache, Locks │  │ Store      │  │
-│  │ + pgvector           │  │                     │  │ (FIT/Raw)  │  │
+│  │ + TimescaleDB        │  │ Sessions,           │  │ Store *    │  │
+│  │ (+ pgvector *)       │  │ OAuth-State         │  │ (FIT/Raw)  │  │
 │  └──────────────────────┘  └─────────────────────┘  └────────────┘  │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -87,7 +102,10 @@ herausschneiden, wenn es je nötig wird. Siehe
 
 **Connectors** sind in-process Python-Module (`kairos/connectors/`), die das
 `Connector`-Protocol implementieren. Keine eigenen Prozesse, kein Netzwerk-Hop.
-Die Grenze wird durch den Import-Linter erzwungen, nicht durch eine Prozessgrenze.
+Die Grenze ist eine Package-Konvention (ein Import-Linter ist Zielbild, siehe oben),
+keine Prozessgrenze. `Connector.write_back()` ist für Garmin ein No-op und für Google
+Calendar zwar implementiert, wird aber nirgends aufgerufen: Schreibzugriffe laufen
+über Domänen-Funktionen (`routers/calendar.py`), die den Client direkt nutzen.
 Begründung und Upgrade-Pfad: [ADR-0003](adr/ADR-0003-connector-architektur.md).
 
 ## 4. Schichten
@@ -98,7 +116,7 @@ Zuständig für: Auth gegen externe Dienste, Abholen, Rate-Limiting, Retry,
 Idempotenz, Ablage im Raw-Store.
 
 ```
-Scheduler ──▶ SyncJob(user, connector, window)
+POST /api/sync/... (manuell) ──▶ SyncJob(user, connector, kind) als BackgroundTask
                   │
                   ├─▶ Connector.fetch()      → Raw-Payload
                   ├─▶ RawStore.put()          → unveränderlich, gzip
@@ -111,12 +129,15 @@ Eigenschaften:
   `last_synced_through` gehalten. Kein Vollabzug im Normalbetrieb.
 - **Idempotent.** Jeder Record hat einen stabilen `external_id`; Upsert per
   `ON CONFLICT`.
-- **Backfill als eigener Jobtyp** mit niedrigerer Priorität und aggressiverem
-  Rate-Limit, damit der Erstimport (12 Monate Historie) den laufenden Betrieb nicht
-  blockiert.
-- **Verlustfreie Fehlerbehandlung.** Fehlgeschlagene Fenster landen in einer
-  `sync_failure`-Tabelle und werden mit Backoff wiederholt, nicht stillschweigend
-  übersprungen.
+- **Backfill** (Default 24 Monate) läuft tageweise rückwärts. Statt einer
+  Prioritätsstufe gilt: ein Lock je (Nutzer, Connector, Kind)
+  (`ingestion/job_registry.py`), 300 s Cooldown zwischen zwei Garmin-Backfill-
+  Auslösungen und 1,5 s Pause zwischen Tagesfenstern.
+- **Fehlerbehandlung — offen.** Die Tabelle `sync_failure` existiert, wird aber nie
+  geschrieben: `SyncService` wird ohne `sync_failure_repo` gebaut
+  (`routers/sync.py:221`). Es gibt keine automatische Wiederholung mit Backoff;
+  ein fehlgeschlagenes Fenster wird nur geloggt und erst beim nächsten manuell
+  ausgelösten Sync erneut versucht.
 
 ### 4.2 Storage Layer
 
@@ -124,23 +145,22 @@ Drei Zonen, klar getrennt:
 
 | Zone | Inhalt | Mutabilität | Zweck |
 |---|---|---|---|
-| **Raw** | Original-API-Antworten (JSONB/gzip), FIT-Dateien | append-only | Wahrheit, Reprocessing |
+| **Raw** | Original-API-Antworten als gzip-JSON (`raw_payload`). Keine FIT-Dateien: bei `activity_fit` nur die dekodierten Messages `record`, `session`, `lap` (laut [Spec Aktivitäten & Workouts](superpowers/specs/2026-10-07-aktivitaeten-und-workouts-design.md) A.2 künftig zusätzlich `length`, `event`, `workout`, `workout_step`) | append-only | Wahrheit, Reprocessing |
 | **Canonical** | Normalisierte Domänenobjekte | upsert | Abfragen, Joins |
-| **Derived** | Berechnete Kennzahlen, Aggregate | rebuildbar | Performance, Agent-Antworten |
+| **Derived** | `wellness_daily_stats`, `hr_bucket_seconds_daily`, `metric_daily_value` (plain Tabellen, gepflegt von `repositories/metrics_recompute.py`) | rebuildbar | Performance, Agent-Antworten |
 
 Die Derived-Zone ist **jederzeit vollständig aus Canonical rekonstruierbar**. Damit
 ist ein Fehler in der Metrikberechnung kein Datenverlust, sondern ein Recompute.
 
 ### 4.3 Domain / Metrics Layer
 
-Reine Python-Funktionen ohne I/O, gut testbar:
+Formeln sind reine Python-Funktionen (`src/kairos/metrics/formulas/`), registriert
+in einer `MetricRegistry` (`src/kairos/metrics/registry.py`) und zur Abfragezeit
+berechnet. CTL/ATL/TSB, ACWR und Monotonie/Strain nutzen **immer Edwards-TRIMP**
+als kanonische Trainingslast; Banister ist nur eine wählbare TRIMP-Variante
+(`MetricRegistry.default_variant()`: `trimp → edwards`).
 
-```python
-def training_load(sessions: list[Session], *, tau_ctl=42, tau_atl=7) -> LoadState:
-    """Banister-Impulse-Response. Liefert CTL, ATL, TSB je Tag."""
-```
-
-Kennzahlen V1: TRIMP (Banister/Edwards), CTL/ATL/TSB, ACWR (7:28, gleitend),
+Kennzahlen V1: TRIMP (Edwards kanonisch, Banister als Variante), CTL/ATL/TSB, ACWR (7:28, gleitend),
 HR-Zonen-Zeitverteilung, Foster-Monotonie & -Strain, HRV-Baseline (60 d) mit
 Normalband, Schlafschuld ggü. Sollschlaf, Ruhepuls-Trend.
 
@@ -155,23 +175,33 @@ Ausführlich in [03 — Agent-Design](03-agent-design.md). Kurzfassung:
 ```
 User-Nachricht
    │
-   ├─▶ Situation Brief Builder   (DB → ~600 Tokens, deterministisch)
-   ├─▶ Memory Retrieval          (pgvector → ~400 Tokens)
-   ├─▶ Tool Router               (Intent → Tool Pack vorladen)
+   ├─▶ Systemprompt: Persona + Kennzahlen-Katalog + aktive Erinnerungen
+   │                 (agent_memory, ≤ ~1.500 Tokens) + Lagebild (situation_brief.py)
+   ├─▶ Historie: token-budgetiert (12.000), herausfallende Turns → Erinnerungen
    │
    ▼
-LLM-Loop ──▶ search_tools / load_tools ──▶ Domain-Tools ──▶ Antwort
+LLM-Loop (SSE-Streaming) ──▶ 12 Core-Tools (immer alle geladen) ──▶ Antwort
    │
-   └─▶ Write-Proposals → Confirmation Queue → Ausführung
+   └─▶ bestätigungspflichtige Tools → Proposal (gebunden an tool_call_id)
+                                    → Bestätigen/Ablehnen → Ausführung
 ```
+
+*Zielbild (nicht umgesetzt):* Memory Retrieval per Embedding (`pgvector`), ein Tool
+Router sowie `search_tools`/`load_tools` für zweistufiges Laden. Heute filtert
+`recall` per Substring über `agent_memory`.
 
 ### 4.5 Presentation Layer
 
 - **Chat** (SSE-Streaming) — Primärinterface
 - **Dashboard** — Grid aus Modulen, pro Nutzer konfigurierbar
-- **Detailansichten** — Aktivitätsdetail, Schlafnacht, Kalenderwoche
+- **Weitere Seiten (Ist):** Kalender, Ziele, Gedächtnis, Sync, Konto, Onboarding.
+  *Zielbild (nicht umgesetzt):* Detailansichten für Aktivität und Schlafnacht.
 
-Module sind deklariert, nicht hartcodiert:
+**Ist-Stand Module:** Die Modul-Registry steckt im Frontend
+(`web/src/lib/modules.ts`, gerendert als `<Kachel>`); die Nutzerkonfiguration
+(Reihenfolge, Größe) liegt in der Tabelle `user_dashboard_tile`. Eine
+`module_registry`- oder `user_dashboard`-Tabelle gibt es nicht. Der ursprüngliche
+Entwurf (Zielbild) sah serverseitig deklarierte Module vor:
 
 ```json
 {
@@ -189,11 +219,20 @@ nur eine Liste von `module_id` mit Position.
 
 ## 5. Wesentliche Datenflüsse
 
-### 5.1 Nächtlicher Health-Sync
+### 5.1 Health-Sync
+
+**Ist-Stand:** Es gibt **keinen Scheduler**. Syncs werden manuell über die UI bzw.
+`POST /api/sync/garmin/backfill` ausgelöst und laufen als BackgroundTask. Nach jedem
+Garmin-Backfill werden `wellness_daily_stats`, `hr_bucket_seconds_daily` und
+`metric_daily_value` für den geholten Zeitraum neu berechnet
+(`routers/sync.py:269-285`); zusätzlich per `POST /api/metrics/recompute`.
+Login nur per gespeichertem Token über `garminconnect`.
+
+*Zielbild (nicht umgesetzt)* — nächtlicher Ablauf:
 
 ```
 03:15  Scheduler emittiert SyncJob je Nutzer
-       └─ connectors.garmin: Login via gespeicherte Tokens (garth)
+       └─ connectors.garmin: Login via gespeicherte Tokens (garminconnect)
           └─ fetch dailies, sleep, hrv, stress, bb, spo2, respiration
           └─ fetch activity list seit Watermark
              └─ je neue Aktivität: Summary + FIT-Download
@@ -205,23 +244,34 @@ nur eine Liste von `module_id` mit Position.
 
 ### 5.2 Kalendersynchronisation
 
-Google: **Push** über Watch-Channels (erfordert öffentliches HTTPS — vorhanden).
-Der Webhook trägt keine Nutzdaten, sondern triggert nur einen inkrementellen Sync
-per `syncToken`. Fallback und Sicherheitsnetz: Poll alle 15 min.
+**Ist-Stand:** Google Calendar wird inkrementell per `syncToken` abgerufen, nur
+manuell ausgelöst (Sync-Seite bzw. Kalender-Sync-Endpunkt, 60 s Cooldown).
+Watch-Channels, Push und automatisches Polling sind nicht gebaut; CalDAV ebenfalls
+nicht.
 
-Apple/CalDAV: kein Push. Poll alle 15 min über `getctag`; nur bei Änderung werden
-Events geholt.
+*Zielbild (nicht umgesetzt):* Google **Push** über Watch-Channels (erfordert
+öffentliches HTTPS). Der Webhook trägt keine Nutzdaten, sondern triggert nur einen
+inkrementellen Sync per `syncToken`; Fallback Poll alle 15 min. Apple/CalDAV: Poll
+alle 15 min über `getctag`.
 
 ### 5.3 Schreibvorgang (Write-Back)
 
 ```
-Agent  ──▶ propose_calendar_event(...)  → Proposal-Objekt, KEINE Ausführung
-        ──▶ Antwort an Nutzer mit Vorschlagskarte
-Nutzer ──▶ bestätigt (UI-Button oder "ja, mach")
-        ──▶ commit_proposal(proposal_id, idempotency_key)
-        ──▶ Connector schreibt extern
-        ──▶ Canonical-Update + Audit-Log-Eintrag
+Agent  ──▶ propose_calendar_event(...)  → Tool-Call wird NICHT ausgeführt,
+                                          sondern als offenes Proposal gespeichert
+                                          (conversation_message.tool_calls + tool_call_id)
+        ──▶ SSE-Event `proposal` → Vorschlagskarte im Chat
+Nutzer ──▶ bestätigt (UI-Button)
+        ──▶ POST /api/agent/conversations/{id}/proposals/{tool_call_id}/confirm
+            (Tool-Name und Argumente aus der gespeicherten Nachricht, nie vom Client;
+             FOR UPDATE bis zum Commit, Doppelklick → 409 proposal_already_resolved)
+        ──▶ Domänen-Funktion schreibt extern (z. B. Google Calendar)
+        ──▶ Canonical-Update im selben Commit
 ```
+
+Eine `proposal`-Tabelle mit `idempotency_key` und ein Audit-Log gibt es nicht. Die
+[Spec Aktivitäten & Workouts](superpowers/specs/2026-10-07-aktivitaeten-und-workouts-design.md) (G.1) ersetzt die Sperre durch eine Tabelle
+`proposal_snapshot` mit Vorschau-Karte und Zustandsmaschine (geplant).
 
 Diese Zweistufigkeit ist nicht verhandelbar. Sie ist gleichzeitig
 Halluzinationsschutz, Injection-Schutz und Bedienkomfort (der Nutzer sieht, was
@@ -231,24 +281,25 @@ passieren wird).
 
 | Bereich | Wahl | Begründung (Kurz) |
 |---|---|---|
-| Sprache Backend | Python 3.12 | Ökosystem für Garmin/FIT/Analyse; Kompetenz vorhanden |
+| Sprache Backend | Python ≥ 3.12 (CI 3.12) | Ökosystem für Garmin/FIT/Analyse; Kompetenz vorhanden |
 | Web-Framework | FastAPI | Async, Pydantic-Schemas → direkt als Tool-Schemas nutzbar |
-| DB | Postgres 16 + TimescaleDB + pgvector | Eine Engine für alles; Kompression; Continuous Aggregates |
-| Queue | Redis + `arq` | Deutlich schlanker als Celery bei gleichem Nutzen hier |
+| DB | Postgres 16 + TimescaleDB | Eine Engine für alles. Hypertables ja; Kompression und Continuous Aggregates sind mit Row-Level-Security **nicht nutzbar** (timescale/timescaledb#6827, #5787) und daher nicht im Einsatz. `pgvector`: Zielbild |
+| Queue | — (nicht eingesetzt) | Syncs laufen als FastAPI-`BackgroundTasks`; Redis + `arq` war geplant, ist aber nicht gebaut (Zielbild) |
 | Migrationen | Alembic | Standard, plugin-fähig via Branch-Labels |
-| Frontend | SvelteKit **oder** Next.js | PWA, Web Push; Entscheidung offen ([08](08-roadmap.md)) |
+| Frontend | SvelteKit | PWA; entschieden am 2026-08-10 (PWA-/Web-Push-Reife) |
 | Charts | ECharts | Einheitliche Bibliothek für Zeitreihen, Gauges, Scatter + Event-Overlays; deklarative JSON-Konfiguration; siehe [ADR-0005](adr/ADR-0005-echarts.md) |
 | Auth | Google OIDC | Self-hosted IdP entfällt; 0 MB Overhead; MFA Google-seitig; siehe [ADR-0006](adr/ADR-0006-google-oidc.md) |
 | Reverse Proxy | Caddy | Automatisches TLS, minimale Konfiguration |
-| Agent-Tools | Python-Funktionen hinter `Connector`-Protocol | Import-Linter-Grenze, kein externer Prozess nötig bei einem Agent |
+| Agent-Tools | Python-Funktionen in `src/kairos/agent/tools.py` (`ToolSpec`), **nicht** hinter dem `Connector`-Protocol | Kein externer Prozess nötig bei einem Agent; Schreibzugriffe über Domänen-Funktionen |
 | Tests | pytest + testcontainers | Echte Postgres-Instanz in Tests statt SQLite-Lüge |
 
 ## 7. Was bewusst *nicht* gebaut wird
 
-- **Kein eigenes Vektor-DB-Deployment.** `pgvector` reicht für < 100k Embeddings um
-  Größenordnungen.
+- **Kein eigenes Vektor-DB-Deployment.** Falls Embeddings kommen, reicht `pgvector`
+  für < 100k Embeddings um Größenordnungen (heute nicht installiert).
 - **Kein Kafka / Event-Bus.** Postgres-Tabelle + Redis-Queue decken das Volumen ab.
-- **Kein eigenes Auth-System.** Google OIDC übernimmt; die App kennt nur JWTs.
+- **Kein eigenes Auth-System.** Google OIDC übernimmt den Login; danach gilt ein
+  Session-Cookie (`session_id`, Session in Redis), keine JWTs in der App.
 - **Kein GraphQL.** Der Hauptkonsument ist der Agent, und der bekommt Tools, keine
   Query-Sprache.
 - **Kein Feature-Flag-Service.** Konfiguration in der DB, pro Nutzer.
@@ -257,11 +308,10 @@ passieren wird).
 
 | Ausfall | Verhalten |
 |---|---|
-| Garmin nicht erreichbar / Login abgelaufen | Sync pausiert, Nutzer erhält Reauth-Hinweis im Dashboard; alte Daten bleiben nutzbar; Agent kennzeichnet Datenstand als veraltet |
+| Garmin nicht erreichbar / Login abgelaufen | Lehnt Garmin den Token ab, wird die Verbindung `reauth_required`; der Nutzer verbindet unter Konto & Sync neu. Alte Daten bleiben nutzbar; das Lagebild zeigt den Datenstand je Quelle |
 | LLM-API nicht erreichbar | Dashboard und Datenabfragen funktionieren weiter; Chat zeigt Störung |
-| MCP-Server abgestürzt | Betroffene Tools verschwinden aus der Registry; Agent sagt ehrlich, dass die Fähigkeit gerade fehlt |
 | Postgres weg | Vollausfall — akzeptiert; abgesichert über Backup + Restore-Test |
-| Kalender-Schreibfehler | Proposal bleibt im Status `failed`, Nutzer wird informiert, Retry manuell |
+| Kalender-Schreibfehler | Die Bestätigung schlägt mit Fehler fehl (z. B. 503 ohne aktive Google-Verbindung), nichts wird committet, der Nutzer kann erneut bestätigen. Einen Proposal-Status `failed` gibt es nicht |
 
 Leitregel: **Der Agent darf nie so tun, als wären Daten aktuell, wenn sie es nicht
 sind.** Der Situation Brief enthält immer die Datenaktualität pro Quelle.
