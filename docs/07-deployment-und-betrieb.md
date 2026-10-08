@@ -5,25 +5,32 @@
 ## 1. Infrastrukturübersicht
 
 Kairos läuft auf **einer einzelnen Linux-VM** hinter Caddy. Kein Kubernetes, kein
-Load Balancer, kein Managed Database-Service.
+Load Balancer, kein Managed Database-Service. Eine VM ist noch **nicht gebucht**;
+die Größe ist offen (siehe §2.2).
 
 ```
 Internet
     │ HTTPS (443)
     ▼
 ┌─────────────────────────────────────────────────────┐
-│ VM  (Hetzner Cloud, Ubuntu 24.04 LTS)               │
+│ VM  (Hetzner Cloud, Ubuntu 24.04 LTS — geplant)     │
 │                                                     │
-│  Caddy ──▶ API  ──▶ Postgres+Timescale+pgvector     │
+│  Caddy ──▶ API  ──▶ Postgres + TimescaleDB          │
 │         ──▶ Web        ──▶ Redis                    │
-│                        ──▶ MinIO (FIT/Raw-Objekte)  │
-│  Worker + Scheduler (arq)                           │
-│  Backup-Job (restic, täglich 02:00)                 │
-│  Uptime Kuma (Monitoring)                           │
+│  migrate (alembic upgrade, einmalig je Start)       │
 └─────────────────────────────────────────────────────┘
 ```
 
 Alle Services laufen als Docker Compose Stack unter `deploy/docker-compose.yml`.
+
+| Dienst | Status |
+|---|---|
+| Caddy, Web (SvelteKit), API (FastAPI), migrate, Postgres + TimescaleDB, Redis | **gebaut** (in Compose, lokal verifiziert) |
+| MinIO (Object Store) | Zielbild — kein Object-Storage-Code, in Compose auskommentiert |
+| arq Worker + Scheduler | Zielbild — kein Scheduler; Syncs laufen als BackgroundTasks in der API |
+| Backup-Container (restic, täglich 02:00) | Zielbild — in Compose auskommentiert, Backup-Ziel nicht entschieden |
+| Uptime Kuma (Monitoring) | Zielbild — nicht in Compose |
+| `pgvector` | Zielbild — Extension nicht installiert |
 
 ---
 
@@ -34,32 +41,41 @@ Alle Services laufen als Docker Compose Stack unter `deploy/docker-compose.yml`.
 | Service | Typischer RSS |
 |---|---|
 | Postgres + TimescaleDB (`shared_buffers=256 MB`) | ~700 MB |
-| API (FastAPI, 2 Workers) | ~200 MB |
-| arq Worker | ~150 MB |
-| Scheduler | ~80 MB |
+| API (FastAPI, uvicorn, 1 Prozess) | ~200 MB |
+| Web (SvelteKit, Node) | ~100 MB |
 | Redis | ~50 MB |
 | Caddy | ~30 MB |
-| MinIO | ~100 MB |
-| Uptime Kuma | ~80 MB |
 | OS + Docker-Overhead | ~400 MB |
-| **Summe** | **~1,8 GB** |
+| **Summe (Ist-Stack)** | **~1,5 GB** |
+| *zusätzlich bei Zielbild:* arq Worker + Scheduler, MinIO, Uptime Kuma | *~+410 MB* |
+
+Die Werte sind Schätzungen, nicht gemessen.
 
 Peak (Backfill + Metrics-Recompute gleichzeitig): +400 MB → ~2,2 GB.
 
 ### 2.2 Empfehlung
 
-**Hetzner Cloud CX22** — 2 vCPU, 4 GB RAM, 40 GB SSD, ~€ 4,50/Monat.
+**SSD-Bedarf neu gerechnet** (Messung vom 2026-10-08, siehe
+[02 §1.3](02-datenmodell-und-volumen.md#13-speicherbedarf)): Daten für 5 Nutzer über
+5 Jahre ≈ **14 GB bei der realen Aktivitätsrate** (≈ 96/Jahr), ≈ **30 GB im
+Doku-Szenario** (250/Jahr). Hauptposten ist `activity_record` (≈ 4 MB je Aktivität,
+Timescale-Kompression mit RLS nicht nutzbar). Dazu kommen OS, Docker-Images
+(≈ 8–10 GB) und Platz für lokale Dumps vor dem Upload ins Backup.
 
-| Ressource | Verfügbar | Bedarf | Puffer |
+| VM (Hetzner, Angaben vor Buchung prüfen) | RAM | SSD | Bewertung |
 |---|---|---|---|
-| RAM | 4 GB | ~2,2 GB Peak | ~1,8 GB ✅ |
-| SSD | 40 GB | ~10 GB (5 Jahre) | ~30 GB ✅ |
-| vCPU | 2 | Burst bei Sync | ausreichend ✅ |
+| CX22 | 4 GB | 40 GB | RAM ✅; SSD reicht für die reale Rate knapp, im Doku-Szenario **zu knapp** |
+| CX32 | 8 GB | 80 GB | ausreichend für beide Szenarien mit Puffer |
 
-**Upgrade-Trigger:** RAM-Auslastung dauerhaft > 80 % → CX32 (8 GB, ~€ 8,50/Monat).
-CPU ist kein Engpass; Postgres und arq sind I/O-gebunden, nicht CPU-gebunden.
+**Empfehlung (aktualisiert):** eine VM mit **≥ 80 GB SSD** (z. B. CX32) — oder CX22
+plus ein separates Volume für Postgres. CPU ist kein Engpass; Postgres und der Sync
+sind I/O-gebunden. **Offen:** welche VM real gebucht wird (Prüfbericht vom
+2026-10-07, Frage 26).
 
 ### 2.3 Postgres-Tuning für 4 GB RAM
+
+*Zielbild (nicht umgesetzt):* `deploy/docker-compose.yml` setzt heute keine dieser
+Parameter; Postgres läuft mit den Image-Defaults.
 
 ```ini
 # /etc/postgresql/16/main/postgresql.conf (via Docker-Env oder Config-Mount)
@@ -157,6 +173,10 @@ nicht durch einen Server-Neustart überraschend wieder anlaufen.
 
 ## 4. Backup & Wiederherstellung
 
+> **Zielbild (nicht umgesetzt).** Der `backup`-Dienst ist in
+> `deploy/docker-compose.yml` auskommentiert; das Backup-Ziel ist noch nicht
+> entschieden. Ohne Object Store entfällt `/srv/minio` im Backup.
+
 ### 4.1 Backup-Job
 
 ```bash
@@ -195,7 +215,11 @@ pg_restore -d kairos_test /tmp/restore/kairos_*.dump
 
 ## 5. Monitoring
 
-**Uptime Kuma** (im Stack) überwacht:
+> **Zielbild (nicht umgesetzt).** Uptime Kuma ist nicht im Stack. Vorhanden sind
+> nur der Docker-Healthcheck der API (`/healthz`) und der Postgres-Healthcheck
+> (`pg_isready`) in `deploy/docker-compose.yml`.
+
+**Uptime Kuma** (geplant) überwacht:
 
 | Check | Intervall | Alert |
 |---|---|---|
@@ -207,8 +231,9 @@ pg_restore -d kairos_test /tmp/restore/kairos_*.dump
 Alerting: Uptime Kuma unterstützt Push-Notifications (Pushover, Telegram, E-Mail).
 Kein separater Alertmanager nötig.
 
-**Logs:** `docker compose logs -f api` im Normalbetrieb; structured JSON-Logs
-(Python `structlog`), filterbar nach `user_id`, `request_id`, `level`.
+**Logs:** `docker compose logs -f api` im Normalbetrieb. **Ist:** Standard-`logging`
+von Python, Textformat. *Zielbild (nicht umgesetzt):* structured JSON-Logs
+(`structlog`), filterbar nach `user_id`, `request_id`, `level`.
 
 ---
 
@@ -218,46 +243,58 @@ Kein separater Alertmanager nötig.
 
 | Posten | Kosten/Monat |
 |---|---|
-| Hetzner CX22 | ~€ 4,50 |
+| VM (CX22 bzw. CX32, siehe §2.2) | ~€ 4,50 bzw. ~€ 8,50 (Stand der ursprünglichen Planung, vor Buchung prüfen) |
 | Domain (.com, .de) | ~€ 1,00 |
 | Backup-Ziel (Hetzner Storage Box 100 GB) | ~€ 1,00 |
-| **Infrastruktur gesamt** | **~€ 6,50** |
+| **Infrastruktur gesamt** | **~€ 6,50 – 10,50** |
 
-### 6.2 LLM-API (Anthropic Claude)
+### 6.2 LLM-API
 
-Schätzung bei aktivem Betrieb (alle 5 Nutzer, Claude Sonnet):
+Default-Modell ist `anthropic/claude-sonnet-5` (über litellm, pro Nutzer änderbar;
+Preise laut Anthropic-Preisliste, Stand 2026-10-06: **$2 / MTok Input, $10 / MTok
+Output, Cache-Reads $0,20 / MTok**; der Nachfolger Claude Sonnet 5.5 kostet dasselbe).
+
+Schätzung bei aktivem Betrieb (alle 5 Nutzer):
 
 | Parameter | Annahme |
 |---|---|
-| Turns/Tag gesamt | ~15 (∅ 3 je Nutzer) |
-| Input-Tokens/Turn | ~15.000 (Median-Budget) |
-| Output-Tokens/Turn | ~800 |
-| Cache-Hit-Rate | ~25 % (System-Prompt + Core-Tools) |
+| Nutzer-Turns/Tag gesamt | ~15 (∅ 3 je Nutzer) |
+| LLM-Aufrufe je Nutzer-Turn | ≥ 1; mit Tool-Runden laut Eval oft 2–4 (jede Runde sendet den Kontext erneut) |
+| Input-Tokens je LLM-Aufruf | ~15.000 (Median-Budget, nicht gemessen) |
+| Output-Tokens je Nutzer-Turn | ~800 |
+| Cache-Hit-Rate | 0 % — Prompt-Caching ist nicht konfiguriert |
 
 ```
-Input  : 15 × 15.000 × 30 Tage × (1 − 0,25 Cache)  ≈  5,1 M Tokens/Monat
-Output : 15 × 800    × 30 Tage                       ≈  0,36 M Tokens/Monat
+Input  : 15 × 15.000 × 30 Tage            ≈  6,75 M Tokens/Monat je LLM-Aufruf pro Turn
+Output : 15 × 800    × 30 Tage            ≈  0,36 M Tokens/Monat
 
-Claude Sonnet ($3/MTok in, $15/MTok out):
-  5,1 × $3  +  0,36 × $15  ≈  $15,30 + $5,40  ≈  $21/Monat
-Cache-Savings (25 %):  −$3,80
+Claude Sonnet 5 ($2/MTok in, $10/MTok out):
+  1 Aufruf/Turn :  6,75 × $2  + 0,36 × $10  ≈  $13,50 + $3,60  ≈  $17/Monat
+  3 Aufrufe/Turn: 20,25 × $2  + 0,36 × $10  ≈  $40,50 + $3,60  ≈  $44/Monat
 ```
 
-**Realistisch: $15–25/Monat** bei normalem Betrieb, $40–50 bei intensiver Nutzung.
+**Realistisch: $20–45/Monat** bei normalem Betrieb, je nach Anzahl der Tool-Runden.
+Gemessen ist das nicht: Token-Telemetrie fehlt bisher (geplant, siehe
+[03 §8](03-agent-design.md#8-evaluierung)).
 
 Kostenhebel in absteigender Wirkung:
-1. **Prompt-Caching** (bereits eingebaut): spart ~20–30 %
-2. **Modell-Routing**: einfache Abfragen (Kalender, Schnellinfo) auf Claude Haiku
-   ($0.25/MTok) → spart ~40 % bei gleicher Qualität für Routineabfragen
-3. **Tageslimit** je Nutzer konfigurierbar (verhindert Kostenausreißer)
+1. **Prompt-Caching** (nicht konfiguriert): Persona, Kennzahlen-Katalog und
+   Tool-Schemas (≈ 2.100 Tokens) sind statisch; innerhalb der Tool-Runden eines
+   Turns wiederholt sich zusätzlich die gesamte Historie. Cache-Reads kosten ein
+   Zehntel des Input-Preises.
+2. **Modell-Routing** (nicht gebaut): einfache Abfragen auf ein kleineres Modell
+   (Claude Haiku 5.5: $0,10 / $0,50 pro MTok bis 100K Prompt-Tokens).
+3. **Tageslimit** je Nutzer konfigurierbar (nicht gebaut; verhindert Kostenausreißer).
 
 ### 6.3 Gesamtkosten
 
 | Szenario | €/Monat |
 |---|---|
-| Minimalbetrieb (Betreiber allein, wenig Chat) | ~€ 10 |
-| Normalbetrieb (5 Nutzer, ∅ 3 Turns/Tag) | ~€ 25 |
-| Intensivnutzung (viele Analysen, Planungen) | ~€ 55 |
+| Minimalbetrieb (Betreiber allein, wenig Chat) | ~€ 12 |
+| Normalbetrieb (5 Nutzer, ∅ 3 Turns/Tag) | ~€ 30 – 55 |
+| Intensivnutzung (viele Analysen, Planungen) | ~€ 70+ |
+
+Schätzwerte (Infrastruktur + LLM, Wechselkurs ≈ 1:1 angenommen), nicht gemessen.
 
 ---
 
