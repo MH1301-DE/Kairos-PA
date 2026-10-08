@@ -33,7 +33,7 @@ abweicht, ist das jeweils vermerkt.
 **Ziel:** Ein leeres, aber korrektes System läuft auf der VM.
 
 - [ ] Repo, Projektstruktur, Linting, mypy, pytest, CI
-- [ ] Docker Compose lokal: Postgres+Timescale+pgvector, Redis, API
+- [ ] Docker Compose lokal: Postgres+Timescale (pgvector nicht installiert), Redis, API
 - [ ] Alembic mit Branch-Unterstützung für Plugins
 - [ ] Kernschema: `app_user`, `connection`, `raw_payload`, `sync_state`, RLS
 - [ ] RLS-CI-Test (keine Tabelle ohne Policy)
