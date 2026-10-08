@@ -1,5 +1,9 @@
 # 04 — Integrationen
 
+> **Stand 2026-10-08.** Beschreibt den Ist-Stand im Code. Nicht gebaute Teile sind als
+> **Zielbild (nicht umgesetzt)** markiert. Gebaut sind die Connectoren `garmin` und
+> `google_calendar`; CalDAV und Gmail nicht.
+
 Dieses Dokument beschreibt alle externen Dienste, mit denen Kairos kommuniziert:
 Auth-Flows, abzurufende Datentypen, Rate-Limits, Sync-Strategien und bekannte
 Risiken. Jede Integration ist ein **in-process Python-Modul** unter
@@ -14,42 +18,51 @@ Alle Connectoren implementieren denselben Contract. Neue Connectoren entstehen d
 Implementierung dieses Interfaces — der Kern ändert sich nicht.
 
 ```python
+# src/kairos/connectors/base.py — synchron; der SyncService ruft fetch() per
+# asyncio.to_thread() auf, damit der Event Loop nicht blockiert
 class Connector(Protocol):
-    connector_id: str           # 'garmin' | 'google' | 'caldav'
+    connector_id: str           # 'garmin' | 'google_calendar'
 
-    async def fetch(
-        self,
-        user_id: UUID,
-        kind: str,
-        window: tuple[datetime, datetime],
-    ) -> RawPayload: ...
+    def fetch(self, user_id: UUID, kind: str, window: Window) -> RawPayloadEnvelope: ...
 
-    async def normalize(
-        self,
-        payload: RawPayload,
-    ) -> list[CanonicalRecord]: ...
+    def normalize(self, kind: str, payload: JSONValue) -> list[CanonicalRecord]: ...
 
-    async def write_back(
-        self,
-        user_id: UUID,
-        proposal: Proposal,
+    def write_back(
+        self, user_id: UUID, kind: str, records: Sequence[CanonicalRecord]
     ) -> WriteResult: ...
 ```
+
+`write_back()` ist für Garmin ein No-op und für Google Calendar implementiert, wird
+aber nirgends aufgerufen. Schreibzugriffe laufen über Domänen-Funktionen
+(`routers/calendar.py`), die den Client direkt nutzen; für Garmin-Workouts ist
+dasselbe Muster geplant ([Spec]({SPEC}) E11).
 
 ### Gemeinsame Eigenschaften
 
 - **Watermark-basiert.** Pro `(user_id, connector, kind)` wird `synced_through`
   in `sync_state` gehalten. Kein Vollabzug im Normalbetrieb.
 - **Idempotent.** Jeder Record hat einen stabilen `external_id`; Upsert per
-  `ON CONFLICT DO UPDATE`. Wiederholte Ausführung ist sicher.
+  `ON CONFLICT` (`DO UPDATE` für `activity`/`daily_summary`, `DO NOTHING` für
+  `wellness_sample`/`sleep_session`/`activity_record`). Wiederholte Ausführung ist
+  sicher.
 - **Idempotenter Raw-Store.** `raw_payload` dedupliziert über `content_hash`. Ein
   zweiter identischer API-Call belastet das Archiv nicht.
-- **Verlustfreie Fehlerbehandlung.** Fehlgeschlagene Zeitfenster landen in
-  `sync_failure` mit `retry_after`-Timestamp. Kein stilles Überspringen.
-- **Backfill als eigener Jobtyp** mit niedrigerer Prio und konservativerem
-  Rate-Limit als der inkrementelle Sync.
+- **Fehlerbehandlung — offen.** `sync_failure` existiert, wird aber nie
+  geschrieben (`SyncService` ohne `sync_failure_repo`, `routers/sync.py:221`). Ein
+  fehlgeschlagenes Fenster bricht den Job dieses Kinds ab und wird geloggt; die
+  Wiederholung erfolgt erst beim nächsten manuellen Sync.
+- **Ein Jobtyp für alles.** Es gibt keinen getrennten inkrementellen Sync: jede
+  Auslösung ist ein Backfill über einen Datumsbereich, der bereits abgedeckte
+  Bereiche überspringt (`sync_state.backfill_complete_from/_to`).
 
 ### Retry-Strategie
+
+**Ist:** keine automatische Wiederholung. `SyncService._is_retryable()` klassifiziert
+nur (`ValueError`/`PermissionError` = nicht wiederholbar) für den nie aufgerufenen
+`sync_failure`-Pfad. Lehnt Garmin den Token ab, wird die Verbindung sofort
+`reauth_required`.
+
+*Zielbild (nicht umgesetzt):*
 
 ```
 Fehlerklasse           Backoff                    Max-Retries
@@ -67,33 +80,52 @@ Client-Fehler (4xx)    kein Retry                  —
 ### 2.1 Auth
 
 Garmin bietet **keine offizielle Public API** für Consumer-Daten. Die einzige
-praktikable Option ist die inoffizielle Connect-API via [`garth`](https://github.com/matin/garth).
+praktikable Option ist die inoffizielle Connect-API, angesprochen über
+[`garminconnect`](https://github.com/cyberjunky/python-garminconnect) ≥ 0.3.17 mit
+`curl_cffi` (TLS-Fingerprint). `garth` ist seit März 2026 nicht mehr nutzbar
+(Cloudflare-Sperre) und weder installiert noch importiert.
 
 Auth-Flow:
 
 ```
-1. Nutzer gibt Garmin-Credentials im Onboarding-UI ein (HTTPS, nie im Klartext gespeichert)
-2. garth.login(email, password) → OAuth2-Token-Paar (access + refresh)
-3. Tokens werden mit dem DEK des Nutzers verschlüsselt in connection.credentials_enc gespeichert
-4. garth refresht den Access-Token bei Bedarf automatisch
-5. Bei MFA: Kairos zeigt im UI ein Eingabefeld für den OTP-Code; garth verarbeitet ihn
-6. Bei Reauth-Bedarf: connection.status = 'reauth_required'; Dashboard-Hinweis
+1. Nutzer gibt Garmin-Credentials im Onboarding-UI ein (HTTPS)
+2. Garmin(email, password, return_on_mfa=True).login() — nur über den Widget-Flow
+   (widget+cffi); der mobile clientId wird von Garmin seit 2026-10 mit 429 abgelehnt
+3. Bei MFA: Kairos zeigt im UI ein Eingabefeld für den OTP-Code → resume_login()
+4. Das Token-JSON (nicht das Passwort) wird mit dem DEK des Nutzers verschlüsselt
+   in connection.credentials_enc gespeichert. Das Passwort wird nie gespeichert.
+5. Jeder Sync: Garmin().login(token_json) — nur Token-Login (inline, da > 512 Zeichen)
+6. Lehnt Garmin den Token ab: connection.status = 'reauth_required',
+   reauth_since gesetzt; der Nutzer verbindet unter Konto & Sync neu
 ```
+
+Ein Login mit Zugangsdaten kann außerhalb des Onboardings nicht ausgelöst werden,
+weil kein Passwort vorliegt. Ein vom Client erneuertes Token wird heute nicht
+zurückgeschrieben (geplant: [Spec]({SPEC}) D.7).
 
 Risiken und Gegenmaßnahmen: Siehe [ADR-0004](adr/ADR-0004-garmin-zugang.md).
 
 ### 2.2 Rate-Limits
 
-Garmin dokumentiert keine offiziellen Limits. Beobachtete Praxis:
+Garmin dokumentiert keine offiziellen Limits.
 
-| Szenario | Empfohlene Drosselung |
-|---|---|
-| Inkrementeller Sync (täglich) | 1 Request / 2 s, max 200 Requests / Stunde |
-| Backfill (Erstimport) | 1 Request / 3 s, nächtlich, Pausenmöglichkeit |
-| FIT-Downloads | 1 Datei / 5 s (größere Payloads) |
+**Ist-Drosselung (Lesen):**
 
-Bei HTTP 429 oder auffälligen 5xx-Antworten: sofortiger Stop des aktuellen
-Sync-Jobs, Retry-After von 30 Minuten.
+| Stelle | Wert | Beleg |
+|---|---|---|
+| Pause zwischen zwei Tagesfenstern | 1,5 s (`garmin_backfill_throttle_seconds`) | `config.py:21`, `routers/sync.py:247` |
+| FIT-Downloads innerhalb eines Fensters | **keine Pause** — alle Aktivitäten des Tages direkt hintereinander | `connector.py:74-89`; Fix geplant: 2,0 s (`GARMIN_FIT_DOWNLOAD_PAUSE_S`, Spec A.5) |
+| Erneutes Auslösen eines Garmin-Backfills | 300 s Cooldown je Nutzer → 429 mit `Retry-After` | `routers/sync.py:49,78-84` |
+| Gleiches Kind parallel | gesperrt (Lock je Nutzer, Connector, Kind) → 409 | `ingestion/job_registry.py` |
+
+Eine automatische Reaktion auf HTTP 429 von Garmin (Stopp + Wartezeit) gibt es beim
+Lesen nicht; ein Fehler bricht den Job des betroffenen Kinds ab.
+
+**Geplante Schreib-Limits** ([Spec](superpowers/specs/2026-10-07-aktivitaeten-und-workouts-design.md) D.7, für Workouts und Aktivitäten):
+mindestens 1,0 s zwischen zwei Schreib-Requests (`GARMIN_WRITE_MIN_INTERVAL_S`),
+höchstens 300 pro Nutzer und Stunde (`GARMIN_WRITE_MAX_PER_HOUR`), bei 429 sofortiger
+Stopp und 15 min Sperre; Anlegen/Terminieren nie automatisch wiederholen, Ändern/
+Löschen einmal nach 2 s bei 5xx oder Netzfehler.
 
 ### 2.3 Abzurufende Datentypen
 
@@ -101,20 +133,27 @@ Alle Endpunkte werden für den Zeitraum `[window_start, window_end]` (täglich)
 abgerufen. Endpunkte, die Garmin-intern pro Tag aggregieren, werden als einzelner
 Call pro Tag und Nutzer ausgeführt.
 
-| Kind | Garmin-Endpunkt (garth) | Zieltabelle | Hypertable |
+Die Kinds stehen in `_ALL_KINDS` (`src/kairos/routers/sync.py:53-57`) und laufen in
+dieser Reihenfolge (`activity_list` vor `activity_fit`, FK auf `activity.id`):
+
+| Kind | `garminconnect`-Methode | Zieltabelle | Hypertable |
 |---|---|---|---|
-| `daily_summary` | `wellness-service/wellness/dailySummaryChart` | `daily_summary` | — |
-| `hr_intraday` | `wellness-service/wellness/dailyHeartRate` | `wellness_sample` (metric: hr) | ✅ |
-| `stress_intraday` | `wellness-service/wellness/dailyStress` | `wellness_sample` (metric: stress) | ✅ |
-| `body_battery` | `wellness-service/wellness/dailyBodyBattery` | `wellness_sample` (metric: body_battery) | ✅ |
-| `respiration` | `wellness-service/wellness/dailyRespiration` | `wellness_sample` (metric: respiration) | ✅ |
-| `spo2` | `wellness-service/wellness/dailyPulseOx` | `wellness_sample` (metric: spo2) | ✅ |
-| `sleep` | `wellness-service/wellness/dailySleepData` | `sleep_session` | — |
-| `hrv` | `hrv-service/hrv` | `wellness_sample` (metric: hrv_5min) | ✅ |
-| `activity_list` | `activitylist-service/activities/search/activities` | `activity` | — |
-| `activity_details` | `activity-service/activity/{id}` | `activity` | — |
-| `fit_file` | `download-service/files/activity/{id}` | `activity_record` + Object Store | ✅ |
-| `body_composition` | `weight-service/weight/dateRange` | `body_composition` | — |
+| `hr_intraday` | `get_heart_rates(date)` | `wellness_sample` (metric: hr) | ✅ |
+| `sleep` | `get_sleep_data(date)` | `sleep_session` | — |
+| `stress` | `get_all_day_stress(date)` | `wellness_sample` (metric: stress) | ✅ |
+| `body_battery` | `get_body_battery(start, end)` | `wellness_sample` (metric: body_battery) | ✅ |
+| `hrv` | `get_hrv_data(date)` | `wellness_sample` (metric: hrv_5min) | ✅ |
+| `respiration` | `get_respiration_data(date)` | `wellness_sample` (metric: respiration) | ✅ |
+| `spo2` | `get_spo2_data(date)` | `wellness_sample` (metric: spo2) | ✅ |
+| `daily_summary` | `get_stats(date)` | `daily_summary` | — |
+| `activity_list` | `get_activities_by_date(start, end)` | `activity` | — |
+| `activity_fit` | `get_activities_by_date` + `download_activity(id, ORIGINAL)` (ZIP → FIT → dekodiert) | `activity_record` | ✅ |
+
+- `activity_fit` speichert **keine FIT-Dateien und nutzt keinen Object Store**; im
+  `raw_payload` liegen nur die dekodierten Messages `record`, `session`, `lap`.
+- **Nicht abgerufen** werden `activity_details` (Einzelabruf je Aktivität) und
+  `body_composition` (Gewicht/Körperzusammensetzung); eine Tabelle
+  `body_composition` gibt es nicht.
 
 **Geräte der Nutzergruppe** (bestätigt):
 
@@ -126,8 +165,10 @@ Call pro Tag und Nutzer ausgeführt.
 
 **Apple Watch:** Nutzt nicht Garmin Connect, sondern Apple HealthKit. Der Garmin-Connector ist für diese Person nicht anwendbar. Gesundheitsdaten erfordern einen separaten `connectors.apple_health`-Connector — geplant für Phase 6+. Bis dahin hat dieser Nutzer nur Kalender-Funktionalität.
 
-Fehlt ein Typ auf einem Gerät, wird der Endpunkt nicht abgerufen und
-`metric_def.available = false` für diesen Nutzer gesetzt.
+**Ist:** Alle 10 Kinds werden für jeden Nutzer abgerufen. Fehlt ein Typ auf einem
+Gerät, liefert Garmin eine leere Antwort; es entstehen schlicht keine Zeilen. Eine
+Spalte `metric_def.available` oder eine Verfügbarkeit je Nutzer gibt es nicht
+(Zielbild).
 
 ### 2.4 Normalisierung
 
@@ -146,39 +187,62 @@ raw_payload (JSONB, gzip)
 Canonical Records → Repository.upsert()
 ```
 
-**Plausibilitätsgrenzen** (Werte außerhalb → `quality = 2 (suspect)`):
+**Plausibilitätsgrenzen** (Werte außerhalb → `wellness_sample.quality = 'suspect'`,
+Text in `varchar(16)`, Default `'ok'`):
 
-| Metrik | Min | Max |
-|---|---|---|
-| Herzfrequenz | 25 bpm | 230 bpm |
-| SpO₂ | 70 % | 100 % |
-| Schlaf gesamt | 30 min | 16 h |
-| Stress | 0 | 100 |
-| HRV (5-min-Fenster) | 5 ms | 200 ms |
+| Metrik | Min | Max | Status |
+|---|---|---|---|
+| Herzfrequenz | 25 bpm | 230 bpm | **umgesetzt** (`normalize.py:34-35,57`) |
+| SpO₂ | 70 % | 100 % | Zielbild — nicht geprüft |
+| Schlaf gesamt | 30 min | 16 h | Zielbild — nicht geprüft |
+| Stress | 0 | 100 | Zielbild — nicht geprüft |
+| HRV (5-min-Fenster) | 5 ms | 200 ms | Zielbild — nicht geprüft |
 
-Suspect-Werte werden **nicht gelöscht**, aber in Aggregaten ausgeschlossen und dem
-Agenten als solche markiert übergeben.
+Suspect-Werte werden **nicht gelöscht**. **Offen:** Die Tagesaggregate schließen sie
+noch nicht aus (`metrics_recompute.py` filtert `quality` nicht), und dem Agenten
+werden sie nicht gesondert markiert.
 
 ### 2.5 Backfill-Strategie
 
-Der Erstimport (gesamte verfügbare Historie, max. 15 Monate) läuft als eigener Jobtyp:
+**Ist** (`SyncService.run_backfill`, `ingestion/service.py`; Auslösung über
+`POST /api/sync/garmin/backfill`):
 
 ```
-BackfillJob(user_id, connector='garmin', from_date, to_date)
-    ├─ Cursor: backfill_cursor rückwärts laufend (neueste Daten zuerst)
-    ├─ Rate: 1 Request / 3 s (konservativer als inkrementeller Sync)
-    ├─ Unterbrechbar: Job-Status in sync_state; kann gestoppt und fortgesetzt werden
-    ├─ Scheduling: nur nachts (02:00–06:00 UTC), um Tagesbetrieb nicht zu belasten
-    └─ Fortschrittsanzeige im Dashboard (% erledigt, geschätzte Restzeit)
+Backfill(user_id, connector='garmin', kinds, from_date, to_date)
+    ├─ Default-Zeitraum: 24 Monate bis heute (_DEFAULT_BACKFILL_MONTHS)
+    ├─ Cursor: tageweise rückwärts laufend (neueste Daten zuerst), in sync_state
+    ├─ Bereits abgedeckte Bereiche werden übersprungen (backfill_complete_from/_to)
+    ├─ Rate: 1,5 s Pause zwischen Tagesfenstern (FIT-Downloads ohne Pause, s. 2.2)
+    ├─ Fortsetzbar: ein abgebrochener Lauf setzt beim Cursor wieder an
+    ├─ Danach: Recompute der Derived-Tabellen für den geholten Zeitraum
+    └─ Fortschritt auf der Sync-Seite (Fenster erledigt / gesamt je Kind)
 ```
 
-**Volumenabschätzung Backfill 15 Monate, 4 Garmin-Nutzer** (Apple Watch gesondert):
-15 Monate × 30 Tage × 10 Endpunkte × 4 Nutzer ≈ **18.000 API-Requests**.
-Bei 1 Request / 3 s = 54.000 s ≈ **15 Stunden Laufzeit** (verteilt über ~4 Nächte).
+Ein Zeitfenster „nur nachts“ gibt es nicht (kein Scheduler); der Backfill läuft
+sofort nach dem Auslösen. Eine Restzeit-Schätzung wird nicht angezeigt.
+
+**Volumen:** 24 Monate ≈ 730 Fenster × 10 Kinds ≈ 7.300 Fenster je Nutzer plus ein
+FIT-Download je Aktivität; bei 1,5 s Pause ≈ 3 h reine Wartezeit je Nutzer.
+
+### 2.6 Workouts (Schreiben) — geplant
+
+Nicht umgesetzt; vollständig beschrieben in der [Spec Aktivitäten & Workouts](superpowers/specs/2026-10-07-aktivitaeten-und-workouts-design.md)
+Teil D. Kurzfassung:
+
+- **Methoden** (laut `garminconnect`-README, in 0.3.17 noch zu verifizieren — AP 0):
+  `upload_running_workout`/`upload_cycling_workout`, `get_workout_by_id`,
+  `update_workout`, `delete_workout`, `schedule_workout(id, datum)`,
+  `unschedule_workout(schedule_id)`.
+- **Spiegel:** `garmin_workout` und `garmin_workout_schedule`; Lese-Tools frischen
+  höchstens alle 5 min auf, Garmin bleibt führend.
+- **Schreibdienst:** gemeinsamer `GarminClientProvider` (nur Token-Login), ein Lock je
+  Nutzer, Drosselung und 429-Sperre wie in 2.2; jede Workout-JSON wird als
+  `raw_payload` (`kind='workout'`) archiviert.
+- **Kopplung:** jedes Terminieren legt zusätzlich einen Google-Kalendertermin an.
 
 ---
 
-## 3. Google Calendar & Gmail (`kairos/connectors/google`)
+## 3. Google Calendar & Gmail (`kairos/connectors/google_calendar`)
 
 ### 3.1 Auth
 
@@ -193,7 +257,7 @@ Erforderliche Scopes:
 |---|---|
 | `openid email profile` | Nutzer-Identität (Login) |
 | `https://www.googleapis.com/auth/calendar` | Lesen + Schreiben in Kalender |
-| `https://www.googleapis.com/auth/gmail.readonly` | Optionaler Gmail-Zugang (Phase 6) |
+| `https://www.googleapis.com/auth/gmail.readonly` | *Zielbild:* optionaler Gmail-Zugang (Phase 6) — heute **nicht** angefragt (`auth/google.py:22`) |
 
 **Testing-App-Status:** Die Google Cloud App bleibt im Testing-Status mit explizit
 eingetragenen Nutzern. Dadurch laufen Refresh-Tokens unbegrenzt — kein
@@ -201,7 +265,21 @@ Verifikationsprozess erforderlich.
 
 ### 3.2 Kalender-Sync-Strategie
 
-**Push (primär):** Google Calendar Push Notifications über Watch-Channels.
+**Ist-Stand:**
+
+- Der Abruf wird nur **manuell** ausgelöst (Sync-Seite → `POST /api/sync/google_calendar/sync` in
+  `routers/sync.py`, 60 s Cooldown). Es gibt keinen Webhook, keine Watch-Channels
+  und kein automatisches Polling.
+- Jeder Abruf holt das **Fenster von heute −7 bis +83 Tage vollständig** (mit
+  `singleEvents=true` und Paginierung). Der Client unterstützt einen `syncToken`,
+  der Connector übergibt aber immer `None` (`google_calendar/connector.py:28-30`) —
+  der Abruf ist also nicht inkrementell.
+- Die Calendar API ist im Google-Cloud-Projekt inzwischen aktiviert: Die
+  Entwicklungs-DB enthält 10 von Google importierte (`source='external'`) und 3 von
+  Kairos angelegte Termine (Stand 2026-10-08).
+
+*Zielbild (nicht umgesetzt)* — **Push (primär):** Google Calendar Push Notifications
+über Watch-Channels.
 
 ```
 1. API: POST /calendars/{id}/events/watch → Channel mit Expiry (max. 7 Tage)
@@ -243,6 +321,9 @@ Scope und Einschränkungen, wenn implementiert:
 ---
 
 ## 4. Apple Calendar / CalDAV (`kairos/connectors/caldav`)
+
+> **Zielbild (nicht umgesetzt).** Es gibt keinen CalDAV-Connector; der gesamte
+> Abschnitt beschreibt den ursprünglichen Entwurf.
 
 ### 4.1 Auth
 
@@ -294,10 +375,13 @@ Sonderfälle:
 
 ### 5.1 Anbieter und Modelle
 
-Geplant: Anthropic Claude. Konkretes Modell und Routing-Strategie sind offene
-Punkte ([08 — Offene Punkte](08-roadmap.md#vor-phase-0)).
+**Ist:** anbieterunabhängig über [litellm](https://github.com/BerriAI/litellm)
+(`src/kairos/agent/llm_client.py`). Ein deployment-weiter Schlüssel `LLM_API_KEY`
+gilt für alle Nutzer der Instanz; das Modell ist pro Nutzer wählbar
+(`user_setting.llm_model`, Default `anthropic/claude-sonnet-5`). Dasselbe Modell
+erledigt Chat und Gedächtnis-Extraktion; ein Routing nach Aufgabe gibt es nicht.
 
-**Designprinzip Modell-Routing:**
+*Zielbild (nicht umgesetzt)* — **Designprinzip Modell-Routing:**
 
 | Aufgabe | Modell-Klasse | Begründung |
 |---|---|---|
@@ -318,22 +402,31 @@ Sicherheitsrelevante Garantie: Der LLM-Anbieter sieht **keine Rohdaten**.
 
 ### 5.3 Prompt Caching
 
-Die ersten ~3.500 Tokens jedes Turns (System-Prompt, Core-Tools, Nutzerprofil) sind
-über Sessions hinweg identisch und für **Anthropic Prompt Caching** geeignet. Das
-ist der wirksamste Einzelhebel für Kosten-Reduktion.
+**Ist: nicht konfiguriert.** `llm_client.py` setzt kein `cache_control`; ob ein
+Anbieter automatisch cacht, hängt vom Anbieter ab und wird nicht gemessen (keine
+Token-Telemetrie). Statisch und damit cachebar sind Persona, Kennzahlen-Katalog und
+Tool-Schemas (≈ 2.100 Tokens, siehe [03 §2](03-agent-design.md#2-kontextbudget));
+Erinnerungen und Lagebild ändern sich pro Turn. Prompt-Caching bleibt der
+wirksamste Einzelhebel für Kosten-Reduktion.
 
 ### 5.4 Fehlerverhalten
 
 | Fehlerzustand | Verhalten |
 |---|---|
-| API nicht erreichbar | Chat zeigt Störungsmeldung; Dashboard und Daten weiter nutzbar |
-| Rate-Limit (429) | Exponential Backoff; Nutzer sieht "Assistent ist kurz überlastet" |
-| Kontext zu groß (400) | Compaction erzwingen, Retry mit reduziertem Kontext |
-| Modell gibt Zahlen ohne Tool-Beleg | Tool-Dispatcher prüft → wird als Bug geloggt; Zahlen-Assertion in Eval-Suite fängt das |
+| Kein `LLM_API_KEY` | SSE-Event `error` mit `no_llm_provider_configured` |
+| API nicht erreichbar, Rate-Limit (429), Kontext zu groß | **Ist:** jeder Anbieterfehler wird zu einem SSE-Event `error` mit `llm_provider_error`; Chat zeigt eine Störungsmeldung; Dashboard und Daten weiter nutzbar. Kein automatisches Backoff oder Retry |
+| Modell gibt Zahlen ohne Tool-Beleg | Keine Laufzeitprüfung; die Zahlen-Assertions der Eval-Suite fangen das |
+
+*Zielbild (nicht umgesetzt):* Backoff bei 429, erzwungene Compaction mit Retry bei
+zu großem Kontext.
 
 ---
 
 ## 6. Zusammenfassung Sync-Architektur
+
+**Ist:** kein Scheduler. Garmin- und Kalender-Sync werden manuell ausgelöst und
+laufen als FastAPI-`BackgroundTasks`; nach einem Garmin-Backfill folgt das Recompute.
+Das folgende Diagramm ist das **Zielbild (nicht umgesetzt)**:
 
 ```
               ┌─────────────────────────────────────┐
