@@ -28,7 +28,8 @@ aber er macht dein eigenes Wissen handlungsfähig.
 
 3. **Zeitersparnis bei der Wochen- und Saisonplanung.** Trainingsblöcke, Wettbewerbe
    und Erholungsphasen landen auf Knopfdruck als Kalendertermine — bestätigt, nicht
-   blindlings ausgeführt.
+   blindlings ausgeführt. Geplant: zusätzlich als strukturierte Garmin-Workouts auf
+   der Uhr (siehe [Spec Aktivitäten & Workouts](superpowers/specs/2026-10-07-aktivitaeten-und-workouts-design.md), Teil D/E).
 
 4. **Tiefe Einblicke in Gesundheits- und Trainingszustand.** Langzeittrends,
    Korrelationen, Zielvergleiche — ohne SQL oder Tabellenkalkulation. Der Agent
@@ -81,6 +82,13 @@ Diese Fragen sind gleichzeitig die **Eval-Suite**: Kairos muss sie vollständig,
 korrekt und nachvollziehbar beantworten können, bevor Phase 4 als abgeschlossen gilt.
 Die genannten Zahlen müssen exakt mit dem Tool-Ergebnis übereinstimmen.
 
+> **Stand 2026-10-07:** `scripts/agent_eval_suite.py` enthält 16 Fälle (diese 15
+> Fragen plus einen Mehrschritt-Fall Vorschlag → Bestätigen → Folgefrage), live
+> 15/16. Die Fragen 7 und 10 sind mit den heutigen Tools nicht beantwortbar (kein
+> Aktivitäts-Tool); sie werden über die geplanten Aktivitäts-Tools abgedeckt. Die
+> [Spec Aktivitäten & Workouts](superpowers/specs/2026-10-07-aktivitaeten-und-workouts-design.md)
+> erweitert die Suite um die Fälle 17–26 (§12.1).
+
 ### Gesundheit & Erholung
 
 1. *"Wie erholt bin ich heute?"* — HRV vs. 60-Tage-Baseline, Ruhepuls-Trend, Body
@@ -126,12 +134,12 @@ Die genannten Zahlen müssen exakt mit dem Tool-Ergebnis übereinstimmen.
 | Aspekt | Entscheidung | Notiz |
 |---|---|---|
 | Deployment | Einzelne Linux-VM (Hetzner o. Ä.), Docker Compose | Kein Kubernetes |
-| LLM-Zugang | API-basiert, pluggable über litellm (beliebiger Anbieter/API-Key pro Nutzer) | Gesundheitsdaten nur als Aggregate — nie roh; siehe [Phase-4-MVP-Design](superpowers/specs/2026-09-12-phase-4-agent-mvp-design.md) |
-| Garmin-Zugang | Inoffizielle Connect-API (`garth`) | Offizielle Health API erfordert B2B-Partnerschaft; ToS-Risiko dokumentiert in [ADR-0004](adr/ADR-0004-garmin-zugang.md) |
+| LLM-Zugang | API-basiert, pluggable über litellm; ein deployment-weiter `LLM_API_KEY`, Modell pro Nutzer wählbar (Default `anthropic/claude-sonnet-5`) | Gesundheitsdaten nur als Aggregate — nie roh; siehe [Phase-4-MVP-Design](superpowers/specs/2026-09-12-phase-4-agent-mvp-design.md) |
+| Garmin-Zugang | Inoffizielle Connect-API über `garminconnect` ≥ 0.3.17 (`garth` ist seit März 2026 nicht mehr nutzbar und nicht mehr im Projekt); Erst-Login nur über den Widget-Flow, danach nur Token-Login | Offizielle Health API erfordert B2B-Partnerschaft; ToS-Risiko dokumentiert in [ADR-0004](adr/ADR-0004-garmin-zugang.md) |
 | Nutzeranzahl | 5, geschlossene Gruppe | Kein öffentliches Signup |
 | Datentrennung | Logisch via Postgres RLS | Nicht physisch getrennte Datenbanken |
-| Frontend | PWA (React/Next.js oder SvelteKit) | Entscheidung steht aus, siehe [08](08-roadmap.md#vor-phase-0) |
-| Sprache Backend | Python 3.12, FastAPI | — |
+| Frontend | PWA mit SvelteKit + ECharts | Entschieden am 2026-08-10 (PWA-/Web-Push-Reife) |
+| Sprache Backend | Python ≥ 3.12 (CI 3.12), FastAPI | — |
 
 ---
 
@@ -139,10 +147,15 @@ Die genannten Zahlen müssen exakt mit dem Tool-Ergebnis übereinstimmen.
 
 Vollständige Liste in [08 — Roadmap, Abschnitt "Offene Punkte"](08-roadmap.md#3-offene-punkte).
 
-Die wichtigsten Entscheidungen **vor Baubeginn**:
+Die ursprünglich **vor Baubeginn** offenen Entscheidungen:
 
-1. **Frontend-Framework** — SvelteKit oder Next.js?
-2. **LLM-Anbieter und Modell-Routing** — welches Modell für Analyse, welches für
-   einfache Abfragen?
-3. **Garmin-Gerätemodelle** aller 5 Nutzer (beeinflusst verfügbare Datentypen).
-5. **Backfill-Tiefe**: 12 Monate (Annahme) oder mehr?
+1. ~~**Frontend-Framework** — SvelteKit oder Next.js?~~ — erledigt: SvelteKit
+   (2026-08-10).
+2. ~~**LLM-Anbieter und Modell-Routing**~~ — erledigt: litellm, anbieterunabhängig,
+   deployment-weiter `LLM_API_KEY`, Modell pro Nutzer wählbar. Ein automatisches
+   Routing nach Anfragetyp gibt es nicht.
+3. **Garmin-Gerätemodelle** aller 5 Nutzer (beeinflusst verfügbare Datentypen) —
+   weiterhin offen.
+4. ~~**Backfill-Tiefe**~~ — erledigt: Default 24 Monate
+   (`_DEFAULT_BACKFILL_MONTHS`, `src/kairos/routers/sync.py`), pro Aufruf
+   überschreibbar.
