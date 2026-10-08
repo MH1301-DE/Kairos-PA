@@ -9,6 +9,23 @@ das Vertrauen, das das Projekt braucht.
 Zweiter Grundsatz: **Der Betreiber ist Nutzer null.** Erst wenn eine Phase für einen
 Nutzer über zwei Wochen stabil läuft, kommen weitere dazu.
 
+### Stand 2026-10-08 (Details in `docs/HANDOVER.md`)
+
+| Phase | Status | Offen |
+|---|---|---|
+| 0 — Fundament | ✅ `v0.0.1-phase0` | Deployment auf einer VM (VM nicht gebucht), Backup + Restore-Test, RLS-CI-Test |
+| 1 — Garmin-Pipeline | ~95 % | Stichprobenvergleich mit Garmin Connect; `sync_failure` wird nicht geschrieben; Lösch-Abgleich fehlt |
+| 2 — Kennzahlen & Dashboard | ✅ | Detailansichten Aktivität/Schlaf; `quality`-Filter in Aggregaten; Tagesgrenzen in UTC statt lokal |
+| 3 — Kalender | ✅ (nur Google) | CalDAV, Watch-Channels/Push, inkrementeller Sync per `syncToken` |
+| 4 — Agent | ✅ MVP + Harness v2 (Streaming, Gedächtnis mit Ablauf) | Eval live 15/16 (Fragen 7 und 10 brauchen Aktivitäts-Tools); Token-Telemetrie; zweistufiges Tool-Laden (erst ab > 30 Tools) |
+| 5 — Planung | ✅ `plan_propose`/`plan_commit`/`plan_adjust`/`plan_progress` | Insight-Job + Web Push (Proaktivität) nicht gebaut |
+| Frontend-Modernisierung + Designsystem „Ruhe“ | ✅ | — |
+| **Aktivitäten & Workouts** | Spec abgestimmt, nicht begonnen | siehe Abschnitt unten |
+| 6 — Multi-User-Rollout | offen | — |
+
+Die Checklisten der Phasen unten sind der ursprüngliche Plan; wo die Umsetzung
+abweicht, ist das jeweils vermerkt.
+
 ---
 
 ## Phase 0 — Fundament (≈ 1 Woche)
@@ -35,13 +52,13 @@ nachweislich.
 **Ziel:** Vollständige, korrekte Gesundheitsdaten in der Datenbank.
 
 - [ ] Connector-Contract + gemeinsame Infrastruktur (Retry, Rate-Limit, Watermark)
-- [ ] `connectors.garmin`: Auth via `garth`, MFA-Pfad, Reauth-UI
+- [ ] `connectors.garmin`: Auth via `garminconnect` (ursprünglich `garth`, seit März 2026 unbrauchbar), MFA-Pfad, Reauth-UI
 - [ ] Fetch aller Datentypen aus [04](04-integrationen.md#23-abzurufende-datentypen)
 - [ ] Raw-Store mit `content_hash`-Deduplizierung
 - [ ] Normalisierung → `wellness_sample`, `sleep_session`, `activity`, `daily_summary`
-- [ ] FIT-Download + `fitdecode` → `activity_record`
+- [ ] FIT-Download + `garmin-fit-sdk` (statt `fitdecode`) → `activity_record`
 - [ ] Backfill-Job, gedrosselt, unterbrechbar, mit Fortschrittsanzeige
-- [ ] Hypertables, Kompressionspolicies
+- [ ] Hypertables (Kompressionspolicies entfallen: mit RLS nicht nutzbar)
 - [ ] Plausibilitätsprüfung → `quality`-Flag
 
 **Abnahme:** 12 Monate Historie des Betreibers importiert. Stichprobenvergleich mit
@@ -58,7 +75,7 @@ Garmin Connect stimmt für 10 zufällige Tage in allen Kennzahlen überein.
 
 - [ ] Metrics-Layer: TRIMP, CTL/ATL/TSB, HR-Zonen, ACWR, HRV-Baseline,
       Schlafschuld, Ruhepuls-Trend
-- [ ] `metric_daily`, `hr_zone_daily` als Continuous Aggregates / Recompute-Jobs
+- [ ] Derived-Tabellen als Recompute (gebaut: `wellness_daily_stats`, `hr_bucket_seconds_daily`, `metric_daily_value`; Continuous Aggregates sind mit RLS nicht nutzbar)
 - [ ] `coverage` und `confidence` je Kennzahl
 - [ ] Modul-Registry + generische Frontend-Komponenten
 - [ ] Dashboard mit ~8 Startmodulen, pro Nutzer konfigurierbar
@@ -100,11 +117,17 @@ erscheint korrekt in beiden Kalendern; keine Sync-Schleife.
 - [ ] **Eval-Suite mit den 15 Referenzfragen + Zahlen-Assertions**
 - [ ] Token-Telemetrie
 
-**Abnahme:** 13/13 Referenzfragen korrekt (Referenzfragen 13 und 15
-verschoben nach Phase 5, siehe [Phase-4-MVP-Design](superpowers/specs/2026-09-12-phase-4-agent-mvp-design.md) —
-mit dem MVP-Tool-Satz beantwortbare Fragen fallen nicht mehr unter diese
-Abnahme). Median-Input < 15k Tokens bei den 8 Core-Tools dieser Phase (kein
-registriertes Tool-Set > 8, siehe Spec).
+**Abnahme (ursprünglich):** 13/13 Referenzfragen korrekt (Referenzfragen 13 und 15
+verschoben nach Phase 5, siehe [Phase-4-MVP-Design](superpowers/specs/2026-09-12-phase-4-agent-mvp-design.md)).
+Median-Input < 15k Tokens.
+
+**Ist-Stand (2026-10-06):** Die Eval-Suite (`scripts/agent_eval_suite.py`) umfasst
+**16 Fälle** — alle 15 Referenzfragen plus einen Mehrschritt-Fall (Vorschlag →
+Bestätigen → Folgefrage). Live: **15/16** Tool-Accuracy. Frage 7 ist mangels
+Aktivitäts-Tool nicht beantwortbar, Frage 10 nur eingeschränkt; beide deckt die Phase
+„Aktivitäten & Workouts“ ab. Der Tool-Satz umfasst 12 Core-Tools ohne
+`search_tools`/`load_tools`/`tool_registry`. Median-Input ist mangels
+Token-Telemetrie nicht gemessen.
 
 ---
 
@@ -113,7 +136,7 @@ registriertes Tool-Set > 8, siehe Spec).
 - [ ] Planungsmodell: `plan`, `plan_block`, Ziele, Präferenzen
 - [ ] Planungsalgorithmus: Constraint-Erfüllung über freie Blöcke, Erholungszustand,
       Mindestabstände zwischen harten Einheiten
-- [ ] Agent-Tools: `plan.propose`, `plan.commit`, `plan.adjust`
+- [ ] Agent-Tools: `plan_propose`, `plan_commit`, `plan_adjust`, `plan_progress`
 - [ ] Insight-Job (regelbasiert) + Web Push
 - [ ] Benachrichtigungseinstellungen je Nutzer
 
@@ -121,6 +144,30 @@ registriertes Tool-Set > 8, siehe Spec).
 beantwortet und in den Kalender geschrieben (korrigiert von "8 und 14" —
 diese sind bereits mit dem Phase-4-MVP-Tool-Satz beantwortbar, siehe
 [Phase-4-MVP-Design](superpowers/specs/2026-09-12-phase-4-agent-mvp-design.md)).
+
+---
+
+## Phase „Aktivitäten & Workouts“ (Spec vom 2026-10-07)
+
+**Ziel:** Der Agent kennt einzelne Einheiten (Steckbrief, km-Splits, Bestleistungen)
+und verwaltet strukturierte Workouts in Garmin; `plan_commit` überträgt Planblöcke
+als Garmin-Workout plus Google-Termin. Grundlage:
+[Spec Aktivitäten & Workouts](superpowers/specs/2026-10-07-aktivitaeten-und-workouts-design.md), §13.
+
+| AP | Inhalt | Abnahme |
+|---|---|---|
+| 0 Verifikation | Workout-Methoden in `garminconnect` 0.3.17, Referenz-Workouts und Workout-Zyklus als Fixtures, Datumskriterium `get_activities_by_date`, Typliste, offene Code-Fragen (kein Produktcode) | Fixtures eingecheckt; ID-Tabelle D.2 bestätigt oder korrigiert |
+| 1 Datengrundlage | `activity` erweitern, Normalizer-Fixes, `distance_m`, zusätzliche FIT-Messages, Lösch-Abgleich, Reprocess, FIT-Pause | alle 136 Aktivitäten ohne Garmin-Request neu verarbeitet; alle 9 `typeKey`s korrekt zugeordnet; Lösch-Abgleich getestet |
+| 2 Abgeleitete Daten | `activity_stats`, `activity_split`, `activity_best_effort` | Validierungsbericht V1–V6, Abweichungen erklärt |
+| 3 Lese-Tools | 5 Tools, Formatierung, Obergrenzen | Eval 17–21 grün (Referenzfragen 7 und 10 erfüllt); Test für die Obergrenzen |
+| 4 Harness | Vorschau-Snapshots, Zustandsmaschine, `tool_progress`, Schema-Budget, Token-Telemetrie | Doppelklick- und Absturz-Tests; Wiederaufnahme getestet |
+| 5 Workouts | Client-Provider, Schreibdienst, Mapper, Spiegel, 7 Tools, Google-Kopplung | Mapper-Round-Trip gegen Fixtures; Eval 22–25 grün (Fake); ein manueller Live-Durchlauf |
+| 6 Planung | Templates, `plan_commit`, `plan_adjust` | Eval 26 grün; Teilfehler-Test |
+| 7 Aktivitäten bearbeiten | `activity_update`, `activity_delete` | Vorschau nennt betroffene Bestleistungen; Recompute nach dem Löschen getestet |
+| 8 Doku-Abgleich | [Plan](superpowers/plans/2026-10-07-doku-abgleich.md) | alle Punkte erledigt |
+
+**Reihenfolge:** 0 → 1 → 2 → 3 → 4 → 5 → 6 → 7; AP 8 parallel. Nach AP 3 gibt es
+bereits eigenständigen Nutzen.
 
 ---
 
@@ -152,8 +199,8 @@ korrekten Daten) — falls das Projekt dort ins Stocken gerät, ist es kein Tota
 
 | # | Risiko | W | A | Gegenmaßnahme |
 |---|---|---|---|---|
-| R1 | Garmin ändert die inoffizielle API | hoch | hoch | Rohdatenarchiv, Connector-Abstraktion, Aggregator als Rückfalloption |
-| R2 | Google-OAuth-Verifizierung blockiert dauerhaften Betrieb | mittel | mittel | Vorab klären; Apple/CalDAV als Primärkalender |
+| R1 | Garmin ändert die inoffizielle API | hoch | hoch | Rohdatenarchiv, Connector-Abstraktion, Aggregator als Rückfalloption. Eingetreten: `garth` (März 2026) und der mobile Login-clientId (Oktober 2026) — beide Male per Wechsel auf `garminconnect` bzw. den Widget-Flow behoben |
+| R2 | Google-OAuth-Verifizierung blockiert dauerhaften Betrieb | niedrig | mittel | **Stand 2026-10:** App im Testing-Status mit eingetragenen Test-Nutzern; Login und Kalender-Sync laufen (Termine live importiert und angelegt). Eine Verifizierung ist bis 100 Test-Nutzer nicht nötig |
 | R3 | Backfill dauert länger als geplant / trifft Rate-Limits | mittel | niedrig | Gedrosselt, unterbrechbar, Fortschrittsanzeige |
 | R4 | Agent nennt falsche Zahlen | mittel | **hoch** | Rechenverbot, Zahlen-Assertions in der Eval-Suite |
 | R5 | LLM-Kosten laufen aus dem Ruder | mittel | mittel | Kontextbudget, Caching, Modell-Routing, Tageslimit |
@@ -161,7 +208,9 @@ korrekten Daten) — falls das Projekt dort ins Stocken gerät, ist es kein Tota
 | R7 | Nutzer 2–5 nutzen es nach 4 Wochen nicht mehr | mittel | mittel | Proaktivität sparsam dosieren, Onboarding begleiten |
 | R8 | Prompt Injection über Mail | mittel | mittel | Gmail zuletzt und eng gescoped; Bestätigungspflicht |
 | R9 | Datenmodell erweist sich als zu eng | niedrig | hoch | Narrow-Schema + Raw-Zone erlauben Reprocessing |
-| R10 | Timescale-Migration auf 48 Mio. Zeilen wird zum Problem | niedrig | mittel | Staging mit anonymisierter Kopie ab Phase 3 |
+| R10 | Timescale-Migration auf ≈ 120 Mio. Zeilen wird zum Problem | niedrig | mittel | Staging mit anonymisierter Kopie ab Phase 3 |
+| R11 | Inoffizielle Garmin-Workout-API (Schreiben) ändert ihr Format oder sperrt bei Massenoperationen | mittel | hoch | Mapper isoliert, Fixtures aus echtem Konto, Rohdaten-Archiv; ≥ 1 s Drosselung, Stundenlimit, nach 429 Stopp und 15 min Sperre, nur Token-Login ([Spec](superpowers/specs/2026-10-07-aktivitaeten-und-workouts-design.md) §14) |
+| R12 | Speicherbedarf deutlich höher als ursprünglich dokumentiert | mittel | mittel | Gemessen und neu gerechnet ([02 §1.3](02-datenmodell-und-volumen.md#13-speicherbedarf)): ≈ 14–30 GB statt 7–9 GB; VM mit ≥ 80 GB SSD |
 
 Das **realistischste Projektrisiko ist R6**, nicht die Technik.
 
@@ -170,17 +219,17 @@ Das **realistischste Projektrisiko ist R6**, nicht die Technik.
 ## 3. Offene Punkte
 
 Diese Fragen sind bewusst nicht entschieden worden und brauchen eine Antwort, bevor
-gebaut wird:
+gebaut wird. Erledigte Punkte sind durchgestrichen.
 
 ### Vor Phase 0
 
-1. **VM-Anbieter und Domain** — bestätigt? Läuft bereits etwas Vergleichbares, das
-   mitgenutzt werden kann?
-2. **Frontend: SvelteKit oder Next.js?** SvelteKit ist schlanker und für ein
-   datendichtes Dashboard angenehmer; Next.js hat das größere Ökosystem. Reine
-   Präferenzfrage.
-3. **LLM-Anbieter und -Modelle** — welches Modell für die Analyse, welches kleine
-   für einfache Abfragen?
+1. **VM-Anbieter, VM-Größe und Domain** — weiterhin offen. Nach der Speichermessung
+   (2026-10-08) wird eine VM mit ≥ 80 GB SSD empfohlen (z. B. Hetzner CX32), siehe
+   [07 §2.2](07-deployment-und-betrieb.md#22-empfehlung). Welche VM real gebucht wird,
+   ist nicht entschieden.
+2. ~~**Frontend: SvelteKit oder Next.js?**~~ — entschieden: SvelteKit (2026-08-10).
+3. ~~**LLM-Anbieter und -Modelle**~~ — entschieden: anbieterunabhängig über litellm,
+   Default `anthropic/claude-sonnet-5`, pro Nutzer wählbar; kein Modell-Routing.
 
 ### Vor Phase 1
 
@@ -189,22 +238,35 @@ gebaut wird:
 5. **Apple Watch (1 Nutzer): kein Garmin-Connector möglich.** Dieser Nutzer braucht
    einen `connectors.apple_health`-Connector (Phase 6+). In Phase 1–5 hat er nur
    Kalender-Funktionalität. Entscheidung: akzeptiert, Nutzer informieren.
-6. **MFA auf Garmin-Konten:** Dynamisch behandelt via `garth` NeedsMFAToken-Exception;
-   Onboarding-UI zeigt OTP-Eingabefeld bei Bedarf. Kein architektonischer Overhead.
-7. **Backfill: gesamte Historie (max. 15 Monate)** — bestätigt. ~4 Nächte Laufzeit.
+6. ~~**MFA auf Garmin-Konten**~~ — gelöst: `garminconnect` mit `return_on_mfa=True`
+   und `resume_login()`; das Onboarding-UI zeigt bei Bedarf ein OTP-Eingabefeld.
+7. ~~**Backfill-Tiefe**~~ — umgesetzt: Default 24 Monate, manuell ausgelöst, ≈ 3 h
+   Wartezeit je Nutzer (kein nächtliches Fenster).
 
 ### Vor Phase 3
 
-7. **Google-OAuth-Status klären** (siehe [04, Abschnitt 3.1](04-integrationen.md#31-auth)).
-   Das ist der einzige Punkt, der eine geplante Integration ganz kippen könnte.
-8. **Welcher Kalender ist `primary_write_calendar` je Nutzer?**
-9. **Gmail wirklich nötig?** Der Nutzen ist der geringste, das Risiko das größte.
-   Ein bewusstes Weglassen wäre eine legitime Entscheidung.
+8. ~~**Google-OAuth-Status klären**~~ — Testing-Status mit Test-Nutzern genügt, siehe
+   Risiko R2.
+9. ~~**Welcher Kalender ist `primary_write_calendar` je Nutzer?**~~ — entschieden:
+   Googles `primary`-Kalender, keine Auswahl-UI.
+10. **Gmail wirklich nötig?** Der Nutzen ist der geringste, das Risiko das größte.
+    Ein bewusstes Weglassen wäre eine legitime Entscheidung. — offen.
 
 ### Vor Phase 5
 
-10. **Wie proaktiv soll das System sein?** Vorschlag: Default "eine Meldung pro Tag,
-    nur bei Auffälligkeit", je Nutzer anpassbar bis "nie".
-11. **Welche Trainingsphilosophie liegt der Beratung zugrunde?** Polarisiert,
+11. **Wie proaktiv soll das System sein?** Vorschlag: Default "eine Meldung pro Tag,
+    nur bei Auffälligkeit", je Nutzer anpassbar bis "nie". — offen (Proaktivität
+    ist nicht gebaut).
+12. **Welche Trainingsphilosophie liegt der Beratung zugrunde?** Polarisiert,
     pyramidal, schwellenorientiert? Das ist eine inhaltliche, keine technische
-    Entscheidung — und sie prägt jede Empfehlung, die der Agent gibt.
+    Entscheidung — und sie prägt jede Empfehlung, die der Agent gibt. — offen. Bis
+    zur Entscheidung nutzen die geplanten Workouts je Planblock
+    **Platzhalter-Templates** mit HF-Zonen-Zielen ([Spec](superpowers/specs/2026-10-07-aktivitaeten-und-workouts-design.md) E.2), die diese
+    Entscheidung später ersetzt.
+
+### Phase „Aktivitäten & Workouts“
+
+13. Offene Punkte der Spec (§15): sichtbarer Marker `[kairos:…]` in
+    Workout-Beschreibungen akzeptabel? Distanzliste der Bestleistungen (3.000 m
+    behalten, 1 km / 1 Meile ergänzen?); Schwimm-Workouts (V1.1); Soll/Ist pro
+    Intervall (V2).

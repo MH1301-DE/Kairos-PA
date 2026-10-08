@@ -6,7 +6,7 @@
 | **Status** | Design abgestimmt. Vor der Umsetzung sind die Garmin-Workout-Formate per Fixture zu verifizieren (Arbeitspaket 0). |
 | **Baut auf** | `03-agent-design.md` §4.2 · Agent-Harness v2 (`2026-10-05-agent-harness-v2-design.md`) · Phase 5 Planning (`2026-09-12-phase-5-planning-design.md`) |
 | **Ist-Stand** | Code- und DB-Prüfung vom 2026-10-07 (26 Fragen, inkl. Live-Abruf von `get_personal_record` und `get_activity_splits`) |
-| **Folgedokument** | `plans/2026-10-07-doku-abgleich.md` (Korrekturen an `00`–`08`, HANDOVER, ADR-0004) |
+| **Folgedokument** | `superpowers/plans/2026-10-07-doku-abgleich.md` (Korrekturen an `00`–`08`, HANDOVER, ADR-0004) |
 
 ---
 
@@ -54,7 +54,7 @@ Der Tool-Satz wächst von 12 auf 26. Die Tool-Schemas kosten danach geschätzt 4
 | E5 | Aktivitäts-Lese-Tools lesen nur die DB, nie Garmin live. | Kein Rate-Limit-Risiko, deterministische Zahlen, kurze Antwortzeit |
 | E6 | Workout-Lese-Tools frischen einen lokalen Spiegel auf, höchstens alle 5 min. | Garmin ist führend, und der Nutzer legt Workouts auch in Garmin Connect an. |
 | E7 | Ein Garmin-Workout pro Planblock, keine Wiederverwendung | Einzelne Tage bleiben unabhängig änderbar. Aufgeräumt wird per `workout_delete(plan_id=…)`. |
-| E8 | Workout-Templates für Planblöcke sind Platzhalter mit HF-Zonen-Zielen. | Die Trainingsphilosophie ist noch offen (Roadmap, offener Punkt 11). |
+| E8 | Workout-Templates für Planblöcke sind Platzhalter mit HF-Zonen-Zielen. | Die Trainingsphilosophie ist noch offen (Roadmap, offener Punkt 12). |
 | E9 | „Zone n“ in Workouts meint die Garmin-Zonen der Uhr, nicht die Kairos-Zonen. | Die Uhr wertet die Zonen aus. Die Tool-Ergebnisse weisen darauf hin. |
 | E10 | Aktivitäten umbenennen und löschen bleibt als kleines Paket erhalten (Teil F). | Stand in der ursprünglichen Anfrage. Lässt sich streichen, ohne den Rest zu berühren. |
 | E11 | `Connector.write_back` wird für Garmin nicht genutzt. | Workout-Operationen sind mehrstufig (anlegen → terminieren → Kalender). Schreibzugriffe laufen wie beim Kalender über Domänen-Services. |
@@ -1102,7 +1102,7 @@ Das Tool liefert:
 
 ### E.2 `plan_propose`: Workout je Block
 
-Jeder Block außer Ruhetagen bekommt aus `planning/workout_templates.py` eine Workout-Struktur. **Die Templates sind Platzhalter**, bis die Trainingsphilosophie entschieden ist (Roadmap, offener Punkt 11). D ist die geplante Blockdauer in Minuten (`end_at − start_at`).
+Jeder Block außer Ruhetagen bekommt aus `planning/workout_templates.py` eine Workout-Struktur. **Die Templates sind Platzhalter**, bis die Trainingsphilosophie entschieden ist (Roadmap, offener Punkt 12). D ist die geplante Blockdauer in Minuten (`end_at − start_at`).
 
 | Blocktyp | Template |
 |---|---|
@@ -1359,7 +1359,7 @@ Die Validierung ergibt einen einmaligen Bericht in AP 2 und danach Regressionste
 | **5 Workouts** (Teil D) | Client-Provider, Schreibdienst, Mapper, Spiegel, 7 Tools, Google-Kopplung | Mapper-Round-Trip gegen Fixtures; Eval 22–25 grün (Fake); ein manueller Live-Durchlauf mit dem Wegwerf-Workout |
 | **6 Planung** (Teil E) | Templates, `plan_commit`, `plan_adjust` | Eval 26 grün; Teilfehler-Test (Block N scheitert → Blöcke 1 bis N−1 sind lokal vorhanden) |
 | **7 Aktivitäten bearbeiten** (Teil F) | 2 Tools | Vorschau nennt betroffene Bestleistungen; Recompute nach dem Löschen getestet |
-| **8 Doku-Abgleich** | `plans/2026-10-07-doku-abgleich.md` | alle Punkte erledigt |
+| **8 Doku-Abgleich** | `superpowers/plans/2026-10-07-doku-abgleich.md` | alle Punkte erledigt |
 
 **Reihenfolge:** 0 → 1 → 2 → 3 → 4 → 5 → 6 → 7; AP 8 läuft parallel. Nach AP 3 gibt es bereits eigenständigen Nutzen: Der Agent kennt einzelne Läufe.
 
@@ -1383,7 +1383,7 @@ Die Validierung ergibt einen einmaligen Bericht in AP 2 und danach Regressionste
 
 ## 15. Offene Punkte
 
-1. **Trainingsphilosophie** (Roadmap, Punkt 11): Sie ersetzt die Platzhalter-Templates aus E.2.
+1. **Trainingsphilosophie** (Roadmap, offener Punkt 12): Sie ersetzt die Platzhalter-Templates aus E.2.
 2. **Schwimm-Workouts** (V1.1): eigene Schrittlogik mit Bahnen, Schwimmstil und Pausen.
 3. **Soll/Ist pro Intervall** (V2): ausgeführte Runden (`wkt_step_index`) gegen die Workout-Ziele.
 4. **Sichtbarer Marker** `[kairos:…]` in der Workout-Beschreibung: akzeptabel?
