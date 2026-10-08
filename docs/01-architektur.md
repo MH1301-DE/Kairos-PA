@@ -116,7 +116,8 @@ Zuständig für: Auth gegen externe Dienste, Abholen, Rate-Limiting, Retry,
 Idempotenz, Ablage im Raw-Store.
 
 ```
-POST /api/sync/... (manuell) ──▶ SyncJob(user, connector, kind) als BackgroundTask
+POST /api/sync/garmin/backfill bzw. /google_calendar/sync (manuell)
+              ──▶ SyncJob(user, connector, kind) als BackgroundTask
                   │
                   ├─▶ Connector.fetch()      → Raw-Payload
                   ├─▶ RawStore.put()          → unveränderlich, gzip
@@ -244,10 +245,11 @@ Login nur per gespeichertem Token über `garminconnect`.
 
 ### 5.2 Kalendersynchronisation
 
-**Ist-Stand:** Google Calendar wird inkrementell per `syncToken` abgerufen, nur
-manuell ausgelöst (Sync-Seite bzw. Kalender-Sync-Endpunkt, 60 s Cooldown).
-Watch-Channels, Push und automatisches Polling sind nicht gebaut; CalDAV ebenfalls
-nicht.
+**Ist-Stand:** Google Calendar wird nur manuell abgerufen
+(`POST /api/sync/google_calendar/sync`, 60 s Cooldown). Jeder Abruf holt das Fenster
+heute −7 bis +83 Tage vollständig; ein `syncToken` wird nicht genutzt (der Connector
+übergibt immer `None`). Watch-Channels, Push und automatisches Polling sind nicht
+gebaut; CalDAV ebenfalls nicht.
 
 *Zielbild (nicht umgesetzt):* Google **Push** über Watch-Channels (erfordert
 öffentliches HTTPS). Der Webhook trägt keine Nutzdaten, sondern triggert nur einen
