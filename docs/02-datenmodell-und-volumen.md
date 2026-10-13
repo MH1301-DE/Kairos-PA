@@ -92,7 +92,7 @@ Gesamt über 5 Jahre                ≈ 30 GB               ≈ 14 GB
 Die frühere Angabe „7–9 GB gesamt“ ist damit um den Faktor 2–4 zu niedrig. Die
 Wellness-Rate ist gemessen (≈ 1.600 Zeilen/Tag); mit dem Rasteransatz aus §1.1
 (3.000/Tag) kämen ≈ 3,3 GB hinzu. Die geplanten Tabellen `activity_stats`,
-`activity_split` und `activity_best_effort` ([Spec]({SPEC}) Teil B) sind
+`activity_split` und `activity_best_effort` ([Spec](superpowers/specs/2026-10-07-aktivitaeten-und-workouts-design.md) Teil B) sind
 im Vergleich vernachlässigbar.
 
 ### 1.4 Fazit
