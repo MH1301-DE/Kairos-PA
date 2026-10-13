@@ -1,0 +1,320 @@
+{
+  "atpPlanId": null,
+  "author": {
+    "displayName": "00000000-0000-0000-0000-000000000000",
+    "fullName": "Test",
+    "profileImgNameLarge": null,
+    "profileImgNameMedium": null,
+    "profileImgNameSmall": null,
+    "userPro": false,
+    "userProfilePk": 1,
+    "vivokidUser": false
+  },
+  "avgTrainingSpeed": 2.5948890522457804,
+  "consumer": null,
+  "consumerImageURL": null,
+  "consumerName": null,
+  "consumerWebsiteURL": null,
+  "createdDate": "2026-08-23T21:28:01.0",
+  "description": "4x6 min bei 4:50/km, Trabpause 2:30",
+  "descriptionI18nKey": null,
+  "estimateType": "TIME_AND_DISTANCE_ESTIMATED",
+  "estimatedDistanceInMeters": 10400.0,
+  "estimatedDistanceUnit": {
+    "factor": null,
+    "unitId": null,
+    "unitKey": null
+  },
+  "estimatedDurationInSecs": 3430,
+  "isSessionTransitionEnabled": null,
+  "locale": null,
+  "ownerId": 1,
+  "poolLength": null,
+  "poolLengthUnit": null,
+  "shared": false,
+  "sharedWithUsers": null,
+  "sportType": {
+    "displayOrder": 1,
+    "sportTypeId": 1,
+    "sportTypeKey": "running"
+  },
+  "subSportType": null,
+  "trainingPlanId": null,
+  "updatedDate": "2026-09-10T17:37:18.0",
+  "uploadTimestamp": null,
+  "workoutId": 1674042828,
+  "workoutName": "W3 Do Schwelle 4x6",
+  "workoutNameI18nKey": null,
+  "workoutProvider": null,
+  "workoutSegments": [
+    {
+      "avgTrainingSpeed": null,
+      "description": null,
+      "estimateType": null,
+      "estimatedDistanceInMeters": null,
+      "estimatedDistanceUnit": null,
+      "estimatedDurationInSecs": null,
+      "poolLength": null,
+      "poolLengthUnit": null,
+      "segmentOrder": 1,
+      "sportType": {
+        "displayOrder": 1,
+        "sportTypeId": 1,
+        "sportTypeKey": "running"
+      },
+      "workoutSteps": [
+        {
+          "category": null,
+          "childStepId": null,
+          "description": "Einlaufen locker",
+          "endCondition": {
+            "conditionTypeId": 3,
+            "conditionTypeKey": "distance",
+            "displayOrder": 3,
+            "displayable": true
+          },
+          "endConditionCompare": "",
+          "endConditionValue": 2000.0,
+          "endConditionZone": null,
+          "equipmentType": {
+            "displayOrder": 0,
+            "equipmentTypeId": 0,
+            "equipmentTypeKey": null
+          },
+          "exerciseName": null,
+          "preferredEndConditionUnit": null,
+          "providerExerciseSourceId": null,
+          "secondaryTargetType": null,
+          "secondaryTargetValueOne": null,
+          "secondaryTargetValueTwo": null,
+          "secondaryTargetValueUnit": null,
+          "secondaryZoneNumber": null,
+          "stepId": 14575153413,
+          "stepOrder": 1,
+          "stepType": {
+            "displayOrder": 1,
+            "stepTypeId": 1,
+            "stepTypeKey": "warmup"
+          },
+          "strokeType": {
+            "displayOrder": 0,
+            "strokeTypeId": 0,
+            "strokeTypeKey": null
+          },
+          "targetType": {
+            "displayOrder": 4,
+            "workoutTargetTypeId": 4,
+            "workoutTargetTypeKey": "heart.rate.zone"
+          },
+          "targetValueOne": 100.0,
+          "targetValueTwo": 150.0,
+          "targetValueUnit": null,
+          "type": "ExecutableStepDTO",
+          "weightUnit": {
+            "factor": 1000.0,
+            "unitId": 8,
+            "unitKey": "kilogram"
+          },
+          "weightValue": -1.0,
+          "workoutProvider": null,
+          "zoneNumber": null
+        },
+        {
+          "childStepId": 1,
+          "endCondition": {
+            "conditionTypeId": 7,
+            "conditionTypeKey": "iterations",
+            "displayOrder": 7,
+            "displayable": false
+          },
+          "endConditionCompare": null,
+          "endConditionValue": 4.0,
+          "numberOfIterations": 4,
+          "preferredEndConditionUnit": null,
+          "skipLastRestStep": true,
+          "smartRepeat": false,
+          "stepId": 14575153414,
+          "stepOrder": 2,
+          "stepType": {
+            "displayOrder": 6,
+            "stepTypeId": 6,
+            "stepTypeKey": "repeat"
+          },
+          "type": "RepeatGroupDTO",
+          "workoutSteps": [
+            {
+              "category": null,
+              "childStepId": 1,
+              "description": "SCHWELLE 4:50",
+              "endCondition": {
+                "conditionTypeId": 2,
+                "conditionTypeKey": "time",
+                "displayOrder": 2,
+                "displayable": true
+              },
+              "endConditionCompare": "",
+              "endConditionValue": 360.0,
+              "endConditionZone": null,
+              "equipmentType": {
+                "displayOrder": 0,
+                "equipmentTypeId": 0,
+                "equipmentTypeKey": null
+              },
+              "exerciseName": null,
+              "preferredEndConditionUnit": null,
+              "providerExerciseSourceId": null,
+              "secondaryTargetType": null,
+              "secondaryTargetValueOne": null,
+              "secondaryTargetValueTwo": null,
+              "secondaryTargetValueUnit": null,
+              "secondaryZoneNumber": null,
+              "stepId": 14575153415,
+              "stepOrder": 3,
+              "stepType": {
+                "displayOrder": 3,
+                "stepTypeId": 3,
+                "stepTypeKey": "interval"
+              },
+              "strokeType": {
+                "displayOrder": 0,
+                "strokeTypeId": 0,
+                "strokeTypeKey": null
+              },
+              "targetType": {
+                "displayOrder": 6,
+                "workoutTargetTypeId": 6,
+                "workoutTargetTypeKey": "pace.zone"
+              },
+              "targetValueOne": 3.6363636,
+              "targetValueTwo": 3.5087719,
+              "targetValueUnit": null,
+              "type": "ExecutableStepDTO",
+              "weightUnit": {
+                "factor": 1000.0,
+                "unitId": 8,
+                "unitKey": "kilogram"
+              },
+              "weightValue": -1.0,
+              "workoutProvider": null,
+              "zoneNumber": null
+            },
+            {
+              "category": null,
+              "childStepId": 1,
+              "description": "Trabpause locker",
+              "endCondition": {
+                "conditionTypeId": 2,
+                "conditionTypeKey": "time",
+                "displayOrder": 2,
+                "displayable": true
+              },
+              "endConditionCompare": "",
+              "endConditionValue": 150.0,
+              "endConditionZone": null,
+              "equipmentType": {
+                "displayOrder": 0,
+                "equipmentTypeId": 0,
+                "equipmentTypeKey": null
+              },
+              "exerciseName": null,
+              "preferredEndConditionUnit": null,
+              "providerExerciseSourceId": null,
+              "secondaryTargetType": null,
+              "secondaryTargetValueOne": null,
+              "secondaryTargetValueTwo": null,
+              "secondaryTargetValueUnit": null,
+              "secondaryZoneNumber": null,
+              "stepId": 14575153416,
+              "stepOrder": 4,
+              "stepType": {
+                "displayOrder": 4,
+                "stepTypeId": 4,
+                "stepTypeKey": "recovery"
+              },
+              "strokeType": {
+                "displayOrder": 0,
+                "strokeTypeId": 0,
+                "strokeTypeKey": null
+              },
+              "targetType": {
+                "displayOrder": 4,
+                "workoutTargetTypeId": 4,
+                "workoutTargetTypeKey": "heart.rate.zone"
+              },
+              "targetValueOne": 100.0,
+              "targetValueTwo": 150.0,
+              "targetValueUnit": null,
+              "type": "ExecutableStepDTO",
+              "weightUnit": {
+                "factor": 1000.0,
+                "unitId": 8,
+                "unitKey": "kilogram"
+              },
+              "weightValue": -1.0,
+              "workoutProvider": null,
+              "zoneNumber": null
+            }
+          ]
+        },
+        {
+          "category": null,
+          "childStepId": null,
+          "description": "Auslaufen",
+          "endCondition": {
+            "conditionTypeId": 3,
+            "conditionTypeKey": "distance",
+            "displayOrder": 3,
+            "displayable": true
+          },
+          "endConditionCompare": "",
+          "endConditionValue": 2000.0,
+          "endConditionZone": null,
+          "equipmentType": {
+            "displayOrder": 0,
+            "equipmentTypeId": 0,
+            "equipmentTypeKey": null
+          },
+          "exerciseName": null,
+          "preferredEndConditionUnit": null,
+          "providerExerciseSourceId": null,
+          "secondaryTargetType": null,
+          "secondaryTargetValueOne": null,
+          "secondaryTargetValueTwo": null,
+          "secondaryTargetValueUnit": null,
+          "secondaryZoneNumber": null,
+          "stepId": 14575153417,
+          "stepOrder": 5,
+          "stepType": {
+            "displayOrder": 2,
+            "stepTypeId": 2,
+            "stepTypeKey": "cooldown"
+          },
+          "strokeType": {
+            "displayOrder": 0,
+            "strokeTypeId": 0,
+            "strokeTypeKey": null
+          },
+          "targetType": {
+            "displayOrder": 4,
+            "workoutTargetTypeId": 4,
+            "workoutTargetTypeKey": "heart.rate.zone"
+          },
+          "targetValueOne": 100.0,
+          "targetValueTwo": 145.0,
+          "targetValueUnit": null,
+          "type": "ExecutableStepDTO",
+          "weightUnit": {
+            "factor": 1000.0,
+            "unitId": 8,
+            "unitKey": "kilogram"
+          },
+          "weightValue": -1.0,
+          "workoutProvider": null,
+          "zoneNumber": null
+        }
+      ]
+    }
+  ],
+  "workoutSourceId": null,
+  "workoutThumbnailUrl": "https://connect.garmin.com/chart-service/workout?data=redacted"
+}

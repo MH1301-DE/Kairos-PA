@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Datum** | 2026-10-07 |
-| **Status** | Design abgestimmt. Vor der Umsetzung sind die Garmin-Workout-Formate per Fixture zu verifizieren (Arbeitspaket 0). |
+| **Status** | Design abgestimmt. **AP 0 (Verifikation) abgeschlossen am 2026-10-13**, Ergebnisse in §2.1; Fixtures unter `tests/fixtures/garmin/`. |
 | **Baut auf** | `03-agent-design.md` §4.2 · Agent-Harness v2 (`2026-10-05-agent-harness-v2-design.md`) · Phase 5 Planning (`2026-09-12-phase-5-planning-design.md`) |
 | **Ist-Stand** | Code- und DB-Prüfung vom 2026-10-07 (26 Fragen, inkl. Live-Abruf von `get_personal_record` und `get_activity_splits`) |
 | **Folgedokument** | `superpowers/plans/2026-10-07-doku-abgleich.md` (Korrekturen an `00`–`08`, HANDOVER, ADR-0004) |
@@ -87,7 +87,34 @@ Belege stehen im Prüfbericht vom 2026-10-07.
 | Scheduler | keiner; Syncs nur manuell als BackgroundTask; Recompute nach dem Backfill | Ableitungen hängen sich an Sync und Recompute. |
 | Durchsatz | 1,5 s zwischen Tagesfenstern; FIT-Downloads innerhalb eines Fensters ohne Pause; 300 s Cooldown | Teil A.5 |
 | Reale Daten | 136 Aktivitäten (11.05.2025–07.10.2026): running 99, hiking 11, lap_swimming 7, cycling 7, strength_training 6, hiit 2, breathwork 2, treadmill_running 1, resort_skiing 1 | Sportprofile, Teil A.1 |
-| `garminconnect` | Laut aktuellem `master`-README gibt es `upload_running_workout`/`upload_cycling_workout`, `get_workout_by_id`, `update_workout` (behält die ID, Termine bleiben gültig), `delete_workout`, `schedule_workout(id, datum)` und `unschedule_workout(schedule_id)`. | **In 0.3.17 nicht bestätigt** → AP 0 |
+| `garminconnect` | Laut aktuellem `master`-README gibt es `upload_running_workout`/`upload_cycling_workout`, `get_workout_by_id`, `update_workout` (behält die ID, Termine bleiben gültig), `delete_workout`, `schedule_workout(id, datum)` und `unschedule_workout(schedule_id)`. | In 0.3.17 bestätigt (AP 0, §2.1) |
+
+### 2.1 Ergebnisse AP 0 (2026-10-13)
+
+Geprüft gegen das echte Konto: Lese-Abrufe plus ein vollständiger Schreibzyklus mit zwei
+Wegwerf-Workouts (Laufen und Rad, danach gelöscht; das Konto ist unverändert). Rohantworten
+anonymisiert unter `tests/fixtures/garmin/`, abgesichert durch
+`tests/test_garmin_workout_methods.py` und `tests/test_garmin_workout_fixtures.py`.
+Zusätzliche Quelle: das bestehende Projekt `garmin-workout-importer` (16 hochgeladene
+Workouts, Update-Fallstrick, siehe unten).
+
+| # | Frage | Ergebnis |
+|---|---|---|
+| 1 | Workout-Methoden in 0.3.17 | **alle vorhanden**, inkl. `get_scheduled_workouts(year, month)`, `get_scheduled_workout_by_id`, `set_activity_name`, `delete_activity`. Kein Versionssprung, kein Adapter. |
+| 2 | Referenz-Workouts | Laufen: Schwelle (Wiederholung, Pace, HF-Bereich), Kadenz, Steigerungen — vom Importer angelegt und vom Nutzer in Garmin Connect nachträglich geändert (z. B. 4 → 6 Wiederholungen; bestätigt R5 „Garmin ist führend“). Wegwerf-Workouts: HF-Zone per `zoneNumber`, Pace, `lap.button`, HF-Bereich; Rad: Leistungszone, Leistungsbereich, Geschwindigkeit, Kadenz. Alle Ziele überstehen den Rundweg unverändert. |
+| 3 | Schreibzyklus | anlegen → terminieren → ändern → Termin entfernen → neu terminieren → löschen: alles erfolgreich. Ergebnisse siehe D.2–D.4 (unten eingearbeitet). |
+| 4 | Listen-Methoden | Workouts: `get_workouts(start, limit)` (24 im Konto, eine Seite). Termine: `get_scheduled_workouts(year, month)` liefert das **Kalenderraster des Monats inkl. Randwochen** (z. B. 25.08.–19.10. für September) und **alle Eintragstypen** (`workout`, `fbtAdaptiveWorkout`, `activity`, `nap`, `weight`) → nach `itemType == "workout"` filtern, Dubletten aus überlappenden Monaten per `id` entfernen. |
+| 5 | Kadenz-Faktor | Garmins `averageRunningCadenceInStepsPerMinute` = **2 × (`avg_cadence` + `avg_fractional_cadence`)** der FIT-Session, exakt in 219 von 219 Fällen. `activity_record.cadence` enthält nur den ganzzahligen Wert pro Bein → spm-Werte aus Records sind bis zu 2 spm zu niedrig (siehe A.2). |
+| 6 | `activity_fit`-Payloads | 0–4 Aktivitäten pro Fenster; `activity_id` = `activity.external_id` (136/136 zugeordnet, 0 Fehler). Dieselbe Aktivität steht in **mehreren** Payloads (siehe 8) → Reprocess dedupliziert nach `activity_id` (jüngster Payload gewinnt). |
+| 7 | `activity.activity_type`, `audit_log` | `activity_type` wird **nirgends gelesen** (nur `canonical.py:129` schreibt) → Spalte kann entfallen. `audit_log` existiert nicht → wird in AP 5 nach `06` §7 angelegt. |
+| 8 | Datumskriterium `get_activities_by_date` | **lokales Startdatum** (ein Lauf um 02:05 Ortszeit, nach UTC am Vortag, steht im Fenster des lokalen Tags). Achtung: Jedes Tagesfenster ruft `get_activities_by_date(d, d+1)` auf, also **zwei Tage inklusive**. |
+| 9 | Typliste | 154 Typen als Fixture (`activity_types.json`); alle 9 real vorkommenden `typeKey`s aufgelöst (u. a. `treadmill_running → running`, `lap_swimming → swimming`, `strength_training`/`hiit → fitness_equipment`, `mountaineering → other`). |
+
+**Zusätzliche Befunde**
+
+- **Garmin Coach aktiv.** Der Kalender enthält adaptive Coach-Workouts (`itemType: "fbtAdaptiveWorkout"`, mit `trainingPlanId`, **ohne `workoutId`**). Sie stehen nicht in `get_workouts` und sind damit für `workout_delete`/`workout_unschedule` unerreichbar — die geplante Markierung „Workout aus Trainingsplan“ entfällt. Offen ist die fachliche Frage, wie Kairos-Pläne neben einem aktiven Coach-Plan stehen sollen (§15, Punkt 7).
+- **Update-Fallstrick (aus dem Importer):** Werden bei `update_workout` zusätzliche, Garmin unbekannte Feldnamen mitgeschickt (z. B. `targetValueLow/High` neben `targetValueOne/Two`), setzt Garmin die Zielwerte serverseitig auf `null` — Ursache des Uhr-Fehlers „HF 101–101“. Der Mapper schickt deshalb nur bekannte Felder; ein `update_workout` mit der vollständigen, unveränderten `get_workout_by_id`-Antwort plus geänderten Feldern funktioniert (AP 0 live geprüft).
+- **Garmin-Termine haben keine Uhrzeit** (`startTimestampLocal` ist `null`); die Uhrzeit existiert nur im Google-Termin und in `garmin_workout_schedule.start_at`.
 
 ---
 
@@ -162,6 +189,7 @@ Die Elterntypen werden über eine Typliste aufgelöst, die einmal per `get_activ
 ### A.2 FIT-Import erweitern
 
 1. **Distanz speichern.** In `_FIT_FIELDS` kommt `distance` dazu und wird auf die neue Metrik `distance_m` abgebildet (Seed in `metric_def`). Das sind heute rund 0,3 Mio. zusätzliche Zeilen, ein achter Kanal neben den sieben bestehenden.
+   **Kadenz (AP 0):** Garmin rechnet Lauf-spm als 2 × (`cadence` + `fractional_cadence`). Damit km-Splits auf ±1 spm genau werden, wird `cadence` beim Normalisieren als `cadence + fractional_cadence` gespeichert (kein neuer Kanal); der Reprocess (A.4) korrigiert die Bestandsdaten.
 2. **Mehr Messages archivieren.** Zusätzlich bleiben im `raw_payload`:
    - `length_mesgs` (Schwimmbahnen),
    - `event_mesgs` (Timer-Start/-Stopp, also Pausen),
@@ -182,7 +210,7 @@ Nach jedem **erfolgreichen** `activity_list`-Abruf eines Fensters wird abgeglich
 Dabei gilt:
 
 - **Nur vollständige Antworten.** Die Paginierung muss abgeschlossen sein, und es darf keine Exception aufgetreten sein.
-- **Gleiches Datumskriterium wie Garmin.** Es muss dem `startDate`/`endDate`-Filter von Garmin entsprechen; vermutlich das lokale Startdatum (in AP 0 bestätigen).
+- **Gleiches Datumskriterium wie Garmin.** Garmin filtert nach dem **lokalen Startdatum** (AP 0 bestätigt). Ein Fenster deckt zwei Tage ab (`get_activities_by_date(d, d+1)`, beide inklusive); abgeglichen werden alle Aktivitäten, deren lokales Startdatum `d` oder `d+1` ist.
 - **Folgen:** Die abgeleiteten Zeilen der Aktivität werden entfernt und die Tageskennzahlen der betroffenen Tage neu berechnet. `activity` und `activity_record` bleiben erhalten (Rohdaten-nah).
 - **Recompute anpassen:** `metrics_recompute.py` muss gelöschte Aktivitäten ausschließen. Heute gibt es keinen solchen Filter.
 
@@ -218,7 +246,7 @@ Zwischen zwei FIT-Downloads innerhalb eines Fensters wird `GARMIN_FIT_DOWNLOAD_P
 | Distanz | `distance_m` kumulativ (Garmins Distanz); negative Sprünge werden auf 0 geklemmt |
 | HF | Werte < 25 oder > 230 werden ignoriert. Schwimmen: `quality='partial'` mit dem Hinweis „Handgelenk-HF im Wasser eingeschränkt verlässlich“ |
 | Höhe | gleitender Median über 5 Samples, danach Hysterese von 2 m für Hm↑/Hm↓ |
-| Kadenz | Laufen: FIT-`cadence` × 2 = Schritte/min (spm). Rad: rpm. Den Faktor in AP 0 gegen Garmins `averageRunCadence` prüfen. |
+| Kadenz | Laufen: 2 × (FIT-`cadence` + `fractional_cadence`) = Schritte/min (spm), in AP 0 exakt gegen Garmins `averageRunningCadenceInStepsPerMinute` bestätigt (219/219). Rad: rpm. |
 | Zonen | Default-Variante von `hr_zone_distribution` (`percent_max`), dieselbe Funktion wie im Dashboard |
 | TRIMP | Edwards, dieselbe Formel wie die kanonische Tageslast, angewendet auf die HF-Reihe der Aktivität |
 | Distanzquelle | GPS-Abdeckung ≥ 90 % → `gps`; Laufband/Indoor (`session.sub_sport`) oder GPS-Abdeckung < 50 % → `watch_estimate`; Beckenschwimmen → `pool`; sonst `mixed`; ohne Distanz → `none` |
@@ -756,7 +784,7 @@ Der Adapter liegt in `connectors/garmin/workout_mapper.py`:
 - `to_garmin(model, *, existing=None) -> dict`
 - `from_garmin(payload) -> WorkoutModel | Unsupported`
 
-**Struktur nach Kenntnisstand (nicht verifiziert):**
+**Struktur (AP 0 bestätigt, Fixtures `tests/fixtures/garmin/workout_*.json`):**
 
 ```
 { workoutName, description, sportType{sportTypeId, sportTypeKey}, estimatedDurationInSecs,
@@ -766,26 +794,33 @@ Der Adapter liegt in `connectors/garmin/workout_mapper.py`:
         endCondition{conditionTypeId, conditionTypeKey}, endConditionValue,
         targetType{workoutTargetTypeId, workoutTargetTypeKey},
         targetValueOne, targetValueTwo, zoneNumber },
-      { type: "RepeatGroupDTO", stepOrder, stepType{…repeat}, numberOfIterations,
-        workoutSteps: [ … ] } ] }] }
+      { type: "RepeatGroupDTO", stepOrder, stepType{6, "repeat"}, numberOfIterations,
+        endCondition{7, "iterations"}, endConditionValue = numberOfIterations,
+        skipLastRestStep, smartRepeat, workoutSteps: [ … ] } ] }] }
 ```
 
-| Kairos | Garmin-Key | ID (**unbestätigt**) |
-|---|---|---|
-| `warmup` / `cooldown` / `interval` / `recovery` / `rest` / `repeat` | warmup / cooldown / interval / recovery / rest / repeat | 1 / 2 / 3 / 4 / 5 / 6 |
-| Ende `lap_button` / `time` / `distance` | lap.button / time / distance | 1 / 2 / 3 |
-| Ziel `none` | no.target | 1 |
-| `power_range` | power.zone | 2 |
-| `cadence_range` | cadence | 3 |
-| `hr_zone`, `hr_range` | heart.rate.zone (Bereich über `targetValueOne/Two`) | 4 |
-| `speed` | speed.zone | 5 |
-| `pace` | pace.zone, Werte als m/s (Reihenfolge prüfen) | 6 |
-| Sport `running` / `cycling` | running / cycling | 1 / 2 |
+| Kairos | Garmin-Key | ID | Status AP 0 |
+|---|---|---|---|
+| `warmup` / `cooldown` / `interval` / `recovery` | warmup / cooldown / interval / recovery | 1 / 2 / 3 / 4 | bestätigt |
+| `rest` | rest | 5 | nur laut `garminconnect.workout.StepType`, nicht live geprüft |
+| `repeat` | repeat (Ende `iterations`, ID 7) | 6 | bestätigt |
+| Ende `lap_button` / `time` / `distance` | lap.button / time / distance | 1 / 2 / 3 | bestätigt; `lap.button` hat `endConditionValue: null` |
+| Ziel `none` | no.target | 1 | bestätigt |
+| `power_range` | power.zone, `targetValueOne/Two` in W | 2 | bestätigt |
+| — (Leistungszone; nicht im Kairos-Modell V1) | power.zone mit `zoneNumber` | 2 | bestätigt, wird von `from_garmin` gelesen |
+| `cadence_range` | cadence, Werte in spm bzw. rpm | 3 | bestätigt |
+| `hr_zone` | heart.rate.zone, **`zoneNumber`** = 1–5, `targetValueOne/Two` = `null` | 4 | bestätigt |
+| `hr_range` | heart.rate.zone, `targetValueOne/Two` in bpm, `zoneNumber` = `null` | 4 | bestätigt |
+| `speed` | speed.zone, Werte in m/s | 5 | bestätigt |
+| `pace` | pace.zone, Werte in m/s; **`targetValueOne` = langsamere Grenze (kleinerer m/s-Wert)**, `targetValueTwo` = schnellere. Garmin speichert die Reihenfolge so, wie gesendet. | 6 | bestätigt |
+| Sport `running` / `cycling` | running / cycling | 1 / 2 | bestätigt |
+
+Hinweis zu `hr_zone`: `zoneNumber` verweist auf die in Garmin Connect hinterlegten HF-Zonen des Nutzers, die die Uhr auswertet (E9). Der Importer und alle bestehenden Workouts des Nutzers nutzen dagegen `hr_range` mit bpm.
 
 **Regeln**
 
 - Die IDs stehen ausschließlich im Mapper-Modul. Alle Mapper-Tests laufen gegen echte Fixtures aus AP 0. Das ist die Lehre aus Phase 1: Vier von sechs Normalizern passten nicht zur echten API, obwohl die synthetischen Tests grün waren.
-- **Ändern:** `get_workout_by_id` → Name, Beschreibung und Segmente ersetzen → alle übrigen Felder (`workoutId`, `ownerId` …) unverändert lassen → `update_workout(id, data)`. Laut README bleibt die ID erhalten, terminierte Einträge bleiben gültig.
+- **Ändern:** `get_workout_by_id` → Name, Beschreibung und Segmente ersetzen → alle übrigen Felder (`workoutId`, `ownerId` …) unverändert lassen → `update_workout(id, data)`. **AP 0 bestätigt:** Die ID bleibt erhalten, der Termin bleibt bestehen, Zielwerte bleiben erhalten. Keine Felder schicken, die Garmin nicht kennt (siehe §2.1, Update-Fallstrick).
 - **Nicht abbildbar:** Kraftübungen, Schwimmdrills, unbekannte Ziel- oder Endtypen, mehrere Segmente und verschachtelte Wiederholungen ergeben `Unsupported` mit `supported=false`. Solche Workouts kann der Agent auflisten, anzeigen, terminieren und löschen, aber nicht ändern.
 
 ### D.3 Spiegel-Tabellen
@@ -834,7 +869,7 @@ Die Spaltentypen der Fremdschlüssel sind an die tatsächlichen Primärschlüsse
 2. **Termine.** Der Garmin-Kalender wird für das Fenster heute − 7 bis heute + 90 Tage abgeglichen. Lokale Termine ohne Gegenstück werden gelöscht. Ein verknüpfter Google-Termin bleibt dabei bestehen und wird im Tool-Ergebnis als „verwaist“ gemeldet, denn der Lese-Pfad schreibt nie extern.
 3. **Sperre.** Höchstens ein Abgleich pro Nutzer alle `WORKOUT_MIRROR_REFRESH_S` (Default 300 s). Mit `force_refresh` frühestens nach 60 s.
 
-Welche Garmin-Methoden zum Auflisten genutzt werden (Workouts paginiert, Termine über den Kalender-Endpoint), wird in AP 0 festgelegt.
+**Listen-Methoden (AP 0):** Workouts über `get_workouts(start, limit=100)`, solange eine volle Seite kommt. Termine über `get_scheduled_workouts(year, month)` für jeden Monat, der das Fenster berührt (für −7 bis +90 Tage also 4–5 Aufrufe); nur `itemType == "workout"` übernehmen und per `id` deduplizieren, da sich die Monatsraster überlappen. `id` ist die Schedule-ID, `workoutId` das Workout.
 
 ### D.4 Workout-Tools
 
@@ -988,7 +1023,7 @@ Das Tool liefert:
   5. Spiegel aktualisieren.
 
   Erst anlegen, dann entfernen: Bei einem Fehler bleibt mindestens ein gültiger Termin bestehen.
-- **Schedule-ID:** Sie wird aus der Antwort von `schedule_workout` gelesen. Fehlt sie dort, wird der Garmin-Kalender höchstens 3-mal im Abstand von 2 s abgefragt. Bleibt sie unbekannt, wird `status='pending_id'` gesetzt; der nächste Spiegel-Abgleich löst das auf.
+- **Schedule-ID:** Sie steht in der Antwort von `schedule_workout` als **`workoutScheduleId`** (AP 0 bestätigt; dieselbe ID erscheint als `id` im Kalender). Der Polling-Fallback und `status='pending_id'` bleiben nur als Absicherung für den Fall, dass das Feld fehlt.
 
 #### `workout_unschedule` (destructive)
 
@@ -1011,7 +1046,7 @@ Das Tool liefert:
 - **Auswahl:** Mindestens ein Kriterium ist gesetzt. Mehrere Kriterien werden UND-verknüpft. Nach dem Auflösen sind höchstens 100 Termine erlaubt.
 - **Vorschau:** die aufgelöste Liste mit Datum, Uhrzeit und Workout.
 - **Ausführung pro Termin:**
-  1. In Garmin entfernen (404 heißt „bereits entfernt“).
+  1. In Garmin entfernen (`unschedule_workout` antwortet mit leerem Objekt; 404 heißt „bereits entfernt“).
   2. Den verknüpften Google-Termin löschen (`source='kairos'`).
   3. Spiegelzeile löschen.
 
@@ -1038,13 +1073,13 @@ Das Tool liefert:
   - `all=true` ist nicht mit anderen Kriterien kombinierbar; die übrigen Kriterien werden UND-verknüpft.
   - Die Auswahl wird in der Vorschau nach einem erzwungenen Spiegel-Abgleich aufgelöst. „Alle“ bedeutet also: alle zum Zeitpunkt der Vorschau.
   - Höchstens 200 Workouts. Bei mehr bricht das Tool mit dem Hinweis ab, die Auswahl einzugrenzen.
-- **Vorschau:** Anzahl der Workouts, Anzahl der betroffenen künftigen Termine und Google-Termine, die ersten 20 Namen und „… und N weitere“. Workouts aus Garmin-Trainingsplänen werden markiert, falls erkennbar (AP 0).
+- **Vorschau:** Anzahl der Workouts, Anzahl der betroffenen künftigen Termine und Google-Termine, die ersten 20 Namen und „… und N weitere“. (Workouts aus Garmin-Coach-Plänen stehen laut AP 0 nicht in der Workout-Bibliothek und können hier nicht auftauchen.)
 - **Ausführung**, sequenziell und gedrosselt, pro Workout:
   1. Künftige Termine entfernen (wie `workout_unschedule`).
   2. `delete_workout` aufrufen.
   3. Spiegelzeile löschen.
 
-  Was Garmin beim Löschen mit vergangenen Terminen macht, wird in AP 0 geprüft. Vergangene Google-Termine bleiben als Historie stehen.
+  **AP 0:** Löscht man ein terminiertes Workout, entfernt Garmin den künftigen Termin mit (Kalender leer, `get_scheduled_workout_by_id` → 404). Schritt 1 ist für Garmin also nicht nötig, bleibt aber für die verknüpften Google-Termine. Das Verhalten bei **vergangenen** Terminen ist nicht geprüft (es wurde kein vergangener Termin gelöscht). Vergangene Google-Termine bleiben als Historie stehen.
 - **Abbruch:**
   - 429 oder Auth-Fehler: sofort stoppen; das Ergebnis nennt Erledigtes und Offenes.
   - 404: zählt als bereits gelöscht.
@@ -1389,3 +1424,5 @@ Die Validierung ergibt einen einmaligen Bericht in AP 2 und danach Regressionste
 4. **Sichtbarer Marker** `[kairos:…]` in der Workout-Beschreibung: akzeptabel?
 5. **Distanzliste der Bestleistungen:** 3.000 m drin lassen? Weitere Distanzen (1 km, 1 Meile)?
 6. **VM-Größe:** nach der Speichermessung (Doku-Abgleich §0) entscheiden; Frage 26 aus dem Prüfbericht ist noch offen.
+7. **Kairos-Plan neben Garmin Coach** (AP 0): Im Konto läuft ein adaptiver Garmin-Coach-Plan. Soll `plan_commit` trotzdem eigene Workouts an denselben Tagen terminieren, nur an freien Tagen, oder erst nach Ende des Coach-Plans?
+8. **`hr_zone` oder `hr_range` als Default** (AP 0): Alle bestehenden Workouts nutzen bpm-Bereiche. Sollen die Platzhalter-Templates (E.2) statt „Z2“ bpm-Bereiche verwenden?
