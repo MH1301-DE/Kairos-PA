@@ -17,6 +17,7 @@ git log --format="%h|%an|%ae|%s" -20
 **Human developers** (skip diff review for these):
 - `Maximilian Haenel` — mhaenel@deloitte.de
 - `Maximilian Haenel` — max.haenel@t-online.de
+- `Maximilian Haenel` — haenel@igmr.rwth-aachen.de
 
 For every commit by a **different author**, read its diff:
 ```bash
