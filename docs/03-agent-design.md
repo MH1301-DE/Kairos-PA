@@ -281,16 +281,21 @@ Geplant, nicht umgesetzt ([Spec Aktivitäten & Workouts](superpowers/specs/2026-
 | Aspekt | Umsetzung |
 |---|---|
 | Inhalt | kurze Fakten in Textform, optional mit `expires_at` (NULL = dauerhaft) |
-| Injektion | alle aktiven Einträge, neueste zuerst, als Block `ERINNERUNGEN` im Systemprompt (≤ ~1.500 Tokens, `prompt.py`) |
-| Ablauf | abgelaufene Einträge werden beim Turn-Aufbau gelöscht |
+| Injektion | aktive Einträge, neueste zuerst, als Block `ERINNERUNGEN` im Systemprompt (Budget 1.500 geschätzte Tokens, `render_memory_block` in `prompt.py`); Einträge, die nicht mehr ins Budget passen, werden still ausgelassen und sind nur noch über `recall` erreichbar |
+| Ablauf | abgelaufene Einträge werden beim Aufbau des Systemprompts gelöscht (`delete_expired`) |
 | Abruf per Tool | `recall` filtert per **Substring**, keine Embeddings |
-| Schreiben, explizit | `remember()` — sofort gespeichert, im UI mit Undo-Chip |
-| Schreiben, automatisch | beim Kompaktieren der Historie: Turns, die aus dem Token-Fenster fallen, werden **nach** der Antwort per LLM auf dauerhafte Fakten geprüft (nur Fakten aus Nutzerzeilen, Transkript ≤ 24.000 Zeichen, `memory_extraction.py`) |
-| Einsehen/Löschen | Seite „Gedächtnis“ im Frontend |
+| Schreiben, explizit | `remember()` — sofort gespeichert (`source='agent'`), im UI mit Undo-Chip |
+| Schreiben, automatisch | beim Kompaktieren der Historie: Turns, die aus dem Token-Fenster fallen, werden **nach** einer abschließenden Antwort per LLM auf dauerhafte Fakten geprüft (nicht nach einem Proposal oder Fehler; nur Fakten aus Nutzerzeilen; Transkript ≤ 24.000 Zeichen, `memory_extraction.py`). Neue Einträge gehen als `memory`-Event an den Chat und werden wie `remember()` mit `source='agent'` gespeichert |
+| Einsehen/Bearbeiten | Seite „Gedächtnis“ im Frontend (`/api/memory`: anlegen, bearbeiten, löschen); dort angelegte Einträge haben `source='user'` |
 
-**Konversationshistorie:** token-budgetiert auf 12.000 geschätzte Tokens, geschnitten
-nur an Turn-Grenzen (`history.py`); `conversation.compacted_through_seq` merkt den
-extrahierten Stand. Eine fortgeschriebene Zusammenfassung gibt es nicht.
+**Konversationshistorie:** token-budgetiert auf 12.000 geschätzte Tokens
+(Zeichen / 4), geschnitten nur an Turn-Grenzen; der neueste Turn bleibt immer
+erhalten, auch wenn er allein das Budget sprengt (`history.py`). Tool-Ergebnisse
+werden **vollständig** wiedergegeben, nicht auf ihr `summary` gekürzt.
+`conversation.compacted_through_seq` markiert den extrahierten Stand: Nachrichten bis
+dahin werden gar nicht mehr geladen. Der Wert wird nur nach erfolgreicher Extraktion
+fortgeschrieben; schlägt sie fehl, bleibt er stehen und der nächste Turn versucht es
+erneut. Eine fortgeschriebene Zusammenfassung gibt es nicht.
 
 *Zielbild (nicht umgesetzt):* getrennte Speicher für Profil, semantische Fakten und
 episodische Zusammenfassungen mit Abruf per Embedding (Top-5 / Top-3); ein
@@ -305,8 +310,8 @@ sie sind aber jederzeit auf der Gedächtnis-Seite sicht- und löschbar.
 | Klasse | Beispiele | Verhalten |
 |---|---|---|
 | `read` | Abfragen, Analysen | direkt ausführen |
-| `write` | Termin anlegen, Plan speichern, Memory schreiben | **Proposal → Bestätigung** |
-| `destructive` | Termin löschen, Plan verwerfen, Verbindung trennen | Proposal + explizite Bestätigung, kein "ja" per Chat ausreichend |
+| `write` | Termin anlegen, Plan in den Kalender übertragen, Plan anpassen (`remember` als Ausnahme, s. u.) | **Proposal → Bestätigung** per Klick im UI (Confirm-Endpoint); ein „ja“ im Chat bestätigt nichts |
+| `destructive` | Termin löschen | wie `write`: Proposal → ein Klick auf Bestätigen; beim Löschen **externer** Termine zusätzlich `confirm: true` |
 
 Die Klasse steht im `ToolSpec` (`risk_class`), nicht im Prompt; die Zuordnung je
 Tool zeigt die Tabelle in 4.2. Die Durchsetzung erfolgt **serverseitig im
