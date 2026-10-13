@@ -55,7 +55,7 @@ Der Tool-Satz wächst von 12 auf 26. Die Tool-Schemas kosten danach geschätzt 4
 | E6 | Workout-Lese-Tools frischen einen lokalen Spiegel auf, höchstens alle 5 min. | Garmin ist führend, und der Nutzer legt Workouts auch in Garmin Connect an. |
 | E7 | Ein Garmin-Workout pro Planblock, keine Wiederverwendung | Einzelne Tage bleiben unabhängig änderbar. Aufgeräumt wird per `workout_delete(plan_id=…)`. |
 | E8 | Workout-Templates für Planblöcke sind Platzhalter mit HF-Zonen-Zielen. | Die Trainingsphilosophie ist noch offen (Roadmap, offener Punkt 12). |
-| E9 | „Zone n“ in Workouts meint die Garmin-Zonen der Uhr, nicht die Kairos-Zonen. | Die Uhr wertet die Zonen aus. Die Tool-Ergebnisse weisen darauf hin. |
+| E9 | **HF-Ziele in Workouts sind immer bpm-Bereiche** (`hr_range`). Zonen-Kürzel (Z1–Z5) in Templates und Nutzeranfragen werden beim Erzeugen über die Kairos-Zonen in bpm umgerechnet. `hr_zone` (Garmin-Zonennummer) bleibt im Modell nur, um bestehende Garmin-Workouts mit `zoneNumber` lesen, anzeigen und unverändert zurückschreiben zu können. | Entscheidung des Nutzers (2026-10-13). Alle bestehenden Workouts nutzen bpm; die Zahl auf der Uhr ist dieselbe, die Kairos in Vorschau und Kalender zeigt — kein Auseinanderlaufen von Garmin- und Kairos-Zonen. |
 | E10 | Aktivitäten umbenennen und löschen bleibt als kleines Paket erhalten (Teil F). | Stand in der ursprünglichen Anfrage. Lässt sich streichen, ohne den Rest zu berühren. |
 | E11 | `Connector.write_back` wird für Garmin nicht genutzt. | Workout-Operationen sind mehrstufig (anlegen → terminieren → Kalender). Schreibzugriffe laufen wie beim Kalender über Domänen-Services. |
 | E12 | Keine Kalorien im Steckbrief | Ernährung ist Nicht-Ziel (`00` §3). Der Wert bleibt in der DB. |
@@ -112,7 +112,7 @@ Workouts, Update-Fallstrick, siehe unten).
 
 **Zusätzliche Befunde**
 
-- **Garmin Coach aktiv.** Der Kalender enthält adaptive Coach-Workouts (`itemType: "fbtAdaptiveWorkout"`, mit `trainingPlanId`, **ohne `workoutId`**). Sie stehen nicht in `get_workouts` und sind damit für `workout_delete`/`workout_unschedule` unerreichbar — die geplante Markierung „Workout aus Trainingsplan“ entfällt. Offen ist die fachliche Frage, wie Kairos-Pläne neben einem aktiven Coach-Plan stehen sollen (§15, Punkt 7).
+- **Garmin Coach.** Der Kalender enthielt adaptive Coach-Workouts (`itemType: "fbtAdaptiveWorkout"`, mit `trainingPlanId`, **ohne `workoutId`**). Sie stehen nicht in `get_workouts` und sind damit für `workout_delete`/`workout_unschedule` unerreichbar — die geplante Markierung „Workout aus Trainingsplan“ entfällt. Der Nutzer hat den Coach-Plan inzwischen gelöscht (§15, Punkt 7).
 - **Update-Fallstrick (aus dem Importer):** Werden bei `update_workout` zusätzliche, Garmin unbekannte Feldnamen mitgeschickt (z. B. `targetValueLow/High` neben `targetValueOne/Two`), setzt Garmin die Zielwerte serverseitig auf `null` — Ursache des Uhr-Fehlers „HF 101–101“. Der Mapper schickt deshalb nur bekannte Felder; ein `update_workout` mit der vollständigen, unveränderten `get_workout_by_id`-Antwort plus geänderten Feldern funktioniert (AP 0 live geprüft).
 - **Garmin-Termine haben keine Uhrzeit** (`startTimestampLocal` ist `null`); die Uhrzeit existiert nur im Google-Termin und in `garmin_workout_schedule.start_at`.
 
@@ -697,7 +697,7 @@ Kairos hat ein eigenes, validiertes Workout-Modell (Pydantic). Garmins Format ke
 |---|---|
 | `type` | `warmup`, `interval`, `recovery`, `rest`, `cooldown`, `repeat` |
 | `end` | `time` (`seconds` 10–21.600), `distance` (`meters` 50–100.000) oder `lap_button` |
-| `target` | `none`; `pace` (`from`/`to` als `m:ss` pro km, nur Laufen); `speed` (`low`/`high` in km/h, nur Rad); `hr_zone` (`zone` 1–5, Garmin-Zonen); `hr_range` (`low`/`high` in bpm); `power_range` (W); `cadence_range` (spm bzw. rpm) |
+| `target` | `none`; `pace` (`from`/`to` als `m:ss` pro km, nur Laufen); `speed` (`low`/`high` in km/h, nur Rad); `hr_range` (`low`/`high` in bpm, **Standard für HF**); `power_range` (W); `cadence_range` (spm bzw. rpm); `hr_zone` (`zone` 1–5, Garmin-Zonen — nur beim Lesen bestehender Garmin-Workouts, das Agent-Schema bietet es nicht an) |
 | `repeat` | `iterations` 1–50; `steps` mit Unter-Schritten vom Typ `interval`, `recovery` oder `rest` |
 
 **Semantische Prüfungen** (serverseitig, mit Fehlermeldung an das Modell)
@@ -732,10 +732,9 @@ Kairos hat ein eigenes, validiertes Workout-Modell (Pydantic). Garmins Format ke
       "target": {
         "type": "object",
         "properties": {
-          "type": {"type": "string", "enum": ["none", "pace", "speed", "hr_zone", "hr_range", "power_range", "cadence_range"]},
+          "type": {"type": "string", "enum": ["none", "pace", "speed", "hr_range", "power_range", "cadence_range"], "description": "HF immer als hr_range in bpm"},
           "from": {"type": "string", "description": "Pace m:ss pro km, schnellere Grenze"},
           "to": {"type": "string", "description": "Pace m:ss pro km, langsamere Grenze"},
-          "zone": {"type": "integer", "minimum": 1, "maximum": 5},
           "low": {"type": "number"},
           "high": {"type": "number"}
         },
@@ -764,9 +763,9 @@ Kairos hat ein eigenes, validiertes Workout-Modell (Pydantic). Garmins Format ke
 
 - **Präfixe:** Laufen „Einl.“/„Ausl.“, Rad „Einf.“/„Ausf.“; `recovery` → „Erh.“, `rest` → „Pause“.
 - **Ende:** unter 60 s als `45″`, ganze Minuten als `15′`, sonst `1′30″`; Distanz als `800 m` bzw. `5 km`; Runden-Taste als `Taste`.
-- **Ziel:** Pace `@ 3:50–4:00`, Zone `Z2`, HF-Bereich `@ 150–160 bpm`, Leistung `@ 230–250 W`, Geschwindigkeit `@ 30–32 km/h`.
+- **Ziel:** Pace `@ 3:50–4:00`, HF-Bereich `@ 128–150 bpm`, Leistung `@ 230–250 W`, Geschwindigkeit `@ 30–32 km/h`; nur bei gelesenen Garmin-Workouts mit Zonennummer `Z2 (Garmin)`.
 - **Trennzeichen:** ` · `; Wiederholungen als `6×(… / …)`.
-- **Beispiel:** `Einl. 15′ Z2 · 6×(800 m @ 3:50–4:00 / 2′ Erh.) · Ausl. Taste`
+- **Beispiel:** `Einl. 15′ @ 128–150 bpm · 6×(800 m @ 3:50–4:00 / 2′ Erh.) · Ausl. Taste`
 
 **Schätzung von Dauer und Distanz.** Daraus ergeben sich die Länge des Kalendertermins, Garmins `estimatedDurationInSecs` und die Vorschau.
 
@@ -815,7 +814,7 @@ Der Adapter liegt in `connectors/garmin/workout_mapper.py`:
 | `pace` | pace.zone, Werte in m/s; **`targetValueOne` = langsamere Grenze (kleinerer m/s-Wert)**, `targetValueTwo` = schnellere. Garmin speichert die Reihenfolge so, wie gesendet. | 6 | bestätigt |
 | Sport `running` / `cycling` | running / cycling | 1 / 2 | bestätigt |
 
-Hinweis zu `hr_zone`: `zoneNumber` verweist auf die in Garmin Connect hinterlegten HF-Zonen des Nutzers, die die Uhr auswertet (E9). Der Importer und alle bestehenden Workouts des Nutzers nutzen dagegen `hr_range` mit bpm.
+Hinweis zu `hr_zone`: `zoneNumber` verweist auf die in Garmin Connect hinterlegten HF-Zonen des Nutzers. Kairos **erzeugt** HF-Ziele nur als `hr_range` in bpm (E9); `hr_zone` entsteht ausschließlich durch `from_garmin` bei in Garmin Connect angelegten Workouts und wird beim Zurückschreiben unverändert übernommen.
 
 **Regeln**
 
@@ -925,7 +924,7 @@ Schreibende Tools liefern immer das gleiche Ergebnisformat, auch bei Teilerfolg:
 
 Das Tool liefert:
 
-- Name, Sportart und die Schritte als nummerierte Zeilen, z. B. „1. Einlaufen · 15:00 · Zone 2 (Garmin)“ und „2. 6× wiederholen: a) 800 m · 3:50–4:00 /km  b) Erholung · 2:00“;
+- Name, Sportart und die Schritte als nummerierte Zeilen, z. B. „1. Einlaufen · 15:00 · 128–150 bpm“ und „2. 6× wiederholen: a) 800 m · 3:50–4:00 /km  b) Erholung · 2:00“;
 - die geschätzte Dauer;
 - die Termine (ID, Datum, Uhrzeit, Google-Termin ja/nein);
 - `supported`.
@@ -1139,12 +1138,14 @@ Das Tool liefert:
 
 Jeder Block außer Ruhetagen bekommt aus `planning/workout_templates.py` eine Workout-Struktur. **Die Templates sind Platzhalter**, bis die Trainingsphilosophie entschieden ist (Roadmap, offener Punkt 12). D ist die geplante Blockdauer in Minuten (`end_at − start_at`).
 
+**HF-Ziele in bpm (E9).** Die Kürzel Zn in der Tabelle stehen für die Kairos-Zonen und werden beim Erzeugen in `hr_range` umgerechnet: `percent_max_zones(hr_max)` aus `metrics/hr_zones.py`, gerundet auf ganze bpm, mit derselben HFmax wie TRIMP (`estimate_hr_max`: `user_setting.hr_max_override`, sonst das Maximum aus 220 − Alter und der höchsten gemessenen Aktivitäts-HF). Ohne HFmax schlägt `plan_propose` mit dem Hinweis fehl, HFmax oder Geburtsdatum zu hinterlegen. Beispiel für HFmax 214: Z1 = 107–128, Z2 = 128–150, Z4 = 171–193 bpm. Die Vorschau nennt die verwendete HFmax und ihre Herkunft, weil ein einzelner Messausreißer in `activity.max_hr` alle Bereiche nach oben verschiebt.
+
 | Blocktyp | Template |
 |---|---|
-| `easy` | `Lauf D′ Z2` (ein Schritt) |
-| `long_run` | `Einl. 10′ Z1 · Lauf (D − 10)′ Z2` |
-| `hard` (D ≥ 40) | `Einl. 15′ Z2 · n×(3′ Z4 / 2′ Erh. Z1) · Ausl. 10′ Z1`, n = clamp(⌊(D − 25) / 5⌋, 3, 8) |
-| `hard` (35 ≤ D < 40) | `Einl. 10′ Z2 · 3×(3′ Z4 / 2′ Erh. Z1) · Ausl. 10′ Z1` (35 min) |
+| `easy` | `Lauf D′ @ Z2` (ein Schritt) |
+| `long_run` | `Einl. 10′ @ Z1 · Lauf (D − 10)′ @ Z2` |
+| `hard` (D ≥ 40) | `Einl. 15′ @ Z2 · n×(3′ @ Z4 / 2′ Erh. @ Z1) · Ausl. 10′ @ Z1`, n = clamp(⌊(D − 25) / 5⌋, 3, 8) |
+| `hard` (35 ≤ D < 40) | `Einl. 10′ @ Z2 · 3×(3′ @ Z4 / 2′ Erh. @ Z1) · Ausl. 10′ @ Z1` (35 min) |
 | `hard` (D < 35) | wird als `easy` geplant; die Vorschau weist darauf hin |
 | `rest` | kein Workout |
 
@@ -1305,7 +1306,9 @@ Das `usage`-Objekt von litellm wird pro LLM-Aufruf in `structlog` geloggt und an
 Ergänzung im Systemprompt (rund 120 Tokens):
 
 - Für Fragen zu einzelnen Einheiten `activity_get` nutzen, ohne ID für die letzte Aktivität. Kilometerwerte kommen über `activity_splits`, Bestzeiten über `best_efforts`. Zahlen nur aus Tool-Ergebnissen übernehmen.
-- Workout-Zonen sind die HF-Zonen der Uhr (Garmin). Nennt der Nutzer bpm, `hr_range` verwenden.
+- HF-Ziele immer als `hr_range` in bpm. Nennt der Nutzer eine Zone („Zone 2“), die bpm-Grenzen aus der Zeile `HF-Zonen` im Lagebild übernehmen, nicht schätzen.
+
+Das Lagebild bekommt dafür eine feste Zeile (≈ 30 Tokens), z. B. „HF-Zonen (HFmax 214, gemessen): Z1 107–128 · Z2 128–150 · Z3 150–171 · Z4 171–193 · Z5 193–214 bpm“.
 - Workouts nur mit konkreter Uhrzeit terminieren. Ohne Angabe erst freie Blöcke über `query_calendar(duration_minutes=…)` suchen.
 - Mehrere Workouts in **einem** Aufruf von `workout_delete` bzw. `workout_unschedule` löschen, nicht einzeln.
 
@@ -1409,7 +1412,7 @@ Die Validierung ergibt einen einmaligen Bericht in AP 2 und danach Regressionste
 | Die Terminliste bei Garmin ist nur „eventually consistent“ (Hinweis aus Drittprojekten) | mittel | niedrig | ID aus der Antwort, kurzes Polling, Status `pending_id` |
 | Teilerfolg zwischen Garmin und Google | mittel | mittel | Savepoints, Kompensation, Status `inconsistent`, idempotente Wiederaufnahme |
 | GPS-Fehler verfälschen Best Efforts | mittel | mittel | Sprungfilter, nur GPS-Läufe, Validierung V2/V3 |
-| Missverständnis Garmin-Zonen vs. Kairos-Zonen | mittel | niedrig | Hinweis im Tool-Ergebnis; `hr_range` bei bpm-Angaben (Prompt) |
+| Falsche HF-Bereiche durch einen HFmax-Ausreißer | mittel | mittel | HF-Ziele nur in bpm (E9); Vorschau nennt HFmax und Herkunft; `hr_max_override` setzbar |
 | Tool-Auswahl wird mit 26 Tools ungenauer | niedrig | mittel | Tool-Accuracy in der Eval beobachten; Schwelle für zweistufiges Laden (G.3) |
 | Löschen von Workouts aus Garmin-Trainingsplänen (Coach) | niedrig | mittel | Markierung in der Vorschau, falls erkennbar (AP 0) |
 | Speicherbedarf deutlich höher als dokumentiert | mittel | mittel | Messung und Neuberechnung im Doku-Abgleich; VM-Entscheidung |
@@ -1424,5 +1427,6 @@ Die Validierung ergibt einen einmaligen Bericht in AP 2 und danach Regressionste
 4. **Sichtbarer Marker** `[kairos:…]` in der Workout-Beschreibung: akzeptabel?
 5. **Distanzliste der Bestleistungen:** 3.000 m drin lassen? Weitere Distanzen (1 km, 1 Meile)?
 6. **VM-Größe:** nach der Speichermessung (Doku-Abgleich §0) entscheiden; Frage 26 aus dem Prüfbericht ist noch offen.
-7. **Kairos-Plan neben Garmin Coach** (AP 0): Im Konto läuft ein adaptiver Garmin-Coach-Plan. Soll `plan_commit` trotzdem eigene Workouts an denselben Tagen terminieren, nur an freien Tagen, oder erst nach Ende des Coach-Plans?
-8. **`hr_zone` oder `hr_range` als Default** (AP 0): Alle bestehenden Workouts nutzen bpm-Bereiche. Sollen die Platzhalter-Templates (E.2) statt „Z2“ bpm-Bereiche verwenden?
+7. ~~**Kairos-Plan neben Garmin Coach**~~ — erledigt: Der Nutzer hat den Garmin-Coach-Plan gelöscht (2026-10-13). `fbtAdaptiveWorkout`-Einträge werden beim Spiegel-Abgleich weiterhin ignoriert.
+8. ~~**`hr_zone` oder `hr_range` als Default**~~ — entschieden (2026-10-13): bpm-Bereiche, siehe E9 und E.2.
+9. **HFmax des Betreibers:** gemessen 214 bpm (Maximum aller Aktivitäten, kein Geburtsdatum hinterlegt). Wirkt hoch; vor AP 6 prüfen und ggf. `hr_max_override` setzen.
