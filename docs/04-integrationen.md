@@ -35,7 +35,7 @@ class Connector(Protocol):
 `write_back()` ist für Garmin ein No-op und für Google Calendar implementiert, wird
 aber nirgends aufgerufen. Schreibzugriffe laufen über Domänen-Funktionen
 (`routers/calendar.py`), die den Client direkt nutzen; für Garmin-Workouts ist
-dasselbe Muster geplant ([Spec]({SPEC}) E11).
+dasselbe Muster geplant ([Spec](superpowers/specs/2026-10-07-aktivitaeten-und-workouts-design.md) E11).
 
 ### Gemeinsame Eigenschaften
 
@@ -101,7 +101,7 @@ Auth-Flow:
 
 Ein Login mit Zugangsdaten kann außerhalb des Onboardings nicht ausgelöst werden,
 weil kein Passwort vorliegt. Ein vom Client erneuertes Token wird heute nicht
-zurückgeschrieben (geplant: [Spec]({SPEC}) D.7).
+zurückgeschrieben (geplant: [Spec](superpowers/specs/2026-10-07-aktivitaeten-und-workouts-design.md) D.7).
 
 Risiken und Gegenmaßnahmen: Siehe [ADR-0004](adr/ADR-0004-garmin-zugang.md).
 
