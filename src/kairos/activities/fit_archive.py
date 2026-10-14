@@ -53,8 +53,8 @@ async def ingest_fit_files(
                     .where(Activity.id == activity_id)
                     .values(fit_payload_id=payload_id)
                 )
-                messages = decode_fit_zip(file.content)
-                streams = build_streams(messages.get("record_mesgs", []), source="fit_zip")
+                messages = _decode_strict(file.content)
+                streams = build_streams(messages["record_mesgs"], source="fit_zip")
                 if streams is not None:
                     await replace_streams(
                         session,
@@ -80,7 +80,7 @@ async def load_fit_messages(
         ).scalar_one_or_none()
         if content is not None:
             try:
-                return decode_fit_zip(content), "fit_zip"
+                return _decode_strict(content), "fit_zip"
             except Exception as exc:
                 logger.warning(
                     "FIT zip for activity %s not decodable, trying JSON: %s",
@@ -88,6 +88,13 @@ async def load_fit_messages(
                     exc,
                 )
     return await _load_from_json(session, activity)
+
+
+def _decode_strict(content: bytes) -> dict[str, Any]:
+    messages = decode_fit_zip(content, strict=True)
+    if not messages.get("record_mesgs"):
+        raise ValueError("FIT file has no record messages")
+    return messages
 
 
 async def _load_from_json(

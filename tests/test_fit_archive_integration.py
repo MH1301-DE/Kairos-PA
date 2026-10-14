@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import uuid
+import zipfile
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
@@ -55,6 +57,19 @@ def _file(key: str, content: bytes) -> RawFile:
     )
 
 
+def _truncated_fit_zip() -> bytes:
+    full = mini_fit_zip(START, list(range(100, 160)))
+    fit = zipfile.ZipFile(io.BytesIO(full)).read("activity.fit")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("activity.fit", fit[: len(fit) // 2])
+    return buf.getvalue()
+
+
+# decodable without exception, but the SDK reports errors (and partial records)
+UNDECODABLE = {"garbage": b"definitely not a fit file", "truncated": _truncated_fit_zip()}
+
+
 async def _get_activity(session: AsyncSession, activity_id: int) -> Activity:
     return (await session.execute(select(Activity).where(Activity.id == activity_id))).scalar_one()
 
@@ -85,9 +100,11 @@ async def test_ingest_fit_files_writes_streams_and_isolates_broken_zip(
     uid = await _user(session)
     good_id = await _activity(session, uid, "good")
     bad_id = await _activity(session, uid, "bad")
+    broken_ids = {key: await _activity(session, uid, key) for key in UNDECODABLE}
     repo = SqlRawPayloadRepository(session=session)
     files = [
         _file("bad", b"PK\x03\x04 not really a zip"),
+        *(_file(key, content) for key, content in UNDECODABLE.items()),
         _file("good", mini_fit_zip(START, [120, 130, 140])),
         _file("unlisted", mini_fit_zip(START, [99])),
     ]
@@ -101,11 +118,12 @@ async def test_ingest_fit_files_writes_streams_and_isolates_broken_zip(
     failed = await ingest_fit_files(app_session, user_id=uid, file_ids_by_key=ids, files=files)
     await app_session.commit()
 
-    assert failed == ["bad"]
+    assert failed == ["bad", "garbage", "truncated"]
     good = await _get_activity(app_session, good_id)
-    bad = await _get_activity(app_session, bad_id)
     assert good.fit_payload_id == ids["good"]
-    assert bad.fit_payload_id is None
+    for activity_id in (bad_id, *broken_ids.values()):
+        assert (await _get_activity(app_session, activity_id)).fit_payload_id is None
+        assert await load_stream(app_session, activity_id=activity_id) is None
     loaded = await load_stream(app_session, activity_id=good_id)
     assert loaded is not None
     assert loaded.source == "fit_zip"
@@ -113,7 +131,6 @@ async def test_ingest_fit_files_writes_streams_and_isolates_broken_zip(
     assert loaded.t_offset_s == [0, 1, 2]
     assert loaded.channels["hr"] == [120.0, 130.0, 140.0]
     assert loaded.channels["distance_m"] == [0.0, 2.5, 5.0]
-    assert await load_stream(app_session, activity_id=bad_id) is None
 
 
 @pytest.mark.asyncio
@@ -167,6 +184,43 @@ async def test_load_fit_messages_prefers_zip_then_json_fallback(session: AsyncSe
     assert messages["lap_mesgs"] == []
 
     assert await load_fit_messages(session, activity=await _get_activity(session, none_id)) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", sorted(UNDECODABLE))
+async def test_load_fit_messages_falls_back_to_json_for_undecodable_zip(
+    session: AsyncSession, key: str
+) -> None:
+    uid = await _user(session)
+    activity_id = await _activity(session, uid, key)
+    repo = SqlRawPayloadRepository(session=session)
+    fit_id = await repo.upsert_file(
+        user_id=uid, connector_id="garmin", file=_file(key, UNDECODABLE[key])
+    )
+    # linked as if archived before strict decoding existed
+    await session.execute(
+        text("UPDATE activity SET fit_payload_id = :f WHERE id = :a"),
+        {"f": fit_id, "a": activity_id},
+    )
+    day = Window(start=START.replace(hour=0), end=START.replace(hour=0) + timedelta(days=1))
+    await repo.upsert(
+        user_id=uid,
+        connector_id="garmin",
+        kind="activity_fit",
+        window=day,
+        payload={"activities": [{
+            "activity_id": key,
+            "records": [{"timestamp": START.isoformat(), "heart_rate": 77}],
+        }]},
+        content_hash=f"json-{uid}".encode(),
+    )
+
+    result = await load_fit_messages(session, activity=await _get_activity(session, activity_id))
+
+    assert result is not None
+    messages, source = result
+    assert source == "fit_json"
+    assert messages["record_mesgs"] == [{"timestamp": START.isoformat(), "heart_rate": 77}]
 
 
 @pytest.mark.asyncio

@@ -4,6 +4,7 @@ import io
 import zipfile
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from garmin_fit_sdk import Encoder, Profile
 
 from kairos.connectors.garmin.fit_decoder import decode_fit_zip, records_to_json
@@ -40,6 +41,14 @@ def test_mini_fit_zip_decodes_records() -> None:
 
     assert [r["heart_rate"] for r in messages["record_mesgs"]] == [140, 141]
     assert messages["record_mesgs"][0]["timestamp"] == start
+
+
+def test_strict_decode_raises_on_sdk_errors_lenient_does_not() -> None:
+    garbage = b"definitely not a fit file"
+
+    assert decode_fit_zip(garbage) == {}
+    with pytest.raises(ValueError, match="FIT decode failed"):
+        decode_fit_zip(garbage, strict=True)
 
 
 def test_records_to_json_stringifies_undecoded_numeric_field_ids() -> None:
