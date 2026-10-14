@@ -392,6 +392,171 @@ class ActivityStream(Base):
     )
 
 
+def _uid() -> Mapped[uuid.UUID]:
+    return mapped_column(
+        UUID(as_uuid=True), ForeignKey("app_user.id", ondelete="CASCADE"), nullable=False
+    )
+
+
+def _act_pk() -> Mapped[int]:
+    return mapped_column(
+        BigInteger, ForeignKey("activity.id", ondelete="CASCADE"), primary_key=True
+    )
+
+
+def _real() -> Mapped[float | None]:
+    return mapped_column(REAL)
+
+
+def _small() -> Mapped[int | None]:
+    return mapped_column(SmallInteger)
+
+
+class ActivityStats(Base):
+    __tablename__ = "activity_stats"
+
+    activity_id: Mapped[int] = _act_pk()
+    user_id: Mapped[uuid.UUID] = _uid()
+    sport_profile: Mapped[str] = mapped_column(Text, nullable=False)
+    algo_version: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    distance_m: Mapped[float | None] = _real()
+    elapsed_s: Mapped[float | None] = _real()
+    timer_s: Mapped[float | None] = _real()
+    moving_s: Mapped[float | None] = _real()
+    avg_pace_s_km: Mapped[float | None] = _real()
+    avg_moving_pace_s_km: Mapped[float | None] = _real()
+    avg_speed_kmh: Mapped[float | None] = _real()
+    max_speed_kmh: Mapped[float | None] = _real()
+    avg_pace_s_100m: Mapped[float | None] = _real()
+    hr_avg: Mapped[int | None] = _small()
+    hr_median: Mapped[int | None] = _small()
+    hr_min: Mapped[int | None] = _small()
+    hr_max: Mapped[int | None] = _small()
+    hr_zone_s: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    trimp_edwards: Mapped[float | None] = _real()
+    elev_gain_m: Mapped[float | None] = _real()
+    elev_loss_m: Mapped[float | None] = _real()
+    alt_min_m: Mapped[float | None] = _real()
+    alt_max_m: Mapped[float | None] = _real()
+    cadence_avg: Mapped[float | None] = _real()
+    power_avg_w: Mapped[float | None] = _real()
+    power_max_w: Mapped[float | None] = _real()
+    fastest_split_idx: Mapped[int | None] = _small()
+    fastest_split_pace_s: Mapped[float | None] = _real()
+    slowest_split_idx: Mapped[int | None] = _small()
+    slowest_split_pace_s: Mapped[float | None] = _real()
+    pace_cv_pct: Mapped[float | None] = _real()
+    decoupling_pct: Mapped[float | None] = _real()
+    decoupling_note: Mapped[str | None] = mapped_column(Text)
+    distance_source: Mapped[str | None] = mapped_column(Text)
+    hr_coverage_pct: Mapped[float | None] = _real()
+    gps_coverage_pct: Mapped[float | None] = _real()
+    quality: Mapped[str] = mapped_column(Text, nullable=False)
+    sport_metrics: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    computed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "distance_source IN ('gps','watch_estimate','pool','mixed','none')",
+            name="activity_stats_distance_source_check",
+        ),
+        CheckConstraint(
+            "quality IN ('ok','partial','suspect')", name="activity_stats_quality_check"
+        ),
+    )
+
+
+class ActivitySplit(Base):
+    __tablename__ = "activity_split"
+
+    activity_id: Mapped[int] = _act_pk()
+    kind: Mapped[str] = mapped_column(Text, primary_key=True)
+    idx: Mapped[int] = mapped_column(SmallInteger, primary_key=True)
+    user_id: Mapped[uuid.UUID] = _uid()
+    unit_m: Mapped[float | None] = _real()
+    start_offset_s: Mapped[float | None] = _real()
+    distance_m: Mapped[float | None] = _real()
+    timer_s: Mapped[float | None] = _real()
+    pace_s_km: Mapped[float | None] = _real()
+    speed_kmh: Mapped[float | None] = _real()
+    pace_s_100m: Mapped[float | None] = _real()
+    elev_gain_m: Mapped[float | None] = _real()
+    elev_loss_m: Mapped[float | None] = _real()
+    hr_min: Mapped[int | None] = _small()
+    hr_median: Mapped[int | None] = _small()
+    hr_max: Mapped[int | None] = _small()
+    hr_avg: Mapped[int | None] = _small()
+    cadence_avg: Mapped[float | None] = _real()
+    power_avg_w: Mapped[float | None] = _real()
+    is_partial: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    lap_intensity: Mapped[str | None] = mapped_column(Text)
+    lap_trigger: Mapped[str | None] = mapped_column(Text)
+    wkt_step_index: Mapped[int | None] = _small()
+    swim_lengths: Mapped[int | None] = _small()
+    swolf: Mapped[float | None] = _real()
+    quality: Mapped[str] = mapped_column(Text, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("kind IN ('distance','lap')", name="activity_split_kind_check"),
+    )
+
+
+class ActivityBestEffort(Base):
+    __tablename__ = "activity_best_effort"
+
+    activity_id: Mapped[int] = _act_pk()
+    distance_key: Mapped[str] = mapped_column(Text, primary_key=True)
+    user_id: Mapped[uuid.UUID] = _uid()
+    distance_m: Mapped[float] = mapped_column(REAL, nullable=False)
+    duration_s: Mapped[float] = mapped_column(REAL, nullable=False)
+    start_offset_s: Mapped[float] = mapped_column(REAL, nullable=False)
+    start_km: Mapped[float] = mapped_column(REAL, nullable=False)
+    hr_avg: Mapped[int | None] = _small()
+    quality: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class ActivityStepResult(Base):
+    __tablename__ = "activity_step_result"
+
+    activity_id: Mapped[int] = _act_pk()
+    exec_idx: Mapped[int] = mapped_column(SmallInteger, primary_key=True)
+    user_id: Mapped[uuid.UUID] = _uid()
+    wkt_step_index: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    repeat_iteration: Mapped[int | None] = _small()
+    step_type: Mapped[str] = mapped_column(Text, nullable=False)
+    step_note: Mapped[str | None] = mapped_column(Text)
+    planned_end: Mapped[str | None] = mapped_column(Text)
+    target_type: Mapped[str | None] = mapped_column(Text)
+    target_low: Mapped[float | None] = _real()
+    target_high: Mapped[float | None] = _real()
+    target_source: Mapped[str | None] = mapped_column(Text)
+    secondary_type: Mapped[str | None] = mapped_column(Text)
+    secondary_low: Mapped[float | None] = _real()
+    secondary_high: Mapped[float | None] = _real()
+    timer_s: Mapped[float | None] = _real()
+    distance_m: Mapped[float | None] = _real()
+    avg_pace_s_km: Mapped[float | None] = _real()
+    avg_hr: Mapped[float | None] = _real()
+    hr_in_target_pct: Mapped[float | None] = _real()
+    avg_cadence: Mapped[float | None] = _real()
+    avg_power_w: Mapped[float | None] = _real()
+    hit: Mapped[bool | None] = mapped_column(Boolean)
+    secondary_hit: Mapped[bool | None] = mapped_column(Boolean)
+
+    __table_args__ = (
+        CheckConstraint(
+            "target_source IN ('fit', 'api', 'unclear', 'none')",
+            name="activity_step_result_target_source_check",
+        ),
+    )
+
+
 class HrBucketSecondsDaily(Base):
     __tablename__ = "hr_bucket_seconds_daily"
 
