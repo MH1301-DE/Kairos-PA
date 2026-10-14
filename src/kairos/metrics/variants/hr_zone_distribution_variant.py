@@ -38,7 +38,7 @@ class HrZoneDistributionPercentMaxVariant:
             return MetricResult(
                 value=None, unit="seconds", confidence="insufficient_data",
                 coverage_days=0, coverage_required_days=1, as_of=as_of.isoformat(),
-                note=HR_MAX_MISSING_NOTE if hr_max is None else None,
+                note=HR_MAX_MISSING_NOTE,
             )
         buckets = await hr_bucket_seconds(session, user_id=user_id, day=as_of)
         zones = percent_max_zones(hr_max)

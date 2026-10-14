@@ -312,3 +312,47 @@ async def test_edwards_trimp_uses_override_not_measured_max(session: AsyncSessio
     # 150 bpm = 75 % of 200 -> zone 3 (x3), 10 min
     assert result.value == pytest.approx(30.0)
     assert result.note is None
+
+
+@pytest.mark.asyncio
+async def test_higher_measured_max_does_not_override_entered_hr_max(
+    session: AsyncSession,
+) -> None:
+    user_id = uuid4()
+    today = date(2026, 8, 1)
+    await _insert_user(session, user_id, hr_max_override=214)
+    await _insert_workout(session, user_id, today)
+    await session.execute(
+        text("UPDATE activity SET max_hr = 219 WHERE user_id = :u"), {"u": str(user_id)}
+    )
+    await session.commit()
+
+    registry = build_default_registry()
+    result = await registry.get("trimp", "edwards").compute(session, user_id=user_id, as_of=today)
+
+    # 150/214 = 70.1 % -> zone 3 (30); with 219 it would be zone 2 (20)
+    assert result.value == pytest.approx(30.0)
+
+
+@pytest.mark.asyncio
+async def test_higher_measured_max_does_not_override_age_based_hr_max(
+    session: AsyncSession,
+) -> None:
+    user_id = uuid4()
+    today = date(2026, 8, 1)
+    await _insert_user(session, user_id, hr_max_override=None)
+    await session.execute(
+        text("INSERT INTO user_setting (user_id, birth_date) VALUES (:u, '1990-01-01')"),
+        {"u": str(user_id)},
+    )
+    await _insert_workout(session, user_id, today)
+    await session.execute(
+        text("UPDATE activity SET max_hr = 219 WHERE user_id = :u"), {"u": str(user_id)}
+    )
+    await session.commit()
+
+    registry = build_default_registry()
+    result = await registry.get("trimp", "edwards").compute(session, user_id=user_id, as_of=today)
+
+    # 220 - 36 = 184: 150/184 = 81.5 % -> zone 4 (40); with 219 it would be zone 2 (20)
+    assert result.value == pytest.approx(40.0)
