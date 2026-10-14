@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from kairos.activities.streams import _semicircle_to_deg
 from kairos.connectors.types import CanonicalRecord, JSONValue
 
 
@@ -375,16 +376,6 @@ def _normalize_activity_fit(payload: JSONValue) -> list[CanonicalRecord]:
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
-_SEMICIRCLE_FACTOR = 180.0 / 2_147_483_648
-
-
-def _semicircle_to_deg(val: int | float) -> float:
-    # garmin-fit-sdk returns raw semicircle integers for GPS fields
-    if abs(val) > 360:
-        return val * _SEMICIRCLE_FACTOR
-    return float(val)
-
 
 def _normalize_sleep(payload: JSONValue) -> list[CanonicalRecord]:
     # get_sleep_data -> no top-level "sleepId"; the unique id is
