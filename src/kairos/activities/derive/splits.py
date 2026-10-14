@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import bisect
 import statistics
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -10,6 +9,7 @@ from kairos.activities.derive.common import (
     MAX_WEIGHT_S,
     Prepared,
     elevation_gain_loss,
+    interp,
     interpolate_time_at_distance,
     weighted_mean,
     weighted_median,
@@ -60,21 +60,6 @@ def _num(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, int | float):
         return None
     return float(value)
-
-
-def _interp(xs: Sequence[float], ys: Sequence[float | None], x: float) -> float | None:
-    pts = [(a, b) for a, b in zip(xs, ys, strict=True) if b is not None]
-    if not pts:
-        return None
-    keys = [a for a, _ in pts]
-    i = bisect.bisect_right(keys, x)
-    if i == 0:
-        return pts[0][1]
-    # clamp to the last value: windows may end after the last sample
-    if i == len(pts):
-        return pts[-1][1]
-    (x0, y0), (x1, y1) = pts[i - 1], pts[i]
-    return y0 if x1 == x0 else y0 + (y1 - y0) * (x - x0) / (x1 - x0)
 
 
 def _round(value: float | None) -> int | None:
@@ -231,7 +216,7 @@ def _swim_splits(
             sorted(set(idx)),
             kind="distance",
             number=number,
-            start_offset_s=_interp(prep.t, prep.timer_t, starts[0]) or 0.0 if starts else 0.0,
+            start_offset_s=interp(prep.t, prep.timer_t, starts[0]) or 0.0 if starts else 0.0,
             distance_m=dist,
             timer_s=timer_s,
             quality="partial",
@@ -262,10 +247,10 @@ def lap_splits(
         if a is None:
             continue
         b = a + (_num(lap.get("total_elapsed_time")) or 0.0)
-        ta = _interp(prep.t, prep.timer_t, a) or 0.0
-        tb = _interp(prep.t, prep.timer_t, b) or 0.0
+        ta = interp(prep.t, prep.timer_t, a) or 0.0
+        tb = interp(prep.t, prep.timer_t, b) or 0.0
         if has_dist:
-            da, db = _interp(prep.t, prep.distance, a), _interp(prep.t, prep.distance, b)
+            da, db = interp(prep.t, prep.distance, a), interp(prep.t, prep.distance, b)
             dist = None if da is None or db is None else db - da
         else:
             dist = _num(lap.get("total_distance"))

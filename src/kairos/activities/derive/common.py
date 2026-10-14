@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import bisect
 import statistics
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -264,3 +265,18 @@ def interpolate_time_at_distance(
             return prev[0] + (t - prev[0]) * (target_m - prev[1]) / (d - prev[1])
         prev = (t, d)
     return None
+
+
+def interp(xs: Sequence[float], ys: Sequence[float | None], x: float) -> float | None:
+    pts = [(a, b) for a, b in zip(xs, ys, strict=True) if b is not None]
+    if not pts:
+        return None
+    keys = [a for a, _ in pts]
+    i = bisect.bisect_right(keys, x)
+    if i == 0:
+        return pts[0][1]
+    # clamp to the last value: windows may end after the last sample
+    if i == len(pts):
+        return pts[-1][1]
+    (x0, y0), (x1, y1) = pts[i - 1], pts[i]
+    return y0 if x1 == x0 else y0 + (y1 - y0) * (x - x0) / (x1 - x0)

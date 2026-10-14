@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import statistics
 from datetime import UTC, datetime
 from typing import Any
 
@@ -12,6 +13,8 @@ from kairos.activities.derive.splits import SplitRow, distance_splits, lap_split
 from kairos.activities.derive.stats import (
     DECOUPLING_INTERVALS,
     DECOUPLING_NO_HR,
+    DECOUPLING_NO_OUTPUT,
+    DECOUPLING_SPARSE_HR,
     DECOUPLING_TOO_SHORT,
     ActivitySummary,
     CyclingMetrics,
@@ -34,6 +37,7 @@ from tests.activity_fixtures import (
 START = datetime(2026, 1, 1, 8, 0, tzinfo=UTC)
 SUMMARY_KEYS = (
     "sport_profile",
+    "sport",
     "distance_m",
     "duration_s",
     "moving_duration_s",
@@ -330,3 +334,69 @@ def test_split_extremes_use_full_distance_splits_only() -> None:
     assert (row.slowest_split_idx, row.slowest_split_pace_s) == (1, 310.0)
     assert row.pace_cv_pct == pytest.approx(10 / 300 * 100)
     assert math.isclose(row.gps_coverage_pct or 0.0, 0.0)
+
+
+def test_run_without_distance_has_decoupling_reason() -> None:
+    n = 3601
+    prep = prepare(_stream(list(range(n)), hr=[140.0] * n), sport_profile="running", events=[])
+    row = _stats(prep)
+    assert row.decoupling_pct is None
+    assert row.decoupling_note == DECOUPLING_NO_OUTPUT == "ohne Distanz/Leistung nicht berechenbar"
+
+
+def test_cycling_without_power_and_distance_has_decoupling_reason() -> None:
+    n = 3601
+    prep = prepare(_stream(list(range(n)), hr=[140.0] * n), sport_profile="cycling", events=[])
+    row = _stats(prep, profile="cycling")
+    assert row.decoupling_note == DECOUPLING_NO_OUTPUT
+
+
+def test_half_without_hr_has_decoupling_reason() -> None:
+    row = _run(60, hr=lambda i: 140.0 if i < 35 * 60 else None)
+    assert row.decoupling_pct is None
+    assert row.decoupling_note == DECOUPLING_SPARSE_HR == "zu wenig HF-Daten"
+
+
+def test_cycling_power_drift_decoupling() -> None:
+    # same HR, power drops 200 → 190 W in the second half: EF falls by 5 %
+    power: list[float | None] = [200.0 if i < 35 * 60 else 190.0 for i in range(3601)]
+    row = _run(60, speed=8.0, profile="cycling", power_w=power)
+    assert row.decoupling_pct == pytest.approx(5.0, abs=0.01)
+
+
+def test_normalized_power_with_alternating_blocks() -> None:
+    # 30 s blocks 100/300 W at 1 Hz: the 30-s mean holds k of 30 samples at 300 W,
+    # k runs 1..30, 29..0 over each 60-s period
+    power: list[float | None] = [300.0 if (i // 30) % 2 else 100.0 for i in range(3601)]
+    row = _run(60, speed=8.0, profile="cycling", power_w=power)
+    ks = list(range(1, 31)) + list(range(29, -1, -1))
+    expected = statistics.fmean((100 + 200 * k / 30) ** 4 for k in ks) ** 0.25
+    metrics = CyclingMetrics.model_validate(row.sport_metrics)
+    # close to a uniform 100–300 W ramp: ((300^5 - 100^5) / (5 * 200)) ** 0.25 = 221.8 W
+    assert expected == pytest.approx(((300**5 - 100**5) / 1000) ** 0.25, abs=0.5)
+    assert metrics.normalized_power_w == pytest.approx(expected, rel=1e-3)
+    assert row.power_avg_w == pytest.approx(200.0, abs=0.1)
+
+
+@pytest.mark.parametrize(
+    ("profile", "sport", "distance", "expected"),
+    [
+        ("running", "treadmill_running", 7300.0, "watch_estimate"),
+        ("running", "running", 10000.0, "mixed"),
+        ("swimming", "lap_swimming", 1000.0, "pool"),
+        ("generic", "strength_training", None, "none"),
+    ],
+)
+def test_summary_fallback_distance_source(
+    profile: str, sport: str, distance: float | None, expected: str
+) -> None:
+    row = compute_stats(
+        None,
+        activity=_summary(profile, sport=sport, distance_m=distance, duration_s=1800.0),
+        sessions=[],
+        lengths=[],
+        splits=[],
+        hr_max=None,
+    )
+    assert row.distance_source == expected
+    assert row.quality == "partial"

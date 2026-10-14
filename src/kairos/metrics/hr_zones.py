@@ -36,6 +36,18 @@ def karvonen_zones(hr_max: float, resting_hr: float) -> list[HrZoneBounds]:
     ]
 
 
+def zone_seconds(buckets: dict[int, float], zones: list[HrZoneBounds]) -> dict[str, float]:
+    out = {zone.name: 0.0 for zone in zones}
+    for bpm_bucket, seconds in buckets.items():
+        for zone in zones:
+            if zone.low_bpm <= bpm_bucket < zone.high_bpm or (
+                zone is zones[-1] and bpm_bucket >= zone.high_bpm
+            ):
+                out[zone.name] += seconds
+                break
+    return out
+
+
 HrMaxSource = Literal["eingetragen", "aus Alter"]
 
 
@@ -49,8 +61,10 @@ def resolve_hr_max(
         return hr_max_override, "eingetragen"
     if birth_date is None:
         return None, None
-    age = as_of.year - birth_date.year - (
-        (as_of.month, as_of.day) < (birth_date.month, birth_date.day)
+    age = (
+        as_of.year
+        - birth_date.year
+        - ((as_of.month, as_of.day) < (birth_date.month, birth_date.day))
     )
     return 220 - age, "aus Alter"
 

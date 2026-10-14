@@ -13,23 +13,24 @@ from kairos.activities.derive.common import (
     Prepared,
     distance_source,
     elevation_gain_loss,
+    interp,
     max_speed_10s,
     weighted_mean,
     weighted_median,
 )
 from kairos.activities.derive.splits import (
     SplitRow,
-    _interp,
     fastest_and_slowest_split,
     pace_cv_pct,
 )
 from kairos.metrics.formulas.edwards_trimp import edwards_trimp
-from kairos.metrics.hr_zones import percent_max_zones
-from kairos.metrics.variants.hr_zone_distribution_variant import _zone_seconds
+from kairos.metrics.hr_zones import percent_max_zones, zone_seconds
 
 DECOUPLING_INTERVALS = "Intervalltraining – nicht anwendbar"
 DECOUPLING_TOO_SHORT = "zu kurz für Entkopplung (< 50 min)"
 DECOUPLING_NO_HR = "ohne HF nicht berechenbar"
+DECOUPLING_NO_OUTPUT = "ohne Distanz/Leistung nicht berechenbar"
+DECOUPLING_SPARSE_HR = "zu wenig HF-Daten"
 DECOUPLING_WARMUP_S = 600.0
 DECOUPLING_MIN_REST_S = 2400.0
 DECOUPLING_MAX_CV_PCT = 8.0
@@ -39,11 +40,22 @@ HIKING_SECTION_M = 100.0
 HIKING_MIN_GRADE = 0.03
 _PACE_PROFILES = frozenset({"running", "hiking"})
 _DECOUPLING_PROFILES = frozenset({"running", "cycling"})
+# Garmin typeKey (activity.sport) → FIT sub_sport, for the summary fallback
+_SUB_SPORT_BY_SPORT = {
+    "treadmill_running": "treadmill",
+    "indoor_running": "indoor_running",
+    "indoor_cycling": "indoor_cycling",
+    "virtual_ride": "virtual_activity",
+    "virtual_run": "virtual_activity",
+    "indoor_walking": "indoor_walking",
+    "lap_swimming": "lap_swimming",
+}
 
 
 @dataclass(frozen=True, kw_only=True)
 class ActivitySummary:
     sport_profile: str
+    sport: str | None = None
     distance_m: float | None = None
     duration_s: float | None = None
     moving_duration_s: float | None = None
@@ -158,6 +170,18 @@ def _with_paces(row: StatsRow) -> StatsRow:
     )
 
 
+def _summary_distance_source(activity: ActivitySummary) -> str:
+    if not activity.distance_m:
+        return "none"
+    # unknown GPS coverage: 50 % sits between both thresholds, so outdoor maps to "mixed"
+    return distance_source(
+        sport_profile=activity.sport_profile,
+        sub_sport=_SUB_SPORT_BY_SPORT.get(activity.sport or ""),
+        gps_coverage_pct=50.0,
+        has_distance=True,
+    )
+
+
 def _from_summary(activity: ActivitySummary) -> StatsRow:
     distance = activity.distance_m
     row = StatsRow(
@@ -168,7 +192,7 @@ def _from_summary(activity: ActivitySummary) -> StatsRow:
         hr_avg=activity.avg_hr,
         hr_max=activity.max_hr,
         elev_gain_m=activity.elevation_gain_m,
-        distance_source=None if distance else "none",
+        distance_source=_summary_distance_source(activity),
         quality="partial",
     )
     return _with_paces(row)
@@ -196,18 +220,22 @@ def _hr_buckets(prep: Prepared) -> dict[int, float]:
     return out
 
 
-def _efficiency(prep: Prepared, a: float, b: float, *, use_power: bool) -> float | None:
+def _efficiency(
+    prep: Prepared, a: float, b: float, *, use_power: bool
+) -> tuple[float | None, str | None]:
     idx = [i for i, tt in enumerate(prep.timer_t) if a <= tt < b and prep.weights[i] > 0]
     weights = [prep.weights[i] for i in idx]
     hr = weighted_mean([prep.hr[i] for i in idx], weights)
-    if not hr:
-        return None
     if use_power:
         output = weighted_mean([prep.power[i] for i in idx], weights)
     else:
-        da, db = _interp(prep.timer_t, prep.distance, a), _interp(prep.timer_t, prep.distance, b)
+        da, db = interp(prep.timer_t, prep.distance, a), interp(prep.timer_t, prep.distance, b)
         output = None if da is None or db is None or b <= a else (db - da) / (b - a)
-    return None if output is None else output / hr
+    if not output:
+        return None, DECOUPLING_NO_OUTPUT
+    if not hr:
+        return None, DECOUPLING_SPARSE_HR
+    return output / hr, None
 
 
 def _decoupling(
@@ -224,10 +252,10 @@ def _decoupling(
         return None, DECOUPLING_INTERVALS
     use_power = profile == "cycling" and any(p is not None for p in prep.power)
     mid = DECOUPLING_WARMUP_S + (end - DECOUPLING_WARMUP_S) / 2
-    ef1 = _efficiency(prep, DECOUPLING_WARMUP_S, mid, use_power=use_power)
-    ef2 = _efficiency(prep, mid, end, use_power=use_power)
-    if not ef1 or ef2 is None:
-        return None, None
+    ef1, note1 = _efficiency(prep, DECOUPLING_WARMUP_S, mid, use_power=use_power)
+    ef2, note2 = _efficiency(prep, mid, end, use_power=use_power)
+    if ef1 is None or ef2 is None:
+        return None, note1 or note2
     return (ef1 - ef2) / ef1 * 100, None
 
 
@@ -357,7 +385,7 @@ def compute_stats(
     if hr_max is not None and hr_active:
         zones = percent_max_zones(hr_max)
         buckets = _hr_buckets(prep)
-        by_name = _zone_seconds(buckets, zones)
+        by_name = zone_seconds(buckets, zones)
         zone_s = {f"z{i}": by_name[z.name] for i, z in enumerate(zones, start=1)}
         trimp = edwards_trimp(buckets, zones)
 
