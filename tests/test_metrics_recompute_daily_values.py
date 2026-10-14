@@ -12,6 +12,7 @@ from kairos.repositories.metrics_recompute import (
     recompute_hr_bucket_seconds_daily,
     recompute_metric_daily_values,
 )
+from tests.stream_seed import seed_hr_stream
 
 
 async def _insert_user(session: AsyncSession, user_id) -> None:
@@ -47,17 +48,10 @@ async def test_recompute_metric_daily_values_matches_direct_compute(
             {"uid": str(user_id), "start_at": datetime(2026, 8, 1, 9, 0, tzinfo=UTC)},
         )
     ).scalar_one()
-    for i in range(3):
-        await session.execute(
-            text(
-                "INSERT INTO activity_record (user_id, activity_id, recorded_at, metric, value) "
-                "VALUES (:uid, :aid, :ts, 'hr', 142.0)"
-            ),
-            {
-                "uid": str(user_id), "aid": activity_id,
-                "ts": datetime(2026, 8, 1, 9, 0, i, tzinfo=UTC),
-            },
-        )
+    await seed_hr_stream(
+        session, user_id=user_id, activity_id=activity_id,
+        start_at=datetime(2026, 8, 1, 9, 0, tzinfo=UTC), values=[142.0] * 3,
+    )
     await session.commit()
 
     # hr_bucket_seconds_daily is EdwardsTrimpVariant's own data source -- must run first

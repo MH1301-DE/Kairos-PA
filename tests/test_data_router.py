@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from kairos.api import app
 from kairos.auth.deps import current_user
 from kairos.db.session import get_session
+from tests.stream_seed import seed_hr_stream
 
 
 async def _insert_user(session: AsyncSession, user_id: uuid.UUID, email: str, sub: str) -> None:
@@ -148,21 +149,10 @@ async def seeded_activity_with_records(
             },
         )
     ).scalar_one()
-    for i in range(3):
-        await db_session.execute(
-            text(
-                """
-                INSERT INTO activity_record (user_id, activity_id, recorded_at, metric, value)
-                VALUES (:uid, :aid, :ts, 'hr', :val)
-                """
-            ),
-            {
-                "uid": str(test_user_id),
-                "aid": activity_id,
-                "ts": datetime(2026, 8, 1, 8, 0, i, tzinfo=UTC),
-                "val": 140.0 + i,
-            },
-        )
+    await seed_hr_stream(
+        db_session, user_id=test_user_id, activity_id=activity_id,
+        start_at=datetime(2026, 8, 1, 8, 0, tzinfo=UTC), values=[140.0, 141.0, 142.0],
+    )
     await db_session.commit()
     return test_user_id, external_id
 
@@ -239,7 +229,7 @@ async def test_sleep_sessions_returns_filtered_list(authed_client, seeded_sleep_
 
 
 @pytest.mark.asyncio
-async def test_activity_detail_returns_records_for_known_activity(
+async def test_activity_detail_returns_series_for_known_activity(
     authed_client, seeded_activity_with_records
 ):
     _, external_id = seeded_activity_with_records
@@ -247,30 +237,32 @@ async def test_activity_detail_returns_records_for_known_activity(
     assert resp.status_code == 200
     body = resp.json()
     assert body["external_id"] == external_id
-    assert len(body["records"]) > 0
+    assert body["t_offset_s"] == [0, 1, 2]
+    assert body["series"] == {"hr": [140.0, 141.0, 142.0]}
 
 
 @pytest.mark.asyncio
-async def test_activity_detail_caps_records_at_limit(
+async def test_activity_detail_downsamples_to_max_points(
     authed_client, seeded_activity_with_records
 ):
-    """Regression: the endpoint used to return every ActivityRecord row unbounded."""
     _, external_id = seeded_activity_with_records
     resp = await authed_client.get(
-        f"/api/data/activities/{external_id}", params={"limit": 2}
+        f"/api/data/activities/{external_id}", params={"max_points": 2}
     )
     assert resp.status_code == 200
-    assert len(resp.json()["records"]) == 2
+    body = resp.json()
+    assert body["t_offset_s"] == [0, 1]
+    assert len(body["series"]["hr"]) == 2
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("limit", [0, 20001])
-async def test_activity_detail_rejects_out_of_range_limit(
-    authed_client, seeded_activity_with_records, limit
+@pytest.mark.parametrize("max_points", [0, 10001])
+async def test_activity_detail_rejects_out_of_range_max_points(
+    authed_client, seeded_activity_with_records, max_points
 ):
     _, external_id = seeded_activity_with_records
     resp = await authed_client.get(
-        f"/api/data/activities/{external_id}", params={"limit": limit}
+        f"/api/data/activities/{external_id}", params={"max_points": max_points}
     )
     assert resp.status_code == 422
 

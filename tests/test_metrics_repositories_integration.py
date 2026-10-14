@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from kairos.repositories.metrics_data import hr_bucket_seconds
 from kairos.repositories.metrics_recompute import recompute_hr_bucket_seconds_daily
 from kairos.repositories.user_setting import get_or_default_user_setting
+from tests.stream_seed import seed_hr_stream
 
 
 async def _insert_user(session: AsyncSession, user_id) -> None:
@@ -41,7 +42,7 @@ async def test_get_or_default_user_setting_returns_defaults_when_absent(
 
 
 @pytest.mark.asyncio
-async def test_hr_bucket_seconds_aggregates_activity_record_by_day(
+async def test_hr_bucket_seconds_aggregates_stream_by_day(
     session: AsyncSession,
 ) -> None:
     user_id = uuid4()
@@ -58,23 +59,10 @@ async def test_hr_bucket_seconds_aggregates_activity_record_by_day(
             {"uid": str(user_id), "start_at": datetime(2026, 8, 1, 9, 0, tzinfo=UTC)},
         )
     ).scalar_one()
-    rows = [
-        {
-            "uid": str(user_id), "aid": activity_id,
-            "ts": datetime(2026, 8, 1, 9, 0, i, tzinfo=UTC), "hr": 142.0,
-        }
-        for i in range(3)
-    ]
-    for row in rows:
-        await session.execute(
-            text(
-                """
-                INSERT INTO activity_record (user_id, activity_id, recorded_at, metric, value)
-                VALUES (:uid, :aid, :ts, 'hr', :hr)
-                """
-            ),
-            row,
-        )
+    await seed_hr_stream(
+        session, user_id=user_id, activity_id=activity_id,
+        start_at=datetime(2026, 8, 1, 9, 0, tzinfo=UTC), values=[142.0] * 3,
+    )
     await session.commit()
     await recompute_hr_bucket_seconds_daily(
         session, user_id=user_id, start=date(2026, 8, 1), end=date(2026, 8, 1)

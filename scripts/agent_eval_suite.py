@@ -40,6 +40,8 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from kairos.activities.stream_repository import STREAM_ALGO_VERSION, replace_streams
+from kairos.activities.streams import StreamSet
 from kairos.agent import tools as tools_module
 from kairos.agent.dispatcher import Proposal, ToolCall, dispatch
 from kairos.agent.events import AgentEvent
@@ -161,7 +163,6 @@ async def _seed_history(session: AsyncSession, user_id: UUID, today: date) -> No
         {"id": str(uuid.uuid4()), "uid": uid, "cred": b"eval-dummy"},
     )
     activities: list[dict[str, object]] = []
-    records: list[dict[str, object]] = []
     wellness_hr: list[dict[str, object]] = []
     wellness_hrv: list[dict[str, object]] = []
     sleeps: list[dict[str, object]] = []
@@ -200,20 +201,19 @@ async def _seed_history(session: AsyncSession, user_id: UUID, today: date) -> No
     for item in activities:
         start_at = item["start_at"]
         assert isinstance(start_at, datetime)
-        for i in range(300):  # 5 minutes of HR data -> hr_bucket_seconds_daily / TRIMP
-            records.append(
-                {
-                    "uid": uid, "aid": ids[str(item["ext"])],
-                    "ts": start_at + timedelta(seconds=i),
-                }
-            )
-    await session.execute(
-        text(
-            "INSERT INTO activity_record (user_id, activity_id, recorded_at, metric, value) "
-            "VALUES (:uid, :aid, :ts, 'hr', 140.0)"
-        ),
-        records,
-    )
+        # 5 minutes of HR data -> hr_bucket_seconds_daily / TRIMP
+        await replace_streams(
+            session,
+            user_id=user_id,
+            activity_id=ids[str(item["ext"])],
+            streams=StreamSet(
+                start_at=start_at,
+                t_offset_s=list(range(300)),
+                channels={"hr": [140.0] * 300},
+                source="fit_zip",
+            ),
+            algo_version=STREAM_ALGO_VERSION,
+        )
     for code, rows in (("hr", wellness_hr), ("hrv_5min", wellness_hrv)):
         await session.execute(
             text(

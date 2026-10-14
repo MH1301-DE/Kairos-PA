@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from kairos.metrics.bootstrap import build_default_registry
 from kairos.repositories.metrics_data import sleep_hours_range
 from kairos.repositories.metrics_recompute import recompute_hr_bucket_seconds_daily
+from tests.stream_seed import seed_hr_stream
 
 
 async def _insert_user(session: AsyncSession, user_id) -> None:
@@ -37,17 +38,10 @@ async def _insert_workout(session: AsyncSession, user_id, day: date) -> None:
             },
         )
     ).scalar_one()
-    for i in range(600):  # 10 minutes at 150 bpm
-        ts = datetime(day.year, day.month, day.day, 9, 0, i % 60, tzinfo=UTC) + timedelta(
-            minutes=i // 60
-        )
-        await session.execute(
-            text(
-                "INSERT INTO activity_record (user_id, activity_id, recorded_at, metric, value) "
-                "VALUES (:uid, :aid, :ts, 'hr', 150.0)"
-            ),
-            {"uid": str(user_id), "aid": activity_id, "ts": ts},
-        )
+    await seed_hr_stream(
+        session, user_id=user_id, activity_id=activity_id,
+        start_at=datetime(day.year, day.month, day.day, 9, tzinfo=UTC), values=[150.0] * 600,
+    )
     await session.commit()
     await recompute_hr_bucket_seconds_daily(session, user_id=user_id, start=day, end=day)
     await session.commit()
@@ -68,7 +62,7 @@ async def test_edwards_trimp_variant_computes_from_real_data(session: AsyncSessi
     assert result.value > 0
 
 
-async def _insert_activity_records(
+async def _insert_stream_workout(
     session: AsyncSession, user_id, day: date, *, minutes: int = 10, bpm: float = 150.0
 ) -> None:
     activity_id = (
@@ -84,24 +78,17 @@ async def _insert_activity_records(
             },
         )
     ).scalar_one()
-    base_ts = datetime(day.year, day.month, day.day, 9, 0, 0, tzinfo=UTC)
-    rows = [
-        {"uid": str(user_id), "aid": activity_id, "ts": base_ts + timedelta(seconds=i), "bpm": bpm}
-        for i in range(minutes * 60)
-    ]
-    await session.execute(
-        text(
-            "INSERT INTO activity_record (user_id, activity_id, recorded_at, metric, value) "
-            "VALUES (:uid, :aid, :ts, 'hr', :bpm)"
-        ),
-        rows,
+    await seed_hr_stream(
+        session, user_id=user_id, activity_id=activity_id,
+        start_at=datetime(day.year, day.month, day.day, 9, tzinfo=UTC),
+        values=[bpm] * (minutes * 60),
     )
 
 
 async def _insert_sparse_training(session: AsyncSession, user_id, days: list[date]) -> None:
     """Bulk-insert several training days, then recompute the daily-bucket table once."""
     for day in days:
-        await _insert_activity_records(session, user_id, day)
+        await _insert_stream_workout(session, user_id, day)
     await session.commit()
     await recompute_hr_bucket_seconds_daily(
         session, user_id=user_id, start=min(days), end=max(days)
@@ -161,7 +148,7 @@ async def test_training_load_variant_reflects_rest_day_decay(session: AsyncSessi
 async def test_training_load_variant_insufficient_data_for_zero_training_user(
     session: AsyncSession,
 ) -> None:
-    """hr_max resolves (via activity.max_hr) but there is no activity_record data, ever.
+    """hr_max resolves (via activity.max_hr) but there is no hr stream data, ever.
 
     Guards the composition bug the dense-series fix could introduce: edwards_daily_load_series()
     always returns a dense, zero-filled series once hr_max resolves, so the old
