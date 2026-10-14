@@ -13,7 +13,9 @@ from kairos.repositories.metrics_recompute import recompute_hr_bucket_seconds_da
 from tests.stream_seed import seed_hr_stream
 
 
-async def _insert_user(session: AsyncSession, user_id) -> None:
+async def _insert_user(
+    session: AsyncSession, user_id, hr_max_override: int | None = 185
+) -> None:
     await session.execute(
         text(
             """
@@ -23,6 +25,11 @@ async def _insert_user(session: AsyncSession, user_id) -> None:
         ),
         {"id": str(user_id), "email": f"{user_id}@test.com", "sub": f"sub-{user_id}"},
     )
+    if hr_max_override is not None:
+        await session.execute(
+            text("INSERT INTO user_setting (user_id, hr_max_override) VALUES (:id, :hr)"),
+            {"id": str(user_id), "hr": hr_max_override},
+        )
 
 
 async def _insert_workout(session: AsyncSession, user_id, day: date) -> None:
@@ -266,3 +273,42 @@ async def test_sleep_debt_variant_buckets_by_utc_day_not_session_timezone(
     )
     assert result.coverage_days == 1
     assert result.value is not None
+
+
+@pytest.mark.asyncio
+async def test_hr_variants_without_hr_max_report_note_even_with_measured_max(
+    session: AsyncSession,
+) -> None:
+    user_id = uuid4()
+    today = date(2026, 8, 1)
+    await _insert_user(session, user_id, hr_max_override=None)
+    await _insert_workout(session, user_id, today)
+
+    registry = build_default_registry()
+    for metric_id, variant_id in (
+        ("trimp", "edwards"),
+        ("trimp", "banister"),
+        ("hr_zone_distribution", "percent_max"),
+        ("hr_zone_distribution", "karvonen"),
+    ):
+        result = await registry.get(metric_id, variant_id).compute(
+            session, user_id=user_id, as_of=today
+        )
+        assert result.value is None
+        assert result.confidence == "insufficient_data"
+        assert result.note == "HFmax fehlt – bitte in den Einstellungen eintragen"
+
+
+@pytest.mark.asyncio
+async def test_edwards_trimp_uses_override_not_measured_max(session: AsyncSession) -> None:
+    user_id = uuid4()
+    today = date(2026, 8, 1)
+    await _insert_user(session, user_id, hr_max_override=200)
+    await _insert_workout(session, user_id, today)  # measured max 185
+
+    registry = build_default_registry()
+    result = await registry.get("trimp", "edwards").compute(session, user_id=user_id, as_of=today)
+
+    # 150 bpm = 75 % of 200 -> zone 3 (x3), 10 min
+    assert result.value == pytest.approx(30.0)
+    assert result.note is None

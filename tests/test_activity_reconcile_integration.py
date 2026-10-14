@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from kairos.activities.reconcile import reconcile_deleted_activities
 from kairos.connectors.types import Window
 from kairos.repositories.data_read import SqlDataReadRepository
-from kairos.repositories.metrics_data import observed_max_hr_ever
 from kairos.repositories.metrics_recompute import recompute_hr_bucket_seconds_daily
 from tests.stream_seed import seed_hr_stream
 
@@ -132,6 +131,14 @@ async def test_already_deleted_is_not_reported_again(session: AsyncSession) -> N
     assert (await _deleted(session, a))[1] == "garmin_sync"
 
 
+async def _max_hr(session: AsyncSession, uid: UUID) -> int | None:
+    result = await session.execute(
+        text("SELECT max(max_hr) FROM activity WHERE user_id = :u AND deleted_at IS NULL"),
+        {"u": str(uid)},
+    )
+    return result.scalar_one_or_none()
+
+
 @pytest.mark.asyncio
 async def test_deleted_activity_vanishes_from_hr_buckets_readers_and_max_hr(
     session: AsyncSession,
@@ -145,7 +152,7 @@ async def test_deleted_activity_vanishes_from_hr_buckets_readers_and_max_hr(
     day = date(2026, 8, 1)
 
     await recompute_hr_bucket_seconds_daily(session, user_id=uid, start=day, end=day)
-    assert await observed_max_hr_ever(session, user_id=uid) == 190
+    assert await _max_hr(session, uid) == 190
     assert await repo.get_activity_detail(user_id=uid, external_id="1") is not None
 
     await reconcile_deleted_activities(session, user_id=uid, window=WINDOW, payload=[])
@@ -158,7 +165,7 @@ async def test_deleted_activity_vanishes_from_hr_buckets_readers_and_max_hr(
         )
     ).all()
     assert rows == []
-    assert await observed_max_hr_ever(session, user_id=uid) is None
+    assert await _max_hr(session, uid) is None
     assert await repo.get_activity_detail(user_id=uid, external_id="1") is None
     page = await repo.list_activities(user_id=uid, limit=10, cursor=None)
     assert page.items == []

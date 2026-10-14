@@ -36,25 +36,6 @@ def karvonen_zones(hr_max: float, resting_hr: float) -> list[HrZoneBounds]:
     ]
 
 
-def estimate_hr_max(
-    birth_date: date | None,
-    hr_max_override: int | None,
-    observed_max_hr: int | None,
-    *,
-    as_of: date,
-) -> int | None:
-    if hr_max_override is not None:
-        return hr_max_override
-    age_estimate: int | None = None
-    if birth_date is not None:
-        age = as_of.year - birth_date.year - (
-            (as_of.month, as_of.day) < (birth_date.month, birth_date.day)
-        )
-        age_estimate = 220 - age
-    candidates = [v for v in (age_estimate, observed_max_hr) if v is not None]
-    return max(candidates) if candidates else None
-
-
 HrMaxSource = Literal["eingetragen", "aus Alter"]
 
 
@@ -72,3 +53,11 @@ def resolve_hr_max(
         (as_of.month, as_of.day) < (birth_date.month, birth_date.day)
     )
     return 220 - age, "aus Alter"
+
+
+def hr_max_warning(
+    used: int | None, source: HrMaxSource | None, measured: int | None
+) -> str | None:
+    if used is not None and measured is not None and measured > used:
+        return f"gemessen {measured} bpm, {source} {used} – prüfen"
+    return None

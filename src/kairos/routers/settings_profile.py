@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from kairos.auth.deps import current_user
 from kairos.db.rls import install_rls_listener
 from kairos.db.session import get_session
-from kairos.metrics.hr_zones import resolve_hr_max
+from kairos.metrics.hr_zones import hr_max_warning, resolve_hr_max
 from kairos.repositories.user_setting import (
     get_or_default_user_setting,
     measured_max_hr_12m,
@@ -40,9 +40,6 @@ async def _profile(session: AsyncSession, user_id: UUID) -> dict[str, Any]:
         setting.birth_date, setting.hr_max_override, as_of=datetime.now(UTC).date()
     )
     measured = await measured_max_hr_12m(session, user_id=user_id)
-    warning = None
-    if used is not None and measured is not None and measured > used:
-        warning = f"gemessen {measured} bpm, {source} {used} – prüfen"
     return {
         "birth_date": setting.birth_date.isoformat() if setting.birth_date else None,
         "hr_max_override": setting.hr_max_override,
@@ -50,7 +47,7 @@ async def _profile(session: AsyncSession, user_id: UUID) -> dict[str, Any]:
         "hr_max_used": used,
         "hr_max_source": source,
         "hr_max_measured_12m": measured,
-        "hr_max_warning": warning,
+        "hr_max_warning": hr_max_warning(used, source, measured),
     }
 
 

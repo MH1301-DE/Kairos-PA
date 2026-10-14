@@ -88,7 +88,7 @@ async def query_health_handler(
         f"[{result.confidence}]",
         {
             "metric_id": metric_id, "variant": chosen, "value": result.value,
-            "unit": result.unit, "confidence": result.confidence,
+            "unit": result.unit, "confidence": result.confidence, "note": result.note,
         },
         coverage=f"{result.coverage_days}/{result.coverage_required_days} Tage",
     )

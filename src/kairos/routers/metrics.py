@@ -95,4 +95,5 @@ async def get_metric(
         "coverage_days": result.coverage_days,
         "coverage_required_days": result.coverage_required_days,
         "as_of": result.as_of,
+        "note": result.note,
     }

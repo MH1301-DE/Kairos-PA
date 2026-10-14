@@ -14,3 +14,4 @@ class MetricResult:
     coverage_days: int
     coverage_required_days: int
     as_of: str
+    note: str | None = None

@@ -83,3 +83,61 @@ async def test_brief_reports_connected_status(session: AsyncSession) -> None:
 
     assert "Garmin ✓" in brief
     assert "Google Cal nicht verbunden" in brief
+
+
+async def _insert_setting_and_activity(
+    session: AsyncSession, user_id: UUID, *, hr_max_override: int | None, max_hr: int | None
+) -> None:
+    if hr_max_override is not None:
+        await session.execute(
+            text("INSERT INTO user_setting (user_id, hr_max_override) VALUES (:u, :hr)"),
+            {"u": str(user_id), "hr": hr_max_override},
+        )
+    if max_hr is not None:
+        await session.execute(
+            text(
+                "INSERT INTO activity (user_id, external_id, start_at, max_hr) "
+                "VALUES (:u, 'brief-1', now() - interval '10 days', :m)"
+            ),
+            {"u": str(user_id), "m": max_hr},
+        )
+    await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_brief_warns_when_measured_max_exceeds_hr_max(session: AsyncSession) -> None:
+    user_id = uuid4()
+    await _insert_user(session, user_id)
+    await _insert_setting_and_activity(session, user_id, hr_max_override=214, max_hr=219)
+
+    brief = await build_situation_brief(
+        session, user_id=user_id, now=datetime(2026, 8, 1, 9, 0, tzinfo=UTC)
+    )
+
+    assert "HFmax: gemessen 219 bpm, eingetragen 214 – prüfen" in brief
+
+
+@pytest.mark.asyncio
+async def test_brief_says_hr_max_missing(session: AsyncSession) -> None:
+    user_id = uuid4()
+    await _insert_user(session, user_id)
+    await session.commit()
+
+    brief = await build_situation_brief(
+        session, user_id=user_id, now=datetime(2026, 8, 1, 9, 0, tzinfo=UTC)
+    )
+
+    assert "HFmax fehlt (Einstellungen)" in brief
+
+
+@pytest.mark.asyncio
+async def test_brief_has_no_hr_max_line_without_warning(session: AsyncSession) -> None:
+    user_id = uuid4()
+    await _insert_user(session, user_id)
+    await _insert_setting_and_activity(session, user_id, hr_max_override=214, max_hr=190)
+
+    brief = await build_situation_brief(
+        session, user_id=user_id, now=datetime(2026, 8, 1, 9, 0, tzinfo=UTC)
+    )
+
+    assert "HFmax" not in brief
