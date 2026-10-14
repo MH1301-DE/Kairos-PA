@@ -27,13 +27,15 @@ class Comparison:
         return not self.deviations and not self.missing_stream
 
 
-def compare_counts(stream: Counts, records: Counts) -> Comparison:
+def compare_counts(
+    stream: Counts, records: Counts, all_activities: set[int] | None = None
+) -> Comparison:
     out = Comparison()
-    for activity_id in sorted(set(stream) | set(records)):
+    for activity_id in sorted(set(stream) | set(records) | (all_activities or set())):
         s = {c: n for c, n in stream.get(activity_id, {}).items() if c not in IGNORED_CHANNELS}
         r = {c: n for c, n in records.get(activity_id, {}).items() if c not in IGNORED_CHANNELS}
         if activity_id not in stream:
-            if r:
+            if r or all_activities is not None:
                 out.missing_stream.append(activity_id)
             continue
         for channel in sorted(set(s) | set(r)):

@@ -33,3 +33,8 @@ def test_stream_only_channel_is_informational() -> None:
 def test_record_channel_missing_in_stream_is_deviation() -> None:
     result = compare_counts({1: {"hr": 5}}, {1: {"hr": 5, "power_w": 2}})
     assert result.deviations == [Deviation(1, "power_w", 0, 2)]
+
+
+def test_activity_with_neither_stream_nor_records_is_missing() -> None:
+    result = compare_counts({1: {"hr": 5}}, {1: {"hr": 5}}, {1, 2})
+    assert result.missing_stream == [2] and not result.ok

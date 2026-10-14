@@ -54,16 +54,19 @@ async def run(uid: uuid.UUID) -> int:
         }
         avg_bytes = (await session.execute(_SIZE, {"u": str(uid)})).scalar_one()
 
-    result = compare_counts(stream, records)
+    result = compare_counts(stream, records, set(ext))
 
     def name(activity_id: int) -> str:
         return ext.get(activity_id, f"id={activity_id}")
 
+    covered = len(set(ext) & set(stream))
+    print(f"{covered}/{len(ext)} activities with stream")
+    print()
     print(f"Deviations ({len(result.deviations)}):")
     print(f"  {'activity':<14}{'channel':<14}{'stream':>9}{'records':>9}")
     for d in result.deviations:
         print(f"  {name(d.activity_id):<14}{d.channel:<14}{d.stream_count:>9}{d.record_count:>9}")
-    print(f"\nActivities with records but no stream ({len(result.missing_stream)}):")
+    print(f"\nActivities without stream ({len(result.missing_stream)}):")
     for a in result.missing_stream:
         print(f"  {name(a)}")
     print(f"\nChannels only in stream ({len(result.stream_only)}):")
