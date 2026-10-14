@@ -1377,3 +1377,22 @@ auf den Ist-Stand bringt (ein Commit pro Datei, 2026-10-08).
   5 Nutzer × 5 Jahre ≈ 14 GB (reale Rate) bis ≈ 30 GB (Doku-Szenario) statt der früher
   dokumentierten 7–9 GB → VM mit ≥ 80 GB SSD empfohlen; welche VM gebucht wird, ist offen.
 - Das leere Verzeichnis `deploy/Caddyfile;C` wurde entfernt.
+
+## Runbook A.7 — TimescaleDB entfernen (Dev-DB umgezogen 2026-10-14)
+
+Ausgeführt auf der Dev-DB am 2026-10-14 (Branch `stufe1-datenbasis`, Migration `fed6d2d1311b_drop_timescaledb`). Für weitere Instanzen (z. B. Produktion) gleich vorgehen.
+
+Voraussetzungen: V8 bestanden (`scripts/verify_activity_streams.py --user-id <uuid>` → `RESULT: OK`, jede Aktivität mit `activity_record`-Zeilen hat Streams; sonst bricht die Migration ab). Kein Backend, Worker oder Beat aktiv. Die Migration muss als Superuser (oder BYPASSRLS-Rolle) laufen — sie verweigert sonst, weil FORCE RLS beim Kopieren alle Zeilen verstecken würde.
+
+1. Sicherung mit Timescale (Rückweg): `docker exec deploy-postgres-1 pg_dump -U kairos -d kairos -Fc -f /tmp/pre-1b.dump` und `docker cp deploy-postgres-1:/tmp/pre-1b.dump ../kairos-backups/2026-10-14-pre-1b.dump` (77,4 MB). Exakte Zeilenzahlen aller Tabellen daneben ablegen (`2026-10-14-pre-1b-counts.txt`). In Git Bash `MSYS_NO_PATHCONV=1` setzen.
+2. Probelauf (empfohlen): Dump in einen Wegwerf-Container `timescale/timescaledb-ha:pg16` (Port 5433) einspielen (`CREATE EXTENSION timescaledb; SELECT timescaledb_pre_restore();` → `pg_restore --no-owner` → `SELECT timescaledb_post_restore();`), dann `DATABASE_URL=postgresql+asyncpg://kairos:<pw>@localhost:5433/kairos alembic upgrade head`. Vergleich je `metric_id`: `count(*)`, `sum(value)`, `md5(string_agg(ws::text, ',' ORDER BY id))` vor/nach — muss identisch sein.
+3. Echte DB, noch im Timescale-Image: `alembic upgrade head` (Dauer wenige Sekunden bei 265k Wellness-Zeilen). Prüfen: `pg_extension` nur `plpgsql`, `activity_record` weg, Checksummen wie in Schritt 2.
+4. Zweiter Dump ohne Extension: `pg_dump -Fc` → `../kairos-backups/2026-10-14-post-1b-plain.dump` (55,7 MB) plus Zeilenzahlen.
+5. Image wechseln: `POSTGRES_PASSWORD=<bisheriges Passwort> docker compose -f deploy/docker-compose.dev.yml up -d postgres` → Container `postgres:16`, neues Volume `deploy_pgdata_dev16` unter `/var/lib/postgresql/data`. Dann `docker cp` + `pg_restore -U kairos -d kairos /tmp/post.dump`.
+6. Kontrolle: Zeilenzahlen und Checksummen identisch zu Schritt 4, FORCE RLS auf allen 25 Mandantentabellen, `alembic current` = `fed6d2d1311b (head)`, Backend starten und `/api/dashboard/layout`, `/api/metrics/*`, `/api/data/wellness/hr`, `/api/data/activities`, `/api/data/activities/{id}?max_points=200` abrufen (alle 200).
+
+Ergebnis 2026-10-14: alle Zeilenzahlen und Checksummen identisch (wellness_sample 265.063, activity 139, activity_stream 969, raw_payload 7.688); `activity_record` (2.226.357 Zeilen) entfernt.
+
+Rückweg: Das alte Volume `deploy_pgdata_dev` (Timescale, Stand vor der Migration) ist **nicht** gelöscht. Zurück: in `deploy/docker-compose.dev.yml` Image `timescale/timescaledb-ha:pg16` und `pgdata_dev:/home/postgres/pgdata` eintragen, `up -d postgres`, Code auf einen Stand vor `fed6d2d1311b` bringen. Alternativ `2026-10-14-pre-1b.dump` in ein frisches Timescale-Image einspielen (mit `timescaledb_pre_restore`/`post_restore`). `downgrade()` der Migration ist absichtlich nicht implementiert. Volume erst löschen, wenn Stufe 1 abgenommen ist: `docker volume rm deploy_pgdata_dev`.
+
+Hinweise: Tabellenrechte (GRANTs) auf `wellness_sample` werden nicht übernommen — die App verbindet sich als Eigentümer `kairos`. Der Timescale-Index `wellness_sample_observed_at_idx` entfällt; alle Abfragen filtern zuerst nach `user_id` (Unique-Key deckt das ab).
