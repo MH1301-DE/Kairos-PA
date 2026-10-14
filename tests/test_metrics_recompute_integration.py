@@ -182,7 +182,7 @@ async def test_stream_buckets_match_legacy_activity_record_result(session: Async
 
 
 @pytest.mark.asyncio
-async def test_hr_samples_across_utc_midnight_land_on_two_days(session: AsyncSession) -> None:
+async def test_hr_activity_across_midnight_counts_to_start_day(session: AsyncSession) -> None:
     user_id = uuid4()
     await _insert_user(session, user_id)
     start_at = datetime(2026, 8, 1, 23, 59, 58, tzinfo=UTC)
@@ -215,4 +215,4 @@ async def test_hr_samples_across_utc_midnight_land_on_two_days(session: AsyncSes
             {"uid": str(user_id)},
         )
     ).all()
-    assert rows == [(date(2026, 8, 1), 140, 2), (date(2026, 8, 2), 150, 1)]
+    assert rows == [(date(2026, 8, 1), 140, 2), (date(2026, 8, 1), 150, 1)]

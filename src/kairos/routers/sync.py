@@ -10,7 +10,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kairos.activities.fit_archive import ingest_fit_files
@@ -293,8 +293,13 @@ def _make_fit_ingest_hook(
             marked = await reconcile_deleted_activities(
                 session, user_id=user_id, window=envelope.window, payload=envelope.payload
             )
-            # UTC sample days of the removed streams, as the HR bucket recompute groups them
-            reconciled_days.update(start.date() for _, start in marked if start is not None)
+            # same local-day rule as the HR bucket recompute (start_local::date)
+            if marked:
+                rows = await session.execute(
+                    text("SELECT DISTINCT start_local::date FROM activity WHERE id = ANY(:ids)"),
+                    {"ids": [i for i, _ in marked]},
+                )
+                reconciled_days.update(d for (d,) in rows.all() if d is not None)
 
     return _hook
 
