@@ -120,3 +120,23 @@ def test_invalid_timestamp_skipped_and_empty_returns_none() -> None:
     ss = build_streams([{"heart_rate": 1}, _rec(5, heart_rate=2)], source="fit_zip")
     assert ss is not None
     assert ss.t_offset_s == [0]
+
+
+def test_out_of_order_records_are_sorted() -> None:
+    ss = build_streams(
+        [_rec(5, heart_rate=150), _rec(2, heart_rate=140), _rec(-3, heart_rate=130)],
+        source="fit_zip",
+    )
+    assert ss is not None
+    assert ss.start_at == T0 - timedelta(seconds=3)
+    assert ss.t_offset_s == [0, 5, 8]
+    assert ss.channels["hr"] == [130.0, 140.0, 150.0]
+
+
+def test_duplicate_second_merges_per_channel() -> None:
+    ss = build_streams(
+        [_rec(0, heart_rate=140), _rec(0, heart_rate=141, power=250)], source="fit_zip"
+    )
+    assert ss is not None
+    assert ss.t_offset_s == [0]
+    assert ss.channels == {"hr": [140.0], "power_w": [250.0]}

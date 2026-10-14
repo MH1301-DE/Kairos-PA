@@ -94,23 +94,29 @@ def build_streams(
     *,
     source: Literal["fit_zip", "fit_json"],
 ) -> StreamSet | None:
-    start: datetime | None = None
-    offsets: list[int] = []
-    rows: list[dict[str, float | None]] = []
+    parsed: list[tuple[datetime, Mapping[str, object]]] = []
     for rec in records:
         ts = _timestamp(rec.get("timestamp"))
-        if ts is None:
-            continue
-        if start is None:
-            start = ts
+        if ts is not None:
+            parsed.append((ts, rec))
+    if not parsed:
+        return None
+    parsed.sort(key=lambda item: item[0])
+    start = parsed[0][0]
+    offsets: list[int] = []
+    rows: list[dict[str, float | None]] = []
+    for ts, rec in parsed:
         offset = int((ts - start).total_seconds())
-        # duplicate or out-of-order second: first record wins
-        if offsets and offset <= offsets[-1]:
+        vals = _channel_values(rec)
+        if offsets and offset == offsets[-1]:
+            # same second: first value per channel wins, later records fill gaps
+            row = rows[-1]
+            for code, value in vals.items():
+                if row[code] is None:
+                    row[code] = value
             continue
         offsets.append(offset)
-        rows.append(_channel_values(rec))
-    if start is None:
-        return None
+        rows.append(vals)
     channels: dict[str, list[float | None]] = {}
     for spec in STREAM_CHANNELS:
         values = [row[spec.code] for row in rows]
