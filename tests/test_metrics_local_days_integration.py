@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from kairos.activities.reconcile import local_days_of_activities
 from kairos.repositories.metrics_data import sleep_hours_range
 from kairos.repositories.metrics_recompute import (
     recompute_hr_bucket_seconds_daily,
@@ -176,10 +177,26 @@ async def test_sleep_hours_range_uses_local_start_day(session: AsyncSession) -> 
     assert result == {date(2026, 7, 15): 8.0}
 
 
+@pytest.mark.asyncio
+async def test_local_days_of_activities_returns_start_local_days(session: AsyncSession) -> None:
+    user_id = await _user(session, _BERLIN_SUMMER)
+    start = datetime(2026, 7, 14, 22, 30, tzinfo=UTC)
+    a = await _activity(session, user_id, start, datetime(2026, 7, 15, 0, 30))
+    b = await _activity(session, user_id, start, datetime(2026, 7, 15, 9, 0))
+    c = await _activity(session, user_id, start, datetime(2026, 7, 20, 9, 0))
+    await session.commit()
+
+    assert await local_days_of_activities(session, [a, b, c]) == {
+        date(2026, 7, 15),
+        date(2026, 7, 20),
+    }
+    assert await local_days_of_activities(session, []) == set()
+
+
 def test_no_utc_day_cut_left_in_src() -> None:
     offenders = [
         str(p)
-        for p in Path("src").rglob("*.py")
+        for p in (Path(__file__).resolve().parents[1] / "src").rglob("*.py")
         if "AT TIME ZONE 'UTC'" in p.read_text(encoding="utf-8")
     ]
     assert offenders == []

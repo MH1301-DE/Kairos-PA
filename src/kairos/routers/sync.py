@@ -10,11 +10,14 @@ from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kairos.activities.fit_archive import ingest_fit_files
-from kairos.activities.reconcile import reconcile_deleted_activities
+from kairos.activities.reconcile import (
+    local_days_of_activities,
+    reconcile_deleted_activities,
+)
 from kairos.auth.crypto import decrypt, kek_from_settings, unwrap_dek
 from kairos.auth.deps import current_user
 from kairos.config import settings
@@ -295,11 +298,9 @@ def _make_fit_ingest_hook(
             )
             # same local-day rule as the HR bucket recompute (start_local::date)
             if marked:
-                rows = await session.execute(
-                    text("SELECT DISTINCT start_local::date FROM activity WHERE id = ANY(:ids)"),
-                    {"ids": [i for i, _ in marked]},
+                reconciled_days.update(
+                    await local_days_of_activities(session, [i for i, _ in marked])
                 )
-                reconciled_days.update(d for (d,) in rows.all() if d is not None)
 
     return _hook
 

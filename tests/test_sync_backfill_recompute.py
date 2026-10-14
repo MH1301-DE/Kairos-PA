@@ -119,10 +119,6 @@ async def test_reconciled_days_extend_recompute_start(harness: SimpleNamespace) 
         return BackfillResult(1, True, None, fetched_from=datetime(2026, 8, 5, tzinfo=UTC))
 
     marked = [(7, datetime(2026, 8, 1, 23, 0, tzinfo=UTC))]
-    # 23:00 UTC is 01:00 local the next day; the hook asks the DB for start_local::date
-    rows = MagicMock()
-    rows.all.return_value = [(date(2026, 8, 2),)]
-    harness.session.execute = AsyncMock(return_value=rows)
     registry = SyncJobRegistry()
     user_id = uuid4()
     jobs = registry.create_jobs(
@@ -130,7 +126,12 @@ async def test_reconciled_days_extend_recompute_start(harness: SimpleNamespace) 
         from_date="2026-08-01", to_date="2026-08-10",
     )
     harness.service.run_backfill = AsyncMock(side_effect=_backfill)
-    with patch.object(sync_module, "reconcile_deleted_activities", AsyncMock(return_value=marked)):
+    with (
+        patch.object(sync_module, "reconcile_deleted_activities", AsyncMock(return_value=marked)),
+        patch.object(
+            sync_module, "local_days_of_activities", AsyncMock(return_value={date(2026, 8, 2)})
+        ),
+    ):
         await sync_module._run_backfill_task(
             user_id=user_id, from_dt=_FROM, to_dt=_TO, jobs=jobs, registry=registry
         )

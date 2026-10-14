@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
 from sqlalchemy import text
@@ -33,3 +33,11 @@ async def reconcile_deleted_activities(
         },
     )
     return sorted((int(r[0]), r[1]) for r in result.all())
+
+
+async def local_days_of_activities(session: AsyncSession, ids: list[int]) -> set[date]:
+    rows = await session.execute(
+        text("SELECT DISTINCT start_local::date FROM activity WHERE id = ANY(:ids)"),
+        {"ids": ids},
+    )
+    return {d for (d,) in rows.all() if d is not None}
