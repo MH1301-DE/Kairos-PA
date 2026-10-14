@@ -143,6 +143,51 @@ def test_swim_100m_splits_from_lengths() -> None:
     assert all(r.quality == "partial" for r in rows)
 
 
+@pytest.mark.parametrize(("pool_m", "per_split"), [(100 / 3, 3), (22.86, 4)])
+def test_swim_pool_not_dividing_100m(pool_m: float, per_split: int) -> None:
+    lengths = [_length(40 * i, 40, 20) for i in range(2 * per_split)]
+    n = 40 * len(lengths) + 1
+    prep = prepare(_stream(list(range(n)), hr=[120.0] * n), sport_profile="swimming", events=[])
+    rows = distance_splits(
+        prep, sport_profile="swimming", lengths=lengths, pool_length_m=pool_m, start_at=START
+    )
+    assert [r.swim_lengths for r in rows] == [per_split, per_split]
+    assert not any(r.is_partial for r in rows)
+    assert rows[0].distance_m == pytest.approx(per_split * pool_m)
+
+
+def test_swim_split_hr_excludes_rest_between_lengths() -> None:
+    hr = [120.0] * 40 + [90.0] * 60 + [130.0] * 41
+    lengths = [_length(0, 40, 20), _length(40, 60, 0, kind="idle"), _length(100, 40, 20)]
+    prep = prepare(_stream(list(range(141)), hr=hr), sport_profile="swimming", events=[])
+    rows = distance_splits(
+        prep, sport_profile="swimming", lengths=lengths, pool_length_m=50.0, start_at=START
+    )
+    assert len(rows) == 1
+    assert (rows[0].hr_min, rows[0].hr_max) == (120, 130)
+
+
+def test_split_hr_extremes_exclude_paused_samples() -> None:
+    t = list(range(261))
+    dist = [5.0 * min(i, 100) + 5.0 * max(0, i - 160) for i in t]
+    hr = [150.0 if i <= 100 or i >= 160 else 60.0 for i in t]
+    prep = prepare(
+        _stream(t, distance_m=dist, hr=hr),
+        sport_profile="running",
+        events=[_timer("start", 0), _timer("stop_all", 100), _timer("start", 160)],
+    )
+    rows = distance_splits(prep, sport_profile="running", lengths=[])
+    assert (rows[0].hr_min, rows[0].hr_max) == (150, 150)
+
+
+def test_lap_quality_follows_sport_profile() -> None:
+    prep = prepare(_stream([0, 1, 2], hr=[120.0] * 3), sport_profile="swimming", events=[])
+    laps = [{"start_time": START, "total_elapsed_time": 2.0, "total_distance": 50.0}]
+    rows = lap_splits(prep, sport_profile="swimming", laps=laps, start_at=START)
+    assert rows[0].quality == "partial"
+    assert lap_splits(prep, sport_profile="generic", laps=laps, start_at=START)[0].quality == "ok"
+
+
 def test_swim_without_lengths_has_no_distance_splits() -> None:
     prep = prepare(_stream([0, 1, 2], hr=[120.0] * 3), sport_profile="swimming", events=[])
     assert distance_splits(prep, sport_profile="swimming", lengths=[], start_at=START) == []
@@ -174,7 +219,7 @@ def test_lap_splits_from_arrays() -> None:
             "wkt_step_index": 2,
         },
     ]
-    rows = lap_splits(prep, laps=laps, start_at=START)
+    rows = lap_splits(prep, sport_profile="running", laps=laps, start_at=START)
     assert [r.kind for r in rows] == ["lap", "lap"]
     assert [r.idx for r in rows] == [1, 2]
     assert rows[0].distance_m == pytest.approx(600.0)
@@ -225,7 +270,7 @@ def test_workout_fixture_lap_rows() -> None:
     fx = load_activity_fixture(WORKOUT_RUN)
     prep = prepare(fx.stream, sport_profile="running", events=fx.messages["event_mesgs"])
     laps = fx.messages["lap_mesgs"]
-    rows = lap_splits(prep, laps=laps, start_at=fx.stream.start_at)
+    rows = lap_splits(prep, sport_profile="running", laps=laps, start_at=fx.stream.start_at)
     assert len(rows) == 16
     assert [r.wkt_step_index for r in rows] == [lap.get("wkt_step_index") for lap in laps]
     assert [r.lap_intensity for r in rows] == [lap.get("intensity") for lap in laps]

@@ -160,9 +160,7 @@ async def export(
         if activity.raw_payload_id is not None:
             blob = (
                 await session.execute(
-                    select(RawPayload.payload_gzip).where(
-                        RawPayload.id == activity.raw_payload_id
-                    )
+                    select(RawPayload.payload_gzip).where(RawPayload.id == activity.raw_payload_id)
                 )
             ).scalar_one_or_none()
             items = json.loads(gzip.decompress(blob)) if blob is not None else []

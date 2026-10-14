@@ -70,6 +70,7 @@ def _interp(xs: Sequence[float], ys: Sequence[float | None], x: float) -> float 
     i = bisect.bisect_right(keys, x)
     if i == 0:
         return pts[0][1]
+    # clamp to the last value: windows may end after the last sample
     if i == len(pts):
         return pts[-1][1]
     (x0, y0), (x1, y1) = pts[i - 1], pts[i]
@@ -95,7 +96,7 @@ def _row(
         return [values[i] for i in idx]
 
     weights = [prep.weights[i] for i in idx]
-    hr = [v for v in sub(prep.hr) if v is not None]
+    hr = [v for v, w in zip(sub(prep.hr), weights, strict=True) if v is not None and w > 0]
     gain, loss = elevation_gain_loss(sub(prep.altitude_smooth))
     has_alt = any(v is not None for v in sub(prep.altitude_smooth))
     # unrecognised recording gaps make the window unreliable
@@ -196,22 +197,28 @@ def _swim_splits(
     active = [ln for ln in lengths if ln.get("length_type") == "active"]
     groups: list[list[Mapping[str, object]]] = []
     current: list[Mapping[str, object]] = []
+    # half a length of tolerance, so 33.33 m or 25 yd pools still split per 100 m
+    full_m = unit - pool_length_m / 2
     for ln in active:
         current.append(ln)
-        if len(current) * pool_length_m >= unit - _EPS_M:
+        if len(current) * pool_length_m >= full_m:
             groups.append(current)
             current = []
     if current and len(current) * pool_length_m >= MIN_PARTIAL_M["swimming"]:
         groups.append(current)
     rows: list[SplitRow] = []
     for number, group in enumerate(groups, start=1):
-        starts = [_offset(ln.get("start_time"), start_at) for ln in group]
         secs = [_num(ln.get("total_timer_time")) or 0.0 for ln in group]
-        last_elapsed = _num(group[-1].get("total_elapsed_time")) or secs[-1]
         strokes = [_num(ln.get("total_strokes")) for ln in group]
-        first, last_start = starts[0], starts[-1]
-        a = first if first is not None else 0.0
-        b = (last_start if last_start is not None else a) + last_elapsed
+        # only the lengths themselves, so rest between them does not enter the HR
+        idx: list[int] = []
+        starts: list[float] = []
+        for ln, sec in zip(group, secs, strict=True):
+            a = _offset(ln.get("start_time"), start_at)
+            if a is None:
+                continue
+            starts.append(a)
+            idx.extend(_real_window(prep, a, a + (_num(ln.get("total_elapsed_time")) or sec)))
         timer_s = sum(secs)
         swolf = (
             (timer_s + sum(s for s in strokes if s is not None)) / len(group)
@@ -221,10 +228,10 @@ def _swim_splits(
         dist = len(group) * pool_length_m
         row = _row(
             prep,
-            _real_window(prep, a, b),
+            sorted(set(idx)),
             kind="distance",
             number=number,
-            start_offset_s=_interp(prep.t, prep.timer_t, a) or 0.0,
+            start_offset_s=_interp(prep.t, prep.timer_t, starts[0]) or 0.0 if starts else 0.0,
             distance_m=dist,
             timer_s=timer_s,
             quality="partial",
@@ -233,7 +240,7 @@ def _swim_splits(
             replace(
                 row,
                 unit_m=unit,
-                is_partial=dist < unit - _EPS_M,
+                is_partial=dist < full_m,
                 swim_lengths=len(group),
                 swolf=swolf,
             )
@@ -242,7 +249,11 @@ def _swim_splits(
 
 
 def lap_splits(
-    prep: Prepared, *, laps: Sequence[Mapping[str, object]], start_at: datetime
+    prep: Prepared,
+    *,
+    sport_profile: str,
+    laps: Sequence[Mapping[str, object]],
+    start_at: datetime,
 ) -> list[SplitRow]:
     has_dist = any(d is not None for d in prep.distance)
     rows: list[SplitRow] = []
@@ -276,7 +287,7 @@ def lap_splits(
             start_offset_s=ta,
             distance_m=dist,
             timer_s=tb - ta,
-            quality="partial" if lap.get("sport") == "swimming" else "ok",
+            quality="partial" if sport_profile == "swimming" else "ok",
         )
         rows.append(
             replace(
