@@ -3,10 +3,10 @@
 | | |
 |---|---|
 | **Datum** | 2026-10-14 |
-| **Status** | Design abgestimmt (Brainstorming 2026-10-14), nach Review vom 2026-10-14 bereinigt. AP 0 (CalDAV-Verifikation gegen echtes iCloud-Konto) offen; ungeprüfte Fakten stehen gesammelt in §12. |
+| **Status** | Design abgestimmt (Brainstorming 2026-10-14), nach Review vom 2026-10-14 bereinigt, Nutzerentscheidungen zu Instanz-Löschen, Apple-Zugang und Reihenfolge eingearbeitet. AP 0 (CalDAV-Verifikation gegen echtes iCloud-Konto) offen; ungeprüfte Fakten stehen gesammelt in §12. |
 | **Baut auf** | Phase 3 Kalender (`2026-08-13-phase-3-kalender-design.md`) · Agent-Harness v2 (`2026-10-05-agent-harness-v2-design.md`) · `04-integrationen.md` §4 (CalDAV-Zielbild) · ADR-0003 |
 | **Berührt** | Aktivitäten & Workouts (`2026-10-07-aktivitaeten-und-workouts-design.md`): deren „Google-Termin“ wird zu „Termin im aufgelösten Kalender“, Kalender-Schreibzugriffe laufen über den Schreibdienst aus §3.5 (Details §11) |
-| **Nicht im Scope** | Generischer Scheduler (eigene Spec, Schnittstelle in §8) · CalDAV-Push · wiederkehrende Termine anlegen · Termine bearbeiten (PATCH) · einzelne Instanzen wiederkehrender CalDAV-Termine löschen |
+| **Nicht im Scope** | Generischer Scheduler (eigene Spec, Schnittstelle in §8) · CalDAV-Push · wiederkehrende Termine anlegen · Termine bearbeiten (PATCH) · ganze Serien wiederkehrender Termine löschen |
 
 ---
 
@@ -46,6 +46,9 @@ Planung arbeiten gegen ein gemeinsames `CalendarProvider`-Protokoll.
 | Standard wählen | Dropdown auf der Konfigseite |
 | iCloud-Kalenderauswahl | auf der Konfigseite; wird in `connection.config` gespeichert und beim Bauen an den CalDAV-Client übergeben — **keine** Apple-spezifischen Parameter in den agnostischen Methoden |
 | Periodischer Sync | über den geplanten generischen Scheduler (eigene Spec); diese Spec liefert nur einen aufrufbaren Sync-Kern |
+| Einzelne Instanz löschen (Nachtrag 2026-10-14) | ein einzelnes Datum einer wiederkehrenden Serie lässt sich löschen, auch bei Apple (per `EXDATE` am Master, §4.3) |
+| Apple-Zugang (Nachtrag 2026-10-14) | App-spezifisches Passwort. Eine OAuth-Anmeldung für iCloud gibt es seit Ende 2025 für ausgewählte Apps (Outlook), eine öffentliche Entwickler-Schnittstelle dafür wurde nicht gefunden (§12) |
+| Reihenfolge (Nachtrag 2026-10-14) | nach Stufe 1 AP 1a–3 der Workouts-Spec, vor deren Workout-Schreibteil (AP 4, 5, 7, 9), §11 |
 
 ### 1.2 Daraus abgeleitet (in dieser Spec festgelegt)
 
@@ -57,7 +60,7 @@ Planung arbeiten gegen ein gemeinsames `CalendarProvider`-Protokoll.
 | Kalenderansicht | Umschalter (nur wenn beide verbunden) ist die UI-seitige Entsprechung zu „Nutzer nennt einen anderen Kalender“; alle Aktionen der Seite folgen dem angezeigten Kalender | sonst kämen Slots aus dem einen und der Termin landete im anderen Kalender |
 | Freie Slots | nur Termine des gewählten Kalenders zählen als belegt | Konsequenz der Auswahlregel; bewusst akzeptiert |
 | Login-Kopplung | Google-Login legt weiterhin bei jedem Login eine `google_calendar`-Connection an (`auth/google.py:112-134`, Upsert Zeile 123) | Auth-Fluss unverändert; deshalb muss der Standard eine explizite Einstellung sein, nicht „welche Connection existiert“ |
-| Wiederkehrende externe Termine | werden gelesen und expandiert; einzelne Instanzen über CalDAV löschen → `409 recurring_not_supported`. Google-Instanzen (`singleEvents=true`) sind einzeln löschbar und bleiben es | CalDAV: alle Instanzen teilen eine Ressource (`href`), `DELETE` träfe die ganze Serie; Instanz-Löschen erfordert EXDATE-Pflege am Master. Kairos-eigene Termine sind nie wiederkehrend |
+| Wiederkehrende externe Termine | werden gelesen und expandiert; eine einzelne Instanz löschen: Google per Instanz-ID (`singleEvents=true`, wie heute), CalDAV per `EXDATE` am Master (§4.3). Ein `DELETE` auf die Ressource einer Serie ist verboten | CalDAV: alle Instanzen teilen eine Ressource (`href`), `DELETE` träfe die ganze Serie. Kairos-eigene Termine sind nie wiederkehrend |
 | Nutzer-Zeitzone | `app_user.home_timezone` (existiert, NOT NULL, Default `Europe/Berlin`, `db/models.py:38`) | für schwebende iCal-Zeiten |
 | Bibliotheken | `caldav` (python-caldav) + `icalendar`; Version und sync- oder `aio`-Client in AP 0 festlegen | python-caldav 3.x bietet beides (`caldav.DAVClient`, `caldav.aio.AsyncDAVClient`); beim synchronen Client gilt das etablierte `asyncio.to_thread`-Muster |
 
@@ -69,8 +72,10 @@ Planung arbeiten gegen ein gemeinsames `CalendarProvider`-Protokoll.
 `query_calendar`, `_free_blocks_by_day` (Planung) und das Lagebild (`_kalender_lines`) lesen
 nur aus `calendar_event` via `CalendarEventRepository.list_between()`. Tool-Namen sind
 neutral. `calendar_event` hat `connector` und `calendar_id`; `connection.config` (JSONB)
-existiert bereits. Es gibt keine `user_setting`-Schreib-API: `UserSetting` wird in `src/` nur
-gelesen (`repositories/user_setting.py:33-46`, `routers/calendar.py:201-217`).
+existiert bereits. Auf `main` gibt es keine `user_setting`-Schreib-API: `UserSetting` wird in
+`src/` nur gelesen (`repositories/user_setting.py:33-46`, `routers/calendar.py:201-217`). Stufe 1
+der Workouts-Spec (AP 1c, in Umsetzung) bringt `GET/PUT /api/settings/profile` und schneidet
+Tage nach `app_user.home_timezone`; diese Spec baut darauf auf (§6, §11).
 
 **Fest an Google gekoppelt:**
 
@@ -142,9 +147,13 @@ class ProviderFetch(TypedDict):
   serverseitiger Expansion trägt die Erstinstanz laut RFC 4791 §9.6.5 keine `RECURRENCE-ID`
   und keine `RRULE`; `recurring` wird deshalb immer aus dem Master bestimmt (§4.2).
 - **Google-`recurring`:** aus `recurringEventId` (heute verworfen,
-  `google_calendar/normalize.py:24-50`); nur informativ, Google-Instanzen bleiben löschbar.
+  `google_calendar/normalize.py:24-50`); nur informativ, Google-Instanzen sind per ID einzeln
+  löschbar.
+- **CalDAV-`provider_meta` einer Instanz** trägt zusätzlich `recurrence_id` (UTC) und
+  `recurrence_id_value` (Originalwert samt `TZID` bzw. `VALUE=DATE`), damit `delete_event` den
+  passenden `EXDATE` setzen kann.
 - Fehler: einheitliche Ausnahmen `ProviderAuthError` (→ `reauth_required`),
-  `ProviderUnavailable` (→ 502/503), `RecurringNotSupported` (→ 409). Ihre Meldungen sind
+  `ProviderUnavailable` (→ 502/503), `RecurringStateUnknown` (→ 409, siehe §4.3). Ihre Meldungen sind
   feste Texte ohne URL und ohne Upstream-Antwort (§7).
 - Der bestehende `Connector`-Vertrag (`fetch`/`normalize`/`write_back`) bleibt für die
   Ingestion-Seite; die Provider-Implementierungen dürfen intern darauf aufsetzen.
@@ -187,7 +196,7 @@ async def default_calendar(session, user_id) -> str   # ohne user_setting-Zeile:
 | Tabelle | Änderung |
 |---|---|
 | `user_setting` | `default_calendar TEXT NOT NULL DEFAULT 'google_calendar'`, `CHECK (default_calendar IN ('google_calendar','caldav'))` |
-| `calendar_event` | `provider_meta JSONB NOT NULL DEFAULT '{}'` (CalDAV: `href`, `etag`, `recurring`; Google: `recurring`) |
+| `calendar_event` | `provider_meta JSONB NOT NULL DEFAULT '{}'` (CalDAV: `href`, `etag`, `recurring`, bei Instanzen `recurrence_id`, `recurrence_id_value`; Google: `recurring`) |
 | `plan` | `calendar TEXT NULL`, `CHECK (calendar IN ('google_calendar','caldav'))`; NULL = Bestandspläne, werden als `google_calendar` behandelt |
 | `connection` | keine Schemaänderung; für `connector='caldav'`: `external_account` = Apple-ID, `credentials_enc` = verschlüsseltes JSON `{username, password}`, `config` = `{server_url, principal_url, read_calendars: [url…], write_calendar: url}` |
 
@@ -202,7 +211,7 @@ Nutzer ohne `user_setting`-Zeile behandelt der Resolver als `google_calendar`.
 |---|---|
 | `db/models.py` `UserSetting` | Spalte `default_calendar` + `CheckConstraint` in `__table_args__` |
 | `db/models.py` `CalendarEvent`, `Plan` | Spalten `provider_meta`, `calendar` (+ `CheckConstraint`) |
-| `repositories/user_setting.py` | `UserSettingData.default_calendar`, `_DEFAULT`; neue Upsert-Funktion `set_default_calendar()` (Zeile muss nicht existieren) |
+| `repositories/user_setting.py` | `UserSettingData.default_calendar`, `_DEFAULT`; `set_default_calendar()` über die `user_setting`-Upsert-Funktion aus Stufe 1 AP 1c (Zeile muss nicht existieren) |
 | `repositories/calendar_event.py` `upsert_from_records` | schreibt `calendar_id` und `provider_meta` bei Insert **und** Update |
 | `repositories/calendar_event.py` `upsert_kairos_event` | nimmt `calendar_id` und `provider_meta` entgegen; der Sync-Upsert aktualisiert bei Kairos-Terminen `provider_meta` mit (neue ETag), `source` bleibt `kairos` |
 
@@ -303,10 +312,21 @@ async def replace_event(session, user_id, old: CalendarEvent,
 - **Anlegen:** neue UID (`uuid4@kairos`), `PUT {write_calendar}/{uid}.ics` mit
   `If-None-Match: *` (RFC 4791 §5.3.2); ETag aus der Antwort, fehlt sie oder ist sie schwach,
   per Folge-PROPFIND `getetag` (RFC 4791 §5.3.4); Ergebnis in `provider_meta`.
-- **Löschen:** `provider_meta.recurring` → `RecurringNotSupported`; ebenso, wenn eine
-  zweite Zeile denselben `href` trägt (Verteidigung in der Tiefe: alle Instanzen einer Serie
-  teilen eine Ressource). Sonst `DELETE {href}` mit `If-Match: {etag}`. 412 (Termin extern
+- **Löschen, Einzeltermin** (`provider_meta.recurring` ist `false` und keine zweite Zeile
+  trägt denselben `href`): `DELETE {href}` mit `If-Match: {etag}`. 412 (Termin extern
   geändert) → einmal neu laden und erneut versuchen; 404 → lokal als gelöscht markieren.
+- **Löschen, Instanz einer Serie** (`provider_meta.recurring` ist `true`):
+  1. `GET {href}` → Ressource mit Master und überschriebenen Instanzen, aktuelle ETag.
+  2. Am Master `EXDATE` mit `recurrence_id_value` ergänzen (gleicher Werttyp und gleiche
+     `TZID` wie `DTSTART`, RFC 5545 §3.8.5.1); eine überschriebene Instanz mit dieser
+     `RECURRENCE-ID` aus der Ressource entfernen.
+  3. `PUT {href}` mit `If-Match: {etag}`; 412 → einmal ab Schritt 1 wiederholen.
+  4. Neue ETag in `provider_meta` **aller** Zeilen mit diesem `href` schreiben, die gelöschte
+     Instanz lokal stornieren.
+  Ein `DELETE {href}` wird für Serien nie abgesetzt.
+- **Verteidigung in der Tiefe:** Fehlt `provider_meta.recurring` (Altbestand, Parserfehler)
+  und trägt eine zweite Zeile denselben `href`, wird nichts abgesetzt →
+  `RecurringStateUnknown` (409 `recurring_state_unknown`, „bitte neu synchronisieren“).
 - Externe Termine behalten die bestehende Bestätigungspflicht (`needs_confirmation`). Ob das
   Löschen eines eingeladenen Termins eine Absage an den Organisator auslöst, klärt AP 0
   (§12); trifft es zu, nennt die Vorschau das.
@@ -330,13 +350,15 @@ async def replace_event(session, user_id, old: CalendarEvent,
 - `plan_propose` speichert den aufgelösten Provider in `plan.calendar`; `plan_commit` hat
   **keinen** Parameter und schreibt in `plan.calendar`.
 - `delete_calendar_event`: kein Parameter (Herkunft aus der Zeile).
-- `plan_adjust`: schreibt in dieser Spec keine Kalendertermine (Stand `agent/tools.py:372-397`).
-  Die Workouts-Spec ändert das (Ersatz-Termine); dann gilt `replace_event` (§3.5, §11).
+- `plan_adjust`: schreibt keine Kalendertermine (Stand `agent/tools.py:372-397`). Erst der
+  Coach-Modus (Stufe 3) ersetzt Termine; dann gilt `replace_event` (§3.5, §11).
 - **Vorschau:** Bei Bestätigungs-Tools löst der Dispatcher den Kalender beim Erzeugen des
   Proposals auf und schreibt den Provider in die gespeicherten Argumente; Vorschau
   („Termin in Apple Kalender anlegen: …“) und Ausführung nutzen denselben Wert, auch wenn der
   Nutzer zwischendurch den Standard ändert. Dafür braucht `_summarize`
-  (`agent/dispatcher.py:56-64`) Session und Nutzer.
+  (`agent/dispatcher.py:56-64`) Session und Nutzer. Kommt der Vorschau-Snapshot aus dem
+  Harness-Teil der Workouts-Spec (Teil G, deren AP 4) zuerst, wird der Kalender Teil dieses
+  Snapshots statt der Argumente.
 - **Lagebild:** Datenstand `Kalender: Apple ✓ (Standard) · Google ✓`; nicht verbundene
   Provider werden nur genannt, wenn sie Standard sind. Die Zeilen „Heute/Morgen“ zählen
   Termine des Standardkalenders.
@@ -349,7 +371,7 @@ async def replace_event(session, user_id, old: CalendarEvent,
 | Endpunkt | Änderung |
 |---|---|
 | `GET /api/connections` | zusätzlich `calendar: {default, providers: [{id, label, status, account}]}` |
-| `GET/PATCH /api/settings/calendar` | neu: `{default_calendar}` (erste `user_setting`-Schreib-API, bewusst schmal, Upsert) |
+| `GET/PUT /api/settings/calendar` | neu: `{default_calendar}`. Folgt dem Muster von `GET/PUT /api/settings/profile` aus Stufe 1 der Workouts-Spec (AP 1c) und nutzt dieselbe `user_setting`-Upsert-Funktion; landet diese Spec zuerst, entsteht die Funktion hier |
 | `GET /api/calendar/events`, `/free-slots` | optionaler Query-Parameter `calendar` |
 | `POST /api/calendar/events` | optionales Feld `calendar` |
 | `POST /api/sync/calendar/sync` | neu (siehe §3.4) |
@@ -427,10 +449,10 @@ auf der `/sync`-Seite, solange Jobs nur im `SyncJobRegistry` stehen.
 |---|---|---|
 | **0** | **CalDAV-Verifikation** mit iCloud-Konto von Nutzer 0 (Skript unter `scripts/`, Zugangsdaten nur lokal): alle Punkte aus §12. Anonymisierte Fixtures nach `tests/fixtures/caldav/`. | jeder Punkt aus §12 belegt oder widerlegt und hier nachgetragen; `04` §4 korrigiert; Bibliotheksversion gepinnt |
 | 1 | Protokoll, Typen, Ausnahmen; Google-Provider aus bestehendem Code (inkl. `recurring` aus `recurringEventId`) | bestehende Kalendertests grün, keine Verhaltensänderung |
-| 2 | Migration (`default_calendar`, `provider_meta`, `plan.calendar`); ORM-Modelle und Repository-Änderungen aus §3.3 inkl. `set_default_calendar`; Resolver; `list_between(connector=…)` mit allen vier Aufrufern aus §3.2; Schreibdienst §3.5; Router + Planung auf Resolver | 413+ Tests grün; Google-Pfad unverändert; Test: Nutzer ohne `user_setting`-Zeile → `google_calendar` |
+| 2 | Migration (Basis: Alembic-Head nach Stufe 1, die TimescaleDB entfernt; `default_calendar`, `provider_meta`, `plan.calendar`); ORM-Modelle und Repository-Änderungen aus §3.3 inkl. `set_default_calendar`; Resolver; `list_between(connector=…)` mit allen vier Aufrufern aus §3.2; Schreibdienst §3.5; Router + Planung auf Resolver | 413+ Tests grün; Google-Pfad unverändert; Test: Nutzer ohne `user_setting`-Zeile → `google_calendar` |
 | 3 | Sync-Kern herauslösen, `POST /api/sync/calendar/sync`, Lösch-Abgleich, Verbindungsstatus | Integrationstests: extern gelöschter Termin → `cancelled`; extern gelöschter Kairos-Termin → `cancelled`; vorhandener Kairos-Termin überlebt; fehlgeschlagener Kalender storniert nichts; während des Syncs angelegter Termin bleibt |
 | 4 | CalDAV-Provider (Lesen) gegen Fixtures | Normalizer-Tests auf echten AP-0-Shapes; Serie mit Master vor dem Fenster und überschriebener Instanz; Erstinstanz trägt `UID#DTSTART` |
-| 5 | CalDAV-Provider (Anlegen/Löschen) + Verbinden/Config/Trennen-Endpunkte | Roundtrip gegen echtes iCloud manuell, Fixtures automatisiert; Test: Instanz einer Serie löschen → 409, kein `DELETE` abgesetzt; Schreibkalender landet immer in `read_calendars` |
+| 5 | CalDAV-Provider (Anlegen/Löschen inkl. Instanz-Löschen per `EXDATE`) + Verbinden/Config/Trennen-Endpunkte | Roundtrip gegen echtes iCloud manuell (auch: eine Instanz einer Testserie löschen, Serie bleibt sonst vollständig), Fixtures automatisiert; Tests: Instanz löschen → `PUT` mit `EXDATE`, nie `DELETE`; Erstinstanz und überschriebene Instanz löschen; `TZID`- und Ganztags-Serie; unbekannter Serienstatus → 409; Schreibkalender landet immer in `read_calendars` |
 | 6 | Settings-API, Agent-Parameter, `plan.calendar`, Vorschau im Dispatcher, Lagebild, Tool-Texte; Eval-Fake auf Provider-Ebene (`FakeCalendarProvider` über den Resolver) statt Patch von `_create_calendar_event` | Dispatcher-Tests gegen echte `TOOLS_BY_NAME`; Eval-Fall „trag das in meinen Apple Kalender ein“; Eval setzt keinen HTTP-Aufruf an einen Kalender ab; Test: `ProviderAuthError` erreicht den LLM-Kontext nur mit fester Meldung |
 | 7 | Frontend: Konfigseite, Kalenderansicht (alle Aktionen mit `calendar`), Literale entfernen | `npm run check` 0/0, Vitest grün, manueller Test auf iPhone |
 | 8 | Doku: `01`, `04` (§4.1 Discovery, §4.2 ctag-Poll, §4.3 RRULE-JSONB und `dedup_group` entfallen zugunsten Import-Expansion und Auswahlregel), `06` (§3 Apple, §5.2), `08`, HANDOVER; Workouts-Spec nach §11 | `rg -n "Google-Termin\|Google-Kalendertermin" docs/superpowers/specs/2026-10-07-aktivitaeten-und-workouts-design.md` liefert nur noch als historisch markierte Stellen |
@@ -457,30 +479,39 @@ der Kalenderseite), AP 6 ↔ Eval-Suite, diese Spec ↔ Workouts-Spec (§11).
 - `plan_commit`-Teilfehler (Termine 1..N−1 angelegt, lokale Zeilen zurückgerollt,
   HANDOVER) gilt für CalDAV genauso; die Behebung steht in der Workouts-Spec D.6
   („Keine Exception bei Element-Fehlern“).
-- **Offene Nutzerentscheidungen (Review 2026-10-14):** Instanzen wiederkehrender
-  Apple-Termine in v1 ablehnen oder per EXDATE unterstützen; app-spezifisches Passwort
-  akzeptieren oder zuerst Apples App-Autorisierung prüfen; Reihenfolge gegenüber der
-  Workouts-Spec (§11).
+- **Instanz-Löschen per `EXDATE`** schreibt die ganze Serien-Ressource neu. Wird die Serie
+  parallel auf einem Gerät geändert, schützt `If-Match`; ob iCloud die geänderte Ressource
+  unverändert übernimmt, prüft AP 0 (§12).
 
 ---
 
 ## 11. Abgleich mit der Workouts-Spec
 
-Die Workouts-Spec legt Kalendertermine nicht nur in `plan_commit` an, sondern auch beim
-Terminieren, Verschieben, Ändern und Entfernen von Workouts und in `plan_adjust`
-(`2026-10-07-aktivitaeten-und-workouts-design.md:19-20, 956, 988, 1015-1021, 1049, 1094,
-1180`). Für alle diese Stellen gilt:
+Bezug ist die überarbeitete Fassung der Workouts-Spec („Stufe 1“, Branch
+`claude/stufe1-spec-brainstorming`, Commit `35ffb8b`), nicht der Stand auf `main`. Dort ist
+die Kopplung der Planung an Garmin (`plan_commit`/`plan_adjust`) in den Coach-Modus (Stufe 3)
+verschoben; in Stufe 1 bleiben die Plan-Tools unverändert.
 
-| Workouts-Spec | Mit dieser Spec |
+**Reihenfolge (Entscheidung 2026-10-14):** Stufe 1 AP 1a–3 der Workouts-Spec (in Umsetzung)
+→ diese Spec → Workout-Schreibteil der Workouts-Spec (AP 4, 5, 7, 9) → Stufe 3. Damit baut
+diese Spec auf `GET/PUT /api/settings/profile`, den Ortszeit-Tagesgrenzen und der
+Migrationskette ohne TimescaleDB auf, und der Workout-Schreibteil nutzt von Anfang an den
+Kalender-Schreibdienst (§3.5).
+
+Für den Workout-Schreibteil (Teil D) und den späteren Coach-Modus gilt:
+
+| Workouts-Spec (Stufe-1-Fassung) | Mit dieser Spec |
 |---|---|
-| „Google-Termin anlegen“ (`workout_create`, `workout_schedule`, `plan_commit`) | `create_event` (§3.5) mit dem aufgelösten Kalender; bei `plan_commit` `plan.calendar` |
-| „Google-Termine ersetzen (löschen + neu anlegen)“ (`workout_update`, `workout_schedule(replace_schedule_id)`, `plan_adjust`) | `replace_event` — der neue Termin entsteht im Kalender des alten |
+| „Google-Termin anlegen“ (`workout_create`, `workout_schedule`) | `create_event` (§3.5) mit dem aufgelösten Kalender; die Tools bekommen denselben optionalen Parameter `calendar` wie `propose_calendar_event` |
+| „Google-Termine ersetzen (löschen + neu anlegen)“ (`workout_update`, `workout_schedule(replace_schedule_id)`) | `replace_event`: der neue Termin entsteht im Kalender des alten |
 | „verknüpften Google-Termin löschen“ (`workout_unschedule`, `workout_delete`) | `delete_event` nach Herkunft |
+| D.5 „über den bestehenden Kalenderpfad (`_create_calendar_event` / `_delete_calendar_event`)“ | über den Schreibdienst §3.5 |
 | D.5 „Google nicht verbunden“ | „Kalender nicht verbunden“ (`CalendarNotConnected` für den aufgelösten Kalender) |
-| Tool-Beschreibungen und Eval-Fälle 22–26 („Google-Termin“) | „Kalendertermin“ |
+| §12.2 „Fake-Kalender-Client“ für Eval 22–25 | `FakeCalendarProvider` aus AP 6 dieser Spec |
+| Tool-Beschreibungen und Eval-Fälle 22–23 („Google-Termin“) | „Kalendertermin“ |
+| Stufe 3: `plan_commit` legt je Block einen Termin an, `plan_adjust` ersetzt ihn | `plan.calendar` bzw. `replace_event` |
 
-Beide Specs schreiben `plan_commit` um. Empfohlene Reihenfolge: diese Spec zuerst, damit die
-Workouts-Spec direkt auf den Schreibdienst aufsetzt (Nutzerentscheidung offen, §10).
+AP 8 dieser Spec passt die Workouts-Spec entsprechend an.
 
 ---
 
@@ -501,8 +532,14 @@ Stand der Belege (Review 2026-10-14):
 | 9 | Gleiche UID in zwei Kalendern abgelehnt? | python-caldav Issue #3: ja; offen |
 | 10 | Ganztags-, `TZID`- und schwebende Beispiele; `calendar-timezone` der Kalender | offen |
 | 11 | Fehlercodes: widerrufenes Passwort (401 oder 403), Konto ohne 2FA, Drosselung (429/503, `Retry-After`) | offen |
-| 12 | Apples App-Autorisierung für Drittanbieter-Apps (support.apple.com/121539, seit 2025-10-21): für Kairos nutzbar? | offen |
+| 12 | Instanz-Löschen per `EXDATE`: übernimmt iCloud die per `PUT` geänderte Serien-Ressource (Master mit neuem `EXDATE`, entfernte überschriebene Instanz), und zeigt die Kalender-App auf dem iPhone die Lücke? | offen |
 | 13 | python-caldav-Version (3.4.0 aktuell) und Abhängigkeiten (`niquests`, `lxml`, `recurring-ical-events`, `dnspython`, `pyyaml`) gegen den bestehenden Stack; sync oder `aio` | offen |
+
+Geklärt ohne AP 0: Eine OAuth-Anmeldung für iCloud-Mail, -Kalender und -Kontakte gibt es seit
+Ende 2025 für „supported third-party apps“ (support.apple.com/121539; genutzt von Outlook laut
+Microsoft-Outlook-Blog); eine öffentliche Entwickler-Dokumentation dafür wurde nicht gefunden,
+und „Sign in with Apple“ liefert nur Name und E-Mail. Kairos nutzt deshalb das
+app-spezifische Passwort (Entscheidung 2026-10-14).
 
 Belegt und ohne AP 0 verwendbar: App-spezifisches Passwort erfordert 2FA, gibt Zugriff auf
 Mail, Kontakte und Kalender, maximal 25 aktiv, Wechsel des Hauptpassworts widerruft alle
