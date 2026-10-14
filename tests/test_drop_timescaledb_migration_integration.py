@@ -186,3 +186,21 @@ async def test_v8_script_exits_cleanly_without_activity_record(
     finally:
         await engine.dispose()
     assert "activity_record no longer exists" in capsys.readouterr().out
+
+
+def test_upgrade_refuses_role_that_does_not_bypass_rls(fresh_db_url: str) -> None:
+    command.upgrade(_alembic(fresh_db_url), _PREVIOUS)
+    _seed_user_and_wellness(fresh_db_url, 2)
+    role = f"mig_{uuid.uuid4().hex[:12]}"
+    _run(fresh_db_url, f"CREATE ROLE {role} NOSUPERUSER NOBYPASSRLS LOGIN PASSWORD 'pw'")
+    _run(fresh_db_url, f"GRANT ALL ON alembic_version TO {role}")
+    role_url = re.sub(r"//[^@]+@", f"//{role}:pw@", fresh_db_url)
+    try:
+        with pytest.raises(RuntimeError, match="bypasses RLS"):
+            command.upgrade(_alembic(role_url), "head")
+    finally:
+        _run(fresh_db_url, f"REVOKE ALL ON alembic_version FROM {role}")
+        _run(fresh_db_url, f"DROP ROLE {role}")
+
+    assert _run(fresh_db_url, "SELECT count(*) FROM wellness_sample")[0][0] == 2
+    assert _run(fresh_db_url, "SELECT version_num FROM alembic_version")[0][0] == _PREVIOUS

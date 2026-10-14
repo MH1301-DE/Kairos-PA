@@ -48,6 +48,8 @@ def upgrade() -> None:
         )
 
     seq = _scalar("SELECT pg_get_serial_sequence('wellness_sample', 'id')")
+    # blocks writes until commit so nothing lands between the copy and the drop
+    op.execute("LOCK TABLE wellness_sample IN SHARE MODE")
     op.execute("CREATE TABLE wellness_sample_new (LIKE wellness_sample INCLUDING DEFAULTS)")
     op.execute("INSERT INTO wellness_sample_new SELECT * FROM wellness_sample")
     before = _scalar("SELECT count(*) FROM wellness_sample")
@@ -60,8 +62,9 @@ def upgrade() -> None:
     op.execute("DROP TABLE wellness_sample")
     op.execute("ALTER TABLE wellness_sample_new RENAME TO wellness_sample")
     op.execute(
-        f"SELECT setval('{seq}', coalesce(max(id), 1), max(id) IS NOT NULL) "
-        "FROM wellness_sample"
+        f"SELECT setval('{seq}', "
+        "greatest((SELECT coalesce(max(id), 0) FROM wellness_sample), last_value), "
+        f"is_called OR EXISTS (SELECT 1 FROM wellness_sample)) FROM {seq}"
     )
 
     op.create_primary_key("wellness_sample_pkey", "wellness_sample", ["id"])
