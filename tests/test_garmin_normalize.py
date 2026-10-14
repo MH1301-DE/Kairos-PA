@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
+from pathlib import Path
+
+import pytest
 
 from kairos.connectors.garmin.normalize import normalize_payload
 
@@ -98,3 +102,67 @@ def test_normalize_sleep_into_canonical_records() -> None:
         "duration_seconds": 27600,
         "day": "2026-08-04",
     }
+
+def _activity_fixture() -> list[dict[str, object]]:
+    path = Path(__file__).parent / "fixtures" / "garmin" / "activity_list_item.json"
+    return json.loads(path.read_text(encoding="utf-8"))  # type: ignore[no-any-return]
+
+
+def test_normalize_activity_list_summer_item() -> None:
+    summer, _ = _activity_fixture()
+
+    (record,) = normalize_payload(kind="activity_list", payload=[summer])
+
+    assert record.record_type == "activity"
+    assert record.external_id == "9000000001"
+    assert record.occurred_at == datetime(2025, 6, 20, 11, 50, 53, tzinfo=UTC)
+    d = record.data
+    assert isinstance(d, dict)
+    assert d["sport"] == "running"
+    assert d["sport_profile"] == "running"
+    assert d["garmin_type_id"] == 1
+    assert d["garmin_parent_type_id"] == 17
+    assert d["start_local"] == "2025-06-20T13:50:53"
+    assert d["utc_offset_min"] == 120
+    assert d["description"] is None
+    assert d["moving_duration_s"] == pytest.approx(3434.128, abs=1e-3)
+    assert d["avg_speed_mps"] == pytest.approx(2.703, abs=1e-3)
+    assert d["lap_count"] == 10
+    assert d["garmin_training_load"] == pytest.approx(95.803, abs=1e-3)
+    assert d["garmin_vo2max"] == 50.0
+    assert d["distance_m"] == pytest.approx(9288.78, abs=1e-2)
+    assert d["avg_hr"] == 155.0
+    assert "activity_type" not in d
+
+
+def test_normalize_activity_list_winter_offset_is_plus_60() -> None:
+    _, winter = _activity_fixture()
+
+    (record,) = normalize_payload(kind="activity_list", payload=[winter])
+
+    assert record.occurred_at == datetime(2025, 12, 11, 7, 43, 11, tzinfo=UTC)
+    assert isinstance(record.data, dict)
+    assert record.data["utc_offset_min"] == 60
+    assert record.data["start_local"] == "2025-12-11T08:43:11"
+
+
+def test_normalize_activity_list_without_local_start_has_no_offset() -> None:
+    summer, _ = _activity_fixture()
+    del summer["startTimeLocal"]
+
+    (record,) = normalize_payload(kind="activity_list", payload=[summer])
+
+    assert isinstance(record.data, dict)
+    assert record.data["start_local"] is None
+    assert record.data["utc_offset_min"] is None
+
+
+def test_normalize_activity_list_unknown_type_uses_parent_fallback() -> None:
+    summer, _ = _activity_fixture()
+    summer["activityType"] = {"typeId": 9999, "typeKey": "new_run_variant", "parentTypeId": 1}
+
+    (record,) = normalize_payload(kind="activity_list", payload=[summer])
+
+    assert isinstance(record.data, dict)
+    assert record.data["sport"] == "new_run_variant"
+    assert record.data["sport_profile"] == "running"

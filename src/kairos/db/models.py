@@ -11,6 +11,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Identity,
+    Index,
     Integer,
     LargeBinary,
     SmallInteger,
@@ -18,6 +19,7 @@ from sqlalchemy import (
     Text,
     Time,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, DOUBLE_PRECISION, JSONB, REAL, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -297,9 +299,23 @@ class Activity(Base):
     external_id: Mapped[str] = mapped_column(Text, nullable=False)
     name: Mapped[str | None] = mapped_column(Text)
     sport: Mapped[str | None] = mapped_column(Text)
-    activity_type: Mapped[str | None] = mapped_column(Text)
+    sport_profile: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'generic'")
+    )
+    garmin_type_id: Mapped[int | None] = mapped_column(Integer)
+    garmin_parent_type_id: Mapped[int | None] = mapped_column(Integer)
+    description: Mapped[str | None] = mapped_column(Text)
     start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    start_local: Mapped[datetime | None] = mapped_column(DateTime)
+    utc_offset_min: Mapped[int | None] = mapped_column(SmallInteger)
+    moving_duration_s: Mapped[float | None] = mapped_column(REAL)
+    avg_speed_mps: Mapped[float | None] = mapped_column(REAL)
+    lap_count: Mapped[int | None] = mapped_column(SmallInteger)
+    garmin_training_load: Mapped[float | None] = mapped_column(REAL)
+    garmin_vo2max: Mapped[float | None] = mapped_column(REAL)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deleted_reason: Mapped[str | None] = mapped_column(Text)
     distance_m: Mapped[float | None] = mapped_column(Float)
     duration_s: Mapped[float | None] = mapped_column(Float)
     avg_hr: Mapped[int | None] = mapped_column(SmallInteger)
@@ -319,6 +335,21 @@ class Activity(Base):
 
     __table_args__ = (
         UniqueConstraint("user_id", "external_id", name="uq_activity"),
+        CheckConstraint(
+            "sport_profile IN ('running', 'cycling', 'swimming', 'hiking', 'generic')",
+            name="activity_sport_profile_check",
+        ),
+        CheckConstraint(
+            "deleted_reason IS NULL OR deleted_reason IN ('kairos', 'garmin_sync')",
+            name="activity_deleted_reason_check",
+        ),
+        Index(
+            "ix_activity_user_start_live",
+            "user_id",
+            text("start_at DESC"),
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        Index("ix_activity_user_profile_start", "user_id", "sport_profile", text("start_at DESC")),
     )
 
 

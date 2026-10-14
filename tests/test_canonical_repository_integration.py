@@ -81,3 +81,104 @@ async def test_upsert_many_no_longer_writes_activity_records(session: AsyncSessi
     await session.commit()
 
     assert written == 0
+
+
+def _activity_record(external_id: str, start: datetime, name: str) -> CanonicalRecord:
+    return CanonicalRecord(
+        record_type="activity",
+        external_id=external_id,
+        occurred_at=start,
+        data={
+            "name": name,
+            "sport": "running",
+            "sport_profile": "running",
+            "garmin_type_id": 1,
+            "garmin_parent_type_id": 17,
+            "start_local": (start + timedelta(hours=2)).replace(tzinfo=None).isoformat(),
+            "utc_offset_min": 120,
+            "end_at": (start + timedelta(hours=1)).isoformat(),
+            "distance_m": 10000.0,
+            "lap_count": 10,
+        },
+    )
+
+
+async def _upsert_activity(
+    session: AsyncSession, user_id: UUID, raw_payload_id: int, record: CanonicalRecord
+) -> None:
+    await SqlCanonicalRepository(session).upsert_many(
+        user_id=user_id,
+        connector_id="garmin",
+        kind="activity_list",
+        records=[record],
+        raw_payload_id=raw_payload_id,
+    )
+
+
+async def _activity_setup(session: AsyncSession, email: str) -> tuple[UUID, int]:
+    user_id = uuid4()
+    await _insert_user(session, user_id, email, f"sub-{email}")
+    raw_payload_id = await SqlRawPayloadRepository(session=session).upsert(
+        user_id=user_id,
+        connector_id="garmin",
+        kind="activity_list",
+        window=Window(start=datetime(2026, 8, 4, tzinfo=UTC), end=datetime(2026, 8, 5, tzinfo=UTC)),
+        payload=[],
+        content_hash=email.encode(),
+    )
+    return user_id, raw_payload_id
+
+
+@pytest.mark.asyncio
+async def test_activity_upsert_updates_times_and_new_columns(session: AsyncSession) -> None:
+    user_id, raw_id = await _activity_setup(session, "upsert-times@test.com")
+    first = datetime(2026, 8, 4, 9, 0, tzinfo=UTC)
+    await _upsert_activity(session, user_id, raw_id, _activity_record("a-1", first, "Run"))
+    moved = first + timedelta(minutes=30)
+    await _upsert_activity(session, user_id, raw_id, _activity_record("a-1", moved, "Run 2"))
+
+    row = (
+        await session.execute(
+            text(
+                "SELECT name, start_at, end_at, start_local, utc_offset_min, sport_profile,"
+                " lap_count FROM activity WHERE user_id = :u"
+            ),
+            {"u": str(user_id)},
+        )
+    ).one()
+    assert row.name == "Run 2"
+    assert row.start_at == moved
+    assert row.end_at == moved + timedelta(hours=1)
+    assert row.start_local == datetime(2026, 8, 4, 11, 30)
+    assert row.utc_offset_min == 120
+    assert row.sport_profile == "running"
+    assert row.lap_count == 10
+
+
+@pytest.mark.asyncio
+async def test_activity_upsert_reactivates_deleted_and_keeps_fit_payload(
+    session: AsyncSession,
+) -> None:
+    user_id, raw_id = await _activity_setup(session, "upsert-reactivate@test.com")
+    start = datetime(2026, 8, 4, 9, 0, tzinfo=UTC)
+    await _upsert_activity(session, user_id, raw_id, _activity_record("a-2", start, "Run"))
+    await session.execute(
+        text(
+            "UPDATE activity SET deleted_at = now(), deleted_reason = 'garmin_sync',"
+            " fit_payload_id = :p WHERE user_id = :u"
+        ),
+        {"u": str(user_id), "p": raw_id},
+    )
+
+    await _upsert_activity(session, user_id, raw_id, _activity_record("a-2", start, "Run"))
+
+    row = (
+        await session.execute(
+            text("SELECT deleted_at, deleted_reason, fit_payload_id FROM activity"
+                 " WHERE user_id = :u"),
+            {"u": str(user_id)},
+        )
+    ).one()
+    assert row.deleted_at is None
+    assert row.deleted_reason is None
+    assert row.fit_payload_id == raw_id

@@ -104,36 +104,36 @@ class SqlCanonicalRepository:
         if not isinstance(record.data, dict):
             return
         d = record.data
+        fields = {
+            "name": d.get("name"),
+            "sport": d.get("sport"),
+            "sport_profile": d.get("sport_profile") or "generic",
+            "garmin_type_id": d.get("garmin_type_id"),
+            "garmin_parent_type_id": d.get("garmin_parent_type_id"),
+            "description": d.get("description"),
+            "start_at": record.occurred_at,
+            "end_at": _parse_dt(d.get("end_at")),
+            "start_local": _parse_naive_dt(d.get("start_local")),
+            "utc_offset_min": d.get("utc_offset_min"),
+            "distance_m": d.get("distance_m"),
+            "duration_s": d.get("duration_s"),
+            "moving_duration_s": d.get("moving_duration_s"),
+            "avg_speed_mps": d.get("avg_speed_mps"),
+            "avg_hr": d.get("avg_hr"),
+            "max_hr": d.get("max_hr"),
+            "elevation_gain_m": d.get("elevation_gain_m"),
+            "calories": d.get("calories"),
+            "lap_count": d.get("lap_count"),
+            "garmin_training_load": d.get("garmin_training_load"),
+            "garmin_vo2max": d.get("garmin_vo2max"),
+            "raw_payload_id": raw_payload_id,
+        }
         stmt = (
             insert(Activity)
-            .values(
-                user_id=user_id,
-                external_id=record.external_id,
-                name=d.get("name"),
-                sport=d.get("sport"),
-                activity_type=d.get("activity_type"),
-                start_at=record.occurred_at,
-                end_at=_parse_dt(d.get("end_at")),
-                distance_m=d.get("distance_m"),
-                duration_s=d.get("duration_s"),
-                avg_hr=d.get("avg_hr"),
-                max_hr=d.get("max_hr"),
-                elevation_gain_m=d.get("elevation_gain_m"),
-                calories=d.get("calories"),
-                raw_payload_id=raw_payload_id,
-            )
+            .values(user_id=user_id, external_id=record.external_id, **fields)
             .on_conflict_do_update(
                 constraint="uq_activity",
-                set_={
-                    "name": d.get("name"),
-                    "sport": d.get("sport"),
-                    "distance_m": d.get("distance_m"),
-                    "duration_s": d.get("duration_s"),
-                    "avg_hr": d.get("avg_hr"),
-                    "max_hr": d.get("max_hr"),
-                    "elevation_gain_m": d.get("elevation_gain_m"),
-                    "calories": d.get("calories"),
-                },
+                set_={**fields, "deleted_at": None, "deleted_reason": None},
             )
         )
         await self._session.execute(stmt)
@@ -171,6 +171,15 @@ class SqlCanonicalRepository:
                 return None
             self._metric_cache[code] = row
         return self._metric_cache[code]
+
+
+def _parse_naive_dt(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
 
 
 def _parse_dt(value: object) -> datetime | None:
