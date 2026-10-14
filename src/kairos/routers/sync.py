@@ -10,10 +10,11 @@ from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kairos.activities.fit_archive import ingest_fit_files
+from kairos.activities.reconcile import reconcile_deleted_activities
 from kairos.auth.crypto import decrypt, kek_from_settings, unwrap_dek
 from kairos.auth.deps import current_user
 from kairos.config import settings
@@ -221,12 +222,13 @@ async def _run_backfill_task(
         connector = GarminConnector(
             garmin, fit_download_pause_s=settings.garmin_fit_download_pause_s
         )
+        reconciled_days: set[date] = set()
         service = SyncService(
             raw_repo=SqlRawPayloadRepository(session=session),
             canonical_repo=SqlCanonicalRepository(session=session),
             sync_state_repo=SqlSyncStateRepository(session=session),
             hash_payload=payload_sha256,
-            post_window=_make_fit_ingest_hook(session, user_id),
+            post_window=_make_fit_ingest_hook(session, user_id, reconciled_days),
         )
 
         fetched_froms: list[datetime] = []
@@ -269,13 +271,16 @@ async def _run_backfill_task(
                 finally:
                     job.finished_at = datetime.now(UTC).isoformat()
 
-        if fetched_froms:
+        if fetched_froms or reconciled_days:
+            starts = [f.date() for f in fetched_froms] + list(reconciled_days)
             await _recompute_after_sync(
-                session, user_id, start=min(fetched_froms).date(), end=date.today()
+                session, user_id, start=min(starts), end=date.today()
             )
 
 
-def _make_fit_ingest_hook(session: AsyncSession, user_id: UUID) -> PostWindowHook:
+def _make_fit_ingest_hook(
+    session: AsyncSession, user_id: UUID, reconciled_days: set[date]
+) -> PostWindowHook:
     async def _hook(
         kind: str, envelope: RawPayloadEnvelope, raw_payload_id: int, file_ids: dict[str, int]
     ) -> None:
@@ -284,6 +289,16 @@ def _make_fit_ingest_hook(session: AsyncSession, user_id: UUID) -> PostWindowHoo
             await ingest_fit_files(
                 session, user_id=user_id, file_ids_by_key=file_ids, files=envelope.files
             )
+        if kind == "activity_list":
+            ids = await reconcile_deleted_activities(
+                session, user_id=user_id, window=envelope.window, payload=envelope.payload
+            )
+            if ids:
+                rows = await session.execute(
+                    text("SELECT start_at FROM activity WHERE id = ANY(:ids)"), {"ids": ids}
+                )
+                # UTC sample days of the removed streams, as the HR bucket recompute groups them
+                reconciled_days.update(r[0].date() for r in rows if r[0] is not None)
 
     return _hook
 

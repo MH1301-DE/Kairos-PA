@@ -60,7 +60,7 @@ class SqlDataReadRepository:
     async def list_activities(
         self, *, user_id: UUID, limit: int = 50, cursor: str | None = None
     ) -> Page[Activity]:
-        stmt = select(Activity).where(Activity.user_id == user_id)
+        stmt = select(Activity).where(Activity.user_id == user_id, Activity.deleted_at.is_(None))
         if cursor is not None:
             cursor_start_at, cursor_id = _decode_cursor(cursor)
             if cursor_start_at is None:
@@ -91,7 +91,9 @@ class SqlDataReadRepository:
     ) -> ActivityDetail | None:
         activity_row = await self._session.execute(
             select(Activity).where(
-                Activity.user_id == user_id, Activity.external_id == external_id
+                Activity.user_id == user_id,
+                Activity.external_id == external_id,
+                Activity.deleted_at.is_(None),
             )
         )
         activity = activity_row.scalar_one_or_none()

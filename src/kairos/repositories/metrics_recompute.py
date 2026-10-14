@@ -32,6 +32,7 @@ async def recompute_hr_bucket_seconds_daily(
                        h.v
                 FROM activity_stream s
                 JOIN activity_stream_axis ax ON ax.activity_id = s.activity_id
+                JOIN activity a ON a.id = s.activity_id AND a.deleted_at IS NULL
                 CROSS JOIN LATERAL unnest(s.v4) WITH ORDINALITY AS h(v, ord)
                 WHERE s.channel = 'hr' AND s.user_id = :uid AND h.v IS NOT NULL
             ) samples

@@ -103,7 +103,7 @@ async def sleep_hours_range(
 
 async def observed_max_hr_ever(session: AsyncSession, *, user_id: UUID) -> int | None:
     result = await session.execute(
-        text("SELECT max(max_hr) FROM activity WHERE user_id = :uid"),
+        text("SELECT max(max_hr) FROM activity WHERE user_id = :uid AND deleted_at IS NULL"),
         {"uid": str(user_id)},
     )
     value = result.scalar_one_or_none()

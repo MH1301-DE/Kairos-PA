@@ -232,7 +232,7 @@ async def test_sync_hook_ingests_only_activity_fit_windows() -> None:
         payload={"activities": []},
         files=(_file("1", b"zip"),),
     )
-    hook = sync_module._make_fit_ingest_hook(session, uid)
+    hook = sync_module._make_fit_ingest_hook(session, uid, set())
 
     with patch.object(sync_module, "ingest_fit_files", AsyncMock(return_value=[])) as ingest:
         await hook("activity_list", envelope, 1, {"1": 5})
