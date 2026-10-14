@@ -192,6 +192,19 @@ async def test_no_warning_when_measured_below_used(
 
 
 @pytest.mark.asyncio
+async def test_no_warning_when_measured_equals_used(
+    client: AsyncClient, session: AsyncSession, user_id: uuid.UUID
+) -> None:
+    await _insert_activity(session, user_id, max_hr=214, days_ago=30)
+    await session.commit()
+    await client.put("/api/settings/profile", json={"hr_max_override": 214})
+
+    body = (await client.get("/api/settings/profile")).json()
+    assert body["hr_max_measured_12m"] == 214
+    assert body["hr_max_warning"] is None
+
+
+@pytest.mark.asyncio
 async def test_profile_is_isolated_per_user(
     session: AsyncSession, app_session: AsyncSession
 ) -> None:
