@@ -26,6 +26,7 @@ from kairos.repositories.raw_payload import SqlRawPayloadRepository
 logger = logging.getLogger(__name__)
 
 _COMMIT_EVERY = 10
+_MAX_CONSECUTIVE_FAILURES = 3
 # activity_list windows are keyed by Garmin's local start date, not the UTC date
 _LIST_WINDOW_SLACK = timedelta(days=2)
 
@@ -169,6 +170,7 @@ class _Downloader:
         self._attempted = False
         self._gc = importlib.import_module("garminconnect")
         self.aborted_reason: str | None = None
+        self.consecutive_failures = 0
 
     async def download(self, external_id: str) -> bytes:
         if self._attempted and self._pause_s > 0:
@@ -186,6 +188,12 @@ class _Downloader:
         except self._gc.GarminConnectAuthenticationError:
             self.aborted_reason = "auth"
             raise
+        except Exception:
+            self.consecutive_failures += 1
+            if self.consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
+                self.aborted_reason = "consecutive_failures"
+            raise
+        self.consecutive_failures = 0
         return content
 
 
@@ -201,7 +209,7 @@ async def _refetch(
     try:
         content = await downloader.download(activity.external_id)
     except Exception as exc:
-        if downloader.aborted_reason is not None:
+        if downloader.aborted_reason in ("rate_limited", "auth"):
             logger.warning("FIT refetch aborted (%s): %s", downloader.aborted_reason, exc)
         else:
             result.fetch_failed.append({"activity_id": activity.external_id, "reason": str(exc)})

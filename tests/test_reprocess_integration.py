@@ -306,3 +306,57 @@ async def test_reprocess_twice_keeps_stream_row_counts(
 
     assert first > 0
     assert await _count() == first
+
+
+@pytest.mark.asyncio
+async def test_three_consecutive_failures_abort_refetch(
+    session: AsyncSession, app_session: AsyncSession
+) -> None:
+    ids = ("3001", "3002", "3003", "3004")
+    uid = await _user(session)
+    await _seed_list(session, uid, ids)
+    await _seed_json(session, uid, "3004", 60)
+    await session.commit()
+    boom = garminconnect.GarminConnectNotFoundError("404 gone")
+    garmin = FakeGarmin({x: boom for x in ids[:3]})
+
+    result = await _run(app_session, uid, garmin, refetch_fit=True, sleep=SleepRecorder())
+
+    assert garmin.calls == ["3001", "3002", "3003"]
+    assert result.aborted_reason == "consecutive_failures"
+    assert len(result.fetch_failed) == 3
+    assert (result.fetched, result.from_json) == (0, 1)
+
+
+@pytest.mark.asyncio
+async def test_success_resets_failure_counter(
+    session: AsyncSession, app_session: AsyncSession
+) -> None:
+    ids = ("4001", "4002", "4003", "4004", "4005")
+    uid = await _user(session)
+    await _seed_list(session, uid, ids)
+    await session.commit()
+    boom = garminconnect.GarminConnectNotFoundError("404 gone")
+    garmin = FakeGarmin({x: boom for x in ("4001", "4002", "4004", "4005")})
+
+    result = await _run(app_session, uid, garmin, refetch_fit=True, sleep=SleepRecorder())
+
+    assert garmin.calls == list(ids)
+    assert result.aborted_reason is None
+    assert result.fetched == 1
+
+
+@pytest.mark.asyncio
+async def test_activity_with_fit_payload_is_not_downloaded_again(
+    session: AsyncSession, app_session: AsyncSession
+) -> None:
+    uid = await _user(session)
+    await _seed_list(session, uid)
+    await session.commit()
+    await _run(app_session, uid, FakeGarmin(), refetch_fit=True, sleep=SleepRecorder())
+    garmin = FakeGarmin()
+
+    result = await _run(app_session, uid, garmin, refetch_fit=True, sleep=SleepRecorder())
+
+    assert garmin.calls == []
+    assert result.fetched == 0 and result.aborted_reason is None
