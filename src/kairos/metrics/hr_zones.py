@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+from typing import Literal
 
 _ZONE_FRACTIONS: tuple[tuple[float, float, int], ...] = (
     (0.50, 0.60, 1),
@@ -52,3 +53,22 @@ def estimate_hr_max(
         age_estimate = 220 - age
     candidates = [v for v in (age_estimate, observed_max_hr) if v is not None]
     return max(candidates) if candidates else None
+
+
+HrMaxSource = Literal["eingetragen", "aus Alter"]
+
+
+def resolve_hr_max(
+    birth_date: date | None,
+    hr_max_override: int | None,
+    *,
+    as_of: date,
+) -> tuple[int | None, HrMaxSource | None]:
+    if hr_max_override is not None:
+        return hr_max_override, "eingetragen"
+    if birth_date is None:
+        return None, None
+    age = as_of.year - birth_date.year - (
+        (as_of.month, as_of.day) < (birth_date.month, birth_date.day)
+    )
+    return 220 - age, "aus Alter"

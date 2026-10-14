@@ -102,6 +102,15 @@
 	</div>
 
 	<div class="menu-section">
+		<h3>Profil</h3>
+		<a
+			href={resolve('/settings')}
+			class="btn btn-secondary menu-action"
+			onclick={() => (mobileMenuOpen = false)}>Einstellungen (HFmax, Ruhepuls)</a
+		>
+	</div>
+
+	<div class="menu-section">
 		<h3>Datenabgleich</h3>
 		<a
 			href={resolve('/sync')}

@@ -12,6 +12,7 @@ from kairos.routers.goals import router as goals_router
 from kairos.routers.health import router as health_router
 from kairos.routers.memory import router as memory_router
 from kairos.routers.metrics import router as metrics_router
+from kairos.routers.settings_profile import router as settings_profile_router
 from kairos.routers.sync import router as sync_router
 
 app = FastAPI(title="Kairos", version="0.1.0")
@@ -31,3 +32,4 @@ app.include_router(goals_router)
 app.include_router(memory_router)
 app.include_router(agent_router)
 app.include_router(dashboard_router)
+app.include_router(settings_profile_router)
