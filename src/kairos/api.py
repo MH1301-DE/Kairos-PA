@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 
 from kairos.auth.google import router as auth_router
+from kairos.routers.activities import router as activities_router
 from kairos.routers.agent import router as agent_router
 from kairos.routers.calendar import router as calendar_router
 from kairos.routers.connections import router as connections_router
@@ -17,6 +18,7 @@ app = FastAPI(title="Kairos", version="0.1.0")
 app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(sync_router)
+app.include_router(activities_router)
 # custom_metrics_router must be included before metrics_router -- metrics_router's
 # GET /api/metrics/{metric_id} would otherwise swallow GET /api/metrics/custom
 # (Starlette matches routes in registration order, both routers share the /api/metrics prefix)

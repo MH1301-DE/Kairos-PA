@@ -7,6 +7,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID
 
 
@@ -28,6 +29,8 @@ class SyncJob:
     error: str | None = None
     started_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     finished_at: str | None = None
+    # summary of jobs that report more than progress (e.g. reprocess)
+    result: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -42,6 +45,7 @@ class SyncJob:
             "error": self.error,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
+            "result": self.result,
         }
 
 

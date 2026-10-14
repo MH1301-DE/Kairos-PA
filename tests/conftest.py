@@ -57,6 +57,10 @@ def run_migrations(pg_container, db_url):
             await conn.execute(text(
                 "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO kairos_app"
             ))
+            # serial ids for rows the app role inserts (e.g. raw_payload, activity)
+            await conn.execute(text(
+                "GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO kairos_app"
+            ))
         await engine.dispose()
 
     asyncio.run(_setup_app_role())
