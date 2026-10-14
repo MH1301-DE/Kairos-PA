@@ -61,7 +61,8 @@ async def test_stream_tables_exist_with_rls(session: AsyncSession) -> None:
 async def test_stream_columns_use_lz4(session: AsyncSession) -> None:
     rows = await session.execute(
         text(
-            "SELECT c.relname, a.attname, a.attcompression::text AS attcompression FROM pg_attribute a "
+            "SELECT c.relname, a.attname, a.attcompression::text AS attcompression "
+            "FROM pg_attribute a "
             "JOIN pg_class c ON c.oid = a.attrelid "
             "WHERE (c.relname, a.attname) IN "
             "(('activity_stream_axis','t_offset_s'),('activity_stream','v4'),"
