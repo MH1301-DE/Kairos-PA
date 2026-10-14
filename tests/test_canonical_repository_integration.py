@@ -81,10 +81,3 @@ async def test_upsert_many_no_longer_writes_activity_records(session: AsyncSessi
     await session.commit()
 
     assert written == 0
-    count = (
-        await session.execute(
-            text("SELECT COUNT(*) FROM activity_record WHERE user_id = :uid"),
-            {"uid": str(user_id)},
-        )
-    ).scalar_one()
-    assert count == 0

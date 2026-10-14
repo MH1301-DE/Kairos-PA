@@ -15,7 +15,7 @@ from alembic import command
 # Ryuk reaper fails on macOS/Colima — disable it
 os.environ.setdefault("TESTCONTAINERS_RYUK_DISABLED", "true")
 
-POSTGRES_IMAGE = "timescale/timescaledb:latest-pg16"
+POSTGRES_IMAGE = "postgres:16"
 
 
 @pytest.fixture(scope="session")

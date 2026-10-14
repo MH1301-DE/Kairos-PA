@@ -350,6 +350,8 @@ Genutzt wird nur `create_hypertable`; Kompression und Continuous Aggregates sind
 5. Image-Wechsel auf `postgres:16` (offizielles Image) in `deploy/docker-compose.yml`, `deploy/docker-compose.dev.yml`, `.github/workflows/ci.yml` und `tests/conftest.py`. Die Daten wandern per `pg_dump -Fc` / `pg_restore` in ein neues Volume; das `timescaledb-ha`-Image nutzt ein anderes Datenverzeichnis und eine andere UID, eine direkte Übernahme des Volumes geht nicht.
 6. Modelle: `ActivityRecord` entfällt; die Kommentare „Timescale needs the partitioning column …“ und `observed_at` als PK-Bestandteil entfallen.
 
+**Nachtrag 2026-10-14 (Umsetzung, Q2).** Schritte 3 und 4 sind eine Migration (`fed6d2d1311b_drop_timescaledb`). Damit `alembic upgrade head` auf einem leeren `postgres:16` durchläuft, ist die alte Migration `6bf30be597a0` ein No-op, wenn `pg_available_extensions` keine Zeile `timescaledb` hat; `wellness_sample` behält dann den PK `(id)`, und die neue Migration baut die Tabelle in beiden Fällen gleich um. Die Dev-DB hat zusätzlich `timescaledb_toolkit`; die Migration löscht erst `timescaledb_toolkit`, dann `timescaledb` (beide `IF EXISTS`). Sie bricht ab, wenn die Rolle RLS nicht umgeht (sonst würde die Kopie unter FORCE RLS leer) oder wenn Aktivitäten `activity_record`-Zeilen, aber keine `activity_stream_axis` haben. Der von Timescale angelegte Index `wellness_sample_observed_at_idx` wird nicht nachgebaut; der Unique-Key `(user_id, metric_id, observed_at)` deckt alle Abfragen ab.
+
 Das Vorgehen gehört als Runbook in `docs/HANDOVER.md`. Die Doku-Folgen (ADR-0002, `01`, `02`, `07`, `README.md`) sind Teil von AP 8.
 
 ### A.8 Tagesgrenzen nach Ortszeit (D8)

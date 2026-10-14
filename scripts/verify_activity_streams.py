@@ -1,6 +1,7 @@
 """V8: compare activity_stream element counts with activity_record rows.
 
 Usage: .venv/bin/python scripts/verify_activity_streams.py --user-id <uuid>
+Only meaningful before migration fed6d2d1311b (drop_timescaledb) removes activity_record.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ _STREAM_COUNTS = text(
 _RECORD_COUNTS = text(
     "SELECT activity_id, metric, count(*) FROM activity_record WHERE user_id = :u GROUP BY 1, 2"
 )
+_RECORDS_TABLE = text("SELECT to_regclass('activity_record')")
 _EXTERNAL_IDS = text("SELECT id, external_id FROM activity WHERE user_id = :u")
 _SOURCES = text("SELECT source, count(*) FROM activity_stream_axis WHERE user_id = :u GROUP BY 1")
 _SIZE = text(
@@ -44,6 +46,12 @@ async def _counts(session: AsyncSession, stmt: TextClause, uid: uuid.UUID) -> Co
 async def run(uid: uuid.UUID) -> int:
     async with async_session_factory() as session:
         install_rls_listener(session, uid)
+        if (await session.execute(_RECORDS_TABLE)).scalar_one() is None:
+            print(
+                "activity_record no longer exists (dropped by migration fed6d2d1311b); "
+                "V8 can only run before that migration."
+            )
+            return 0
         stream = await _counts(session, _STREAM_COUNTS, uid)
         records = await _counts(session, _RECORD_COUNTS, uid)
         ext = {

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from uuid import uuid4
 
 import pytest
@@ -157,18 +157,9 @@ async def test_stream_buckets_match_legacy_activity_record_result(session: Async
             {"uid": str(user_id), "s": start_at},
         )
     ).scalar_one()
-    values = [142.0, 143.0, 144.9, 145.0, 150.0, 139.9]
-    for i, v in enumerate(values):
-        await session.execute(
-            text(
-                "INSERT INTO activity_record (user_id, activity_id, recorded_at, metric, value) "
-                "VALUES (:uid, :aid, :ts, 'hr', :v)"
-            ),
-            {"uid": str(user_id), "aid": activity_id, "ts": start_at + timedelta(seconds=i),
-             "v": v},
-        )
     await seed_hr_stream(
-        session, user_id=user_id, activity_id=activity_id, start_at=start_at, values=list(values)
+        session, user_id=user_id, activity_id=activity_id, start_at=start_at,
+        values=[142.0, 143.0, 144.9, 145.0, 150.0, 139.9],
     )
     await session.commit()
 

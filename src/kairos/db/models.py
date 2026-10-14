@@ -250,10 +250,7 @@ class WellnessSample(Base):
     data_source_id: Mapped[int | None] = mapped_column(
         ForeignKey("data_source.id", ondelete="SET NULL")
     )
-    # part of composite PK: Timescale needs the partitioning column in every PK/unique constraint
-    observed_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, primary_key=True
-    )
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     value: Mapped[float] = mapped_column(Float, nullable=False)
     quality: Mapped[str] = mapped_column(String(16), nullable=False, server_default="ok")
     raw_payload_id: Mapped[int | None] = mapped_column(
@@ -361,35 +358,6 @@ class ActivityStream(Base):
 
     __table_args__ = (
         CheckConstraint("num_nonnulls(v4, v8) = 1", name="activity_stream_one_array_check"),
-    )
-
-
-class ActivityRecord(Base):
-    __tablename__ = "activity_record"
-
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("app_user.id", ondelete="CASCADE"), nullable=False
-    )
-    activity_id: Mapped[int] = mapped_column(
-        ForeignKey("activity.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    # part of composite PK: Timescale needs the partitioning column in every PK/unique constraint
-    recorded_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, primary_key=True
-    )
-    metric: Mapped[str] = mapped_column(Text, nullable=False)
-    value: Mapped[float] = mapped_column(Float, nullable=False)
-    raw_payload_id: Mapped[int | None] = mapped_column(
-        ForeignKey("raw_payload.id", ondelete="SET NULL")
-    )
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-    __table_args__ = (
-        UniqueConstraint(
-            "user_id", "activity_id", "recorded_at", "metric", name="uq_activity_record"
-        ),
     )
 
 

@@ -71,14 +71,14 @@ services:
 
   # ------------------------------------------------------------- Storage
   postgres:
-    image: timescale/timescaledb-ha:pg16
+    image: postgres:16
     restart: unless-stopped
     environment:
       POSTGRES_DB: kairos
       POSTGRES_USER: kairos
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
-      - pgdata:/home/postgres/pgdata
+      - pgdata16:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U kairos -d kairos"]
       interval: 10s
@@ -148,7 +148,7 @@ networks:
     internal: false   # Ausgehend nötig (Garmin, Google, LLM-API)
 
 volumes:
-  pgdata:
+  pgdata16:
   redisdata:
   caddy_data:
   caddy_config:
