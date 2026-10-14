@@ -19,7 +19,7 @@ from sqlalchemy import (
     Time,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, DOUBLE_PRECISION, JSONB, REAL, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -153,11 +153,18 @@ class RawPayload(Base):
     content_hash: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     payload_gzip: Mapped[bytes | None] = mapped_column(LargeBinary)
     object_key: Mapped[str | None] = mapped_column(Text)
+    payload_format: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default="json_gzip"
+    )
 
     __table_args__ = (
         UniqueConstraint(
             "user_id", "connector", "kind", "window_start", "content_hash",
             name="uq_raw_payload",
+        ),
+        CheckConstraint(
+            "payload_format IN ('json_gzip', 'fit_zip')",
+            name="raw_payload_payload_format_check",
         ),
     )
 
@@ -302,8 +309,9 @@ class Activity(Base):
     max_hr: Mapped[int | None] = mapped_column(SmallInteger)
     elevation_gain_m: Mapped[float | None] = mapped_column(Float)
     calories: Mapped[int | None] = mapped_column(Integer)
-    # future: path to raw FIT bytes in object store
-    fit_object_key: Mapped[str | None] = mapped_column(Text)
+    fit_payload_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("raw_payload.id", ondelete="SET NULL")
+    )
     data_source_id: Mapped[int | None] = mapped_column(
         ForeignKey("data_source.id", ondelete="SET NULL")
     )
@@ -314,6 +322,45 @@ class Activity(Base):
 
     __table_args__ = (
         UniqueConstraint("user_id", "external_id", name="uq_activity"),
+    )
+
+
+class ActivityStreamAxis(Base):
+    __tablename__ = "activity_stream_axis"
+
+    activity_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("activity.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app_user.id", ondelete="CASCADE"), nullable=False
+    )
+    start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    t_offset_s: Mapped[list[int]] = mapped_column(ARRAY(Integer), nullable=False)
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    algo_version: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "source IN ('fit_zip', 'fit_json')", name="activity_stream_axis_source_check"
+        ),
+    )
+
+
+class ActivityStream(Base):
+    __tablename__ = "activity_stream"
+
+    activity_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("activity.id", ondelete="CASCADE"), primary_key=True
+    )
+    channel: Mapped[str] = mapped_column(Text, primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app_user.id", ondelete="CASCADE"), nullable=False
+    )
+    v4: Mapped[list[float | None] | None] = mapped_column(ARRAY(REAL))
+    v8: Mapped[list[float | None] | None] = mapped_column(ARRAY(DOUBLE_PRECISION))
+
+    __table_args__ = (
+        CheckConstraint("num_nonnulls(v4, v8) = 1", name="activity_stream_one_array_check"),
     )
 
 
