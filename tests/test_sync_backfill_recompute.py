@@ -108,3 +108,29 @@ async def test_recompute_failure_keeps_jobs_done(harness: SimpleNamespace) -> No
     assert jobs[0].error is None
     harness.session.rollback.assert_awaited()
     harness.recompute.metrics.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reconciled_days_extend_recompute_start(harness: SimpleNamespace) -> None:
+    async def _backfill(**_: Any) -> BackfillResult:
+        hook = sync_module.SyncService.call_args.kwargs["post_window"]
+        envelope = SimpleNamespace(window=None, payload=[], files=())
+        await hook("activity_list", envelope, 1, {})
+        return BackfillResult(1, True, None, fetched_from=datetime(2026, 8, 5, tzinfo=UTC))
+
+    marked = [(7, datetime(2026, 8, 2, 23, 0, tzinfo=UTC))]
+    registry = SyncJobRegistry()
+    user_id = uuid4()
+    jobs = registry.create_jobs(
+        user_id=user_id, connector="garmin", kinds=["activity_list"],
+        from_date="2026-08-01", to_date="2026-08-10",
+    )
+    harness.service.run_backfill = AsyncMock(side_effect=_backfill)
+    with patch.object(sync_module, "reconcile_deleted_activities", AsyncMock(return_value=marked)):
+        await sync_module._run_backfill_task(
+            user_id=user_id, from_dt=_FROM, to_dt=_TO, jobs=jobs, registry=registry
+        )
+
+    harness.recompute.hr.assert_awaited_once_with(
+        harness.session, user_id=user_id, start=date(2026, 8, 2), end=date.today()
+    )

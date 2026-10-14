@@ -67,7 +67,7 @@ async def test_missing_activity_is_marked_and_present_one_is_kept(session: Async
         session, user_id=uid, window=WINDOW, payload=[{"activityId": 2}]
     )
 
-    assert ids == [gone]
+    assert [i for i, _ in ids] == [gone]
     at, reason = await _deleted(session, gone)
     assert at is not None and reason == "garmin_sync"
     assert (await _deleted(session, kept)) == (None, None)
@@ -116,7 +116,7 @@ async def test_run_after_midnight_local_is_found_by_local_date(session: AsyncSes
 
     ids = await reconcile_deleted_activities(session, user_id=uid, window=window, payload=[])
 
-    assert ids == [a]
+    assert [i for i, _ in ids] == [a]
 
 
 @pytest.mark.asyncio
@@ -180,3 +180,18 @@ async def test_activity_list_hook_reconciles_and_collects_days(session: AsyncSes
 
     assert (await _deleted(session, a))[1] == "garmin_sync"
     assert days == {date(2026, 8, 1)}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad", [{"foo": 1}, {"activityId": None}, "x", 5])
+async def test_malformed_item_means_no_marking(session: AsyncSession, bad: object) -> None:
+    uid = await _user(session)
+    a = await _act(session, uid, "1", datetime(2026, 8, 1, 9, 0))
+    await session.commit()
+
+    ids = await reconcile_deleted_activities(
+        session, user_id=uid, window=WINDOW, payload=[{"activityId": 2}, bad]  # type: ignore[list-item]
+    )
+
+    assert ids == []
+    assert (await _deleted(session, a)) == (None, None)

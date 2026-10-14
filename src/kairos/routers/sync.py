@@ -10,7 +10,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kairos.activities.fit_archive import ingest_fit_files
@@ -290,15 +290,11 @@ def _make_fit_ingest_hook(
                 session, user_id=user_id, file_ids_by_key=file_ids, files=envelope.files
             )
         if kind == "activity_list":
-            ids = await reconcile_deleted_activities(
+            marked = await reconcile_deleted_activities(
                 session, user_id=user_id, window=envelope.window, payload=envelope.payload
             )
-            if ids:
-                rows = await session.execute(
-                    text("SELECT start_at FROM activity WHERE id = ANY(:ids)"), {"ids": ids}
-                )
-                # UTC sample days of the removed streams, as the HR bucket recompute groups them
-                reconciled_days.update(r[0].date() for r in rows if r[0] is not None)
+            # UTC sample days of the removed streams, as the HR bucket recompute groups them
+            reconciled_days.update(start.date() for _, start in marked if start is not None)
 
     return _hook
 
