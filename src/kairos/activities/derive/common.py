@@ -64,7 +64,7 @@ def pause_intervals(
         if off is None:
             continue
         timer_events.append((off, str(ev.get("event_type")) in _STOP_TYPES))
-    if any(is_stop for _, is_stop in timer_events):
+    if timer_events:
         timer_events.sort(key=lambda e: e[0])
         out: list[tuple[float, float]] = []
         stopped_at: float | None = None
@@ -76,7 +76,7 @@ def pause_intervals(
                     out.append((stopped_at, off))
                 stopped_at = None
         if stopped_at is not None and t[-1] > stopped_at:
-            out.append((stopped_at, float(t[-1])))
+            out.append((stopped_at, float("inf")))
         return out
 
     out = []
@@ -105,7 +105,7 @@ def _clamp_distance(raw: Sequence[float | None]) -> list[float | None]:
         if d is None:
             out.append(None)
             continue
-        cum = d if prev is None else cum + max(0.0, d - prev)
+        cum = d if prev is None else max(cum, d)
         prev = d
         out.append(cum)
     return out
@@ -148,7 +148,7 @@ def prepare(
             weights.append(min(active, MAX_WEIGHT_S))
             acc += active
         else:
-            weights.append(weights[-1] if weights else 1.0)
+            weights.append(1.0 if moving[i] else 0.0)
 
     hr = [v if v is not None and HR_MIN <= v <= HR_MAX else None for v in channel("hr")]
     factor = 2.0 if sport_profile == "running" else 1.0

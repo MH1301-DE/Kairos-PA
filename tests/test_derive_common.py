@@ -58,7 +58,7 @@ def test_negative_distance_jump_clamped() -> None:
     p = prepare(
         _stream([0, 1, 2, 3], distance_m=[0.0, 10.0, 5.0, 15.0]), sport_profile="cycling", events=[]
     )
-    assert p.distance == [0.0, 10.0, 10.0, 20.0]
+    assert p.distance == [0.0, 10.0, 10.0, 15.0]
 
 
 def test_hr_out_of_range_ignored() -> None:
@@ -135,3 +135,53 @@ def test_max_speed_10s() -> None:
     d = [float(i * 3 if i < 15 else 45 + (i - 15) * 5) for i in range(30)]
     assert max_speed_10s(t, d) == pytest.approx(5.0)
     assert max_speed_10s([0.0, 5.0], [0.0, 50.0]) is None
+
+
+def test_distance_running_max_after_reset() -> None:
+    p = prepare(
+        _stream([0, 1, 2], distance_m=[1000.0, 0.0, 1001.0]), sport_profile="cycling", events=[]
+    )
+    assert p.distance == [1000.0, 1000.0, 1001.0]
+
+
+def test_non_stop_timer_like_event_creates_no_pause() -> None:
+    ev = [{"event": "hr_high_alert", "event_type": "stop", "timestamp": START}]
+    assert pause_intervals([0, 1, 2], [0.0, 1.0, 2.0], ev, start_at=START) == []
+
+
+def test_timer_events_disable_gap_fallback() -> None:
+    ev = [_timer("start", 0)]
+    assert pause_intervals([0, 1, 21], [0.0, 1.0, 1.0], ev, start_at=START) == []
+
+
+def test_trailing_stop_without_start() -> None:
+    t = list(range(10))
+    p = prepare(
+        _stream(t, distance_m=[float(i) for i in t]),
+        sport_profile="running",
+        events=[_timer("stop_all", 5)],
+    )
+    assert p.moving[5] is True
+    assert p.moving[6:] == [False] * 4
+    assert p.weights[-1] == 0.0
+    assert p.timer_t[-1] == pytest.approx(5.0)
+
+
+def test_moving_false_inside_pause() -> None:
+    t = [0, 1, 2, 3, 4, 5]
+    ev = [_timer("stop", 1), _timer("start", 4)]
+    p = prepare(_stream(t), sport_profile="running", events=ev)
+    assert p.moving == [True, True, False, False, True, True]
+    assert p.weights[-1] == 1.0
+
+
+def test_empty_stream() -> None:
+    p = prepare(_stream([]), sport_profile="running", events=[])
+    assert p.t == [] and p.weights == [] and p.timer_t == []
+    assert p.gps_coverage_pct == 0.0 and p.hr_coverage_pct == 0.0
+
+
+def test_interpolation_exact_sample_and_flat_segment() -> None:
+    assert interpolate_time_at_distance([0.0, 5.0, 10.0], [0.0, 50.0, 100.0], 50.0) == 5.0
+    assert interpolate_time_at_distance([0.0, 5.0, 10.0], [0.0, 50.0, 50.0], 50.0) == 5.0
+    assert interpolate_time_at_distance([0.0, 5.0], [0.0, 50.0], 0.0) == 0.0
