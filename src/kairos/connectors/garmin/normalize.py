@@ -185,7 +185,8 @@ def _normalize_respiration(payload: JSONValue) -> list[CanonicalRecord]:
 def _normalize_spo2(payload: JSONValue) -> list[CanonicalRecord]:
     # get_pulse_ox_data — two possible shapes:
     # a) continuous: {"continuousReadingDTOList": [{"startGMT": "...", "value": 97}]}
-    # b) hourly:     {"spO2HourlyAverages": {"spO2HourlyAverages": [{"startGMT": "...", "spO2Value": 97}]}}
+    # b) hourly:     {"spO2HourlyAverages": {"spO2HourlyAverages":
+    #                    [{"startGMT": "...", "spO2Value": 97}]}}
     if not isinstance(payload, dict):
         return []
     records: list[CanonicalRecord] = []
@@ -250,8 +251,10 @@ def _normalize_daily_summary(payload: JSONValue) -> list[CanonicalRecord]:
         record_type="daily_summary",
         external_id=f"daily:{date_str[:10]}",
         occurred_at=day_dt,
-        data={"summary_type": "garmin_stats", **{k: v for k, v in payload.items()
-                                                  if isinstance(v, int | float | str | bool | type(None))}},
+        data={"summary_type": "garmin_stats", **{
+            k: v for k, v in payload.items()
+            if isinstance(v, int | float | str | bool | type(None))
+        }},
     )]
 
 
@@ -292,7 +295,11 @@ def _normalize_activity_list(payload: JSONValue) -> list[CanonicalRecord]:
             data={
                 "name": act.get("activityName"),
                 "sport": sport,
-                "activity_type": act.get("activityType") if isinstance(act.get("activityType"), str) else None,
+                "activity_type": (
+                    act.get("activityType")
+                    if isinstance(act.get("activityType"), str)
+                    else None
+                ),
                 "end_at": end_at.isoformat() if end_at else None,
                 "distance_m": act.get("distance"),
                 "duration_s": act.get("duration") or act.get("elapsedDuration"),
@@ -323,7 +330,8 @@ _ENHANCED_SUPERSEDES = {"speed", "altitude"}
 
 
 def _normalize_activity_fit(payload: JSONValue) -> list[CanonicalRecord]:
-    # connector._fetch_activity_fits → {"activities": [{"activity_id": "...", "records": [...], ...}]}
+    # connector._fetch_activity_fits →
+    #   {"activities": [{"activity_id": "...", "records": [...], ...}]}
     if not isinstance(payload, dict):
         return []
     activities = payload.get("activities")

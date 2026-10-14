@@ -78,6 +78,8 @@ async def test_callback_rejects_invalid_state() -> None:
 async def test_callback_redirects_to_frontend_root(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # the cookie assertions below expect development mode, whatever ENV the runner sets
+    monkeypatch.setattr(settings, "env", "development")
     # Set up a valid state in Redis
     redis_stub = google_auth.get_redis()
     state = "valid-test-state"
@@ -314,6 +316,8 @@ async def test_callback_upserts_google_calendar_connection_on_repeat_login(
 async def test_logout_redirects_to_root_and_clears_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # the cookie assertions below expect development mode, whatever ENV the runner sets
+    monkeypatch.setattr(settings, "env", "development")
     redis_stub = google_auth.get_redis()
     # create_session/delete_session resolve get_redis through their own module
     monkeypatch.setattr(_sess, "get_redis", lambda: redis_stub)
