@@ -2,14 +2,20 @@ from __future__ import annotations
 
 import asyncio
 import math
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Protocol
 from uuid import UUID
 
 from kairos.connectors.base import Connector
-from kairos.connectors.types import CanonicalRecord, JSONValue, Window
+from kairos.connectors.types import (
+    CanonicalRecord,
+    JSONValue,
+    RawFile,
+    RawPayloadEnvelope,
+    Window,
+)
 
 
 class RawPayloadRepository(Protocol):
@@ -23,6 +29,9 @@ class RawPayloadRepository(Protocol):
         payload: JSONValue,
         content_hash: bytes,
     ) -> int:
+        ...
+
+    async def upsert_file(self, *, user_id: UUID, connector_id: str, file: RawFile) -> int:
         ...
 
 
@@ -99,6 +108,8 @@ class SyncFailureRepository(Protocol):
 
 
 HashPayload = Callable[[JSONValue], bytes]
+# (kind, envelope, raw_payload_id, file_ids_by_key)
+PostWindowHook = Callable[[str, RawPayloadEnvelope, int, dict[str, int]], Awaitable[None]]
 
 
 @dataclass(frozen=True)
@@ -125,12 +136,14 @@ class SyncService:
         sync_state_repo: SyncStateRepository,
         hash_payload: HashPayload,
         sync_failure_repo: SyncFailureRepository | None = None,
+        post_window: PostWindowHook | None = None,
     ) -> None:
         self._raw_repo = raw_repo
         self._canonical_repo = canonical_repo
         self._sync_state_repo = sync_state_repo
         self._hash_payload = hash_payload
         self._sync_failure_repo = sync_failure_repo
+        self._post_window = post_window
 
     async def run_backfill(
         self,
@@ -258,6 +271,11 @@ class SyncService:
                 payload=envelope.payload,
                 content_hash=content_hash,
             )
+            file_ids_by_key: dict[str, int] = {}
+            for file in envelope.files:
+                file_ids_by_key[file.key] = await self._raw_repo.upsert_file(
+                    user_id=user_id, connector_id=connector.connector_id, file=file
+                )
 
             records = connector.normalize(kind, envelope.payload)
             records_written = await self._canonical_repo.upsert_many(
@@ -267,6 +285,9 @@ class SyncService:
                 records=records,
                 raw_payload_id=raw_payload_id,
             )
+
+            if self._post_window is not None:
+                await self._post_window(kind, envelope, raw_payload_id, file_ids_by_key)
 
             await self._sync_state_repo.mark_success(
                 user_id=user_id,

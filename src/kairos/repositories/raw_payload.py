@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import gzip
+import hashlib
 import json
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from kairos.connectors.types import JSONValue, Window
+from kairos.connectors.types import JSONValue, RawFile, Window
 
 
 class SqlRawPayloadRepository:
@@ -67,6 +68,51 @@ class SqlRawPayloadRepository:
             )
         ).scalar_one()
 
+        return int(raw_id)
+
+    async def upsert_file(self, *, user_id: UUID, connector_id: str, file: RawFile) -> int:
+        await self._set_rls_user(user_id)
+        raw_id = (
+            await self._session.execute(
+                text(
+                    """
+                    INSERT INTO raw_payload (
+                        user_id,
+                        connector,
+                        kind,
+                        window_start,
+                        window_end,
+                        content_hash,
+                        payload_gzip,
+                        payload_format
+                    )
+                    VALUES (
+                        :user_id,
+                        :connector,
+                        :kind,
+                        :window_start,
+                        :window_start,
+                        :content_hash,
+                        :payload,
+                        :payload_format
+                    )
+                    ON CONFLICT (user_id, connector, kind, window_start, content_hash)
+                    DO UPDATE SET
+                        window_end = GREATEST(raw_payload.window_end, EXCLUDED.window_end)
+                    RETURNING id
+                    """
+                ),
+                {
+                    "user_id": str(user_id),
+                    "connector": connector_id,
+                    "kind": file.kind,
+                    "window_start": file.window_start,
+                    "content_hash": hashlib.sha256(file.content).digest(),
+                    "payload": file.content,
+                    "payload_format": file.payload_format,
+                },
+            )
+        ).scalar_one()
         return int(raw_id)
 
     async def _set_rls_user(self, user_id: UUID) -> None:

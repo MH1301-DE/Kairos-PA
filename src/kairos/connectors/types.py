@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Literal
 
 type JSONScalar = None | bool | int | float | str
 type JSONValue = JSONScalar | list[JSONValue] | dict[str, JSONValue]
@@ -14,9 +15,20 @@ class Window:
 
 
 @dataclass(frozen=True)
+class RawFile:
+    kind: str
+    key: str
+    window_start: datetime
+    # stored unchanged, never re-compressed
+    content: bytes
+    payload_format: Literal["fit_zip"]
+
+
+@dataclass(frozen=True)
 class RawPayloadEnvelope:
     window: Window
     payload: JSONValue
+    files: tuple[RawFile, ...] = ()
 
 
 @dataclass(frozen=True)

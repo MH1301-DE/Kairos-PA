@@ -57,9 +57,7 @@ def _activity_records(external_id: str, n: int) -> list[CanonicalRecord]:
 
 
 @pytest.mark.asyncio
-async def test_upsert_many_bulk_writes_activity_records_and_resolves_activity_id(
-    session: AsyncSession,
-) -> None:
+async def test_upsert_many_no_longer_writes_activity_records(session: AsyncSession) -> None:
     user_id = uuid4()
     await _insert_user(session, user_id, "canonical-bulk@test.com", "sub-canonical-bulk")
     raw_repo = SqlRawPayloadRepository(session=session)
@@ -73,107 +71,12 @@ async def test_upsert_many_bulk_writes_activity_records_and_resolves_activity_id
     )
     await _insert_activity(session, user_id, "ext-activity-1", raw_payload_id)
 
-    repo = SqlCanonicalRepository(session)
-    records = _activity_records("ext-activity-1", 500)
-
-    written = await repo.upsert_many(
+    written = await SqlCanonicalRepository(session).upsert_many(
         user_id=user_id,
         connector_id="garmin",
         kind="activity_fit",
-        records=records,
+        records=_activity_records("ext-activity-1", 50),
         raw_payload_id=raw_payload_id,
-    )
-    await session.commit()
-
-    assert written == 500
-    count = (
-        await session.execute(
-            text("SELECT COUNT(*) FROM activity_record WHERE user_id = :uid"),
-            {"uid": str(user_id)},
-        )
-    ).scalar_one()
-    assert count == 500
-
-    activity_id = (
-        await session.execute(
-            text(
-                "SELECT DISTINCT activity_id FROM activity_record WHERE user_id = :uid"
-            ),
-            {"uid": str(user_id)},
-        )
-    ).scalar_one()
-    expected_activity_id = (
-        await session.execute(
-            text("SELECT id FROM activity WHERE external_id = 'ext-activity-1'"),
-        )
-    ).scalar_one()
-    assert activity_id == expected_activity_id
-
-
-@pytest.mark.asyncio
-async def test_upsert_many_bulk_activity_records_is_idempotent_on_conflict(
-    session: AsyncSession,
-) -> None:
-    user_id = uuid4()
-    await _insert_user(session, user_id, "canonical-idempotent@test.com", "sub-canonical-idem")
-    raw_repo = SqlRawPayloadRepository(session=session)
-    raw_payload_id = await raw_repo.upsert(
-        user_id=user_id,
-        connector_id="garmin",
-        kind="activity_fit",
-        window=Window(start=datetime(2026, 8, 4, tzinfo=UTC), end=datetime(2026, 8, 5, tzinfo=UTC)),
-        payload={"activities": []},
-        content_hash=b"hash-idempotent",
-    )
-    await _insert_activity(session, user_id, "ext-activity-2", raw_payload_id)
-
-    repo = SqlCanonicalRepository(session)
-    records = _activity_records("ext-activity-2", 50)
-
-    await repo.upsert_many(
-        user_id=user_id, connector_id="garmin", kind="activity_fit",
-        records=records, raw_payload_id=raw_payload_id,
-    )
-    # same records again -- e.g. a re-run of the same backfill window
-    await repo.upsert_many(
-        user_id=user_id, connector_id="garmin", kind="activity_fit",
-        records=records, raw_payload_id=raw_payload_id,
-    )
-    await session.commit()
-
-    count = (
-        await session.execute(
-            text("SELECT COUNT(*) FROM activity_record WHERE user_id = :uid"),
-            {"uid": str(user_id)},
-        )
-    ).scalar_one()
-    assert count == 50
-
-
-@pytest.mark.asyncio
-async def test_upsert_many_skips_activity_records_for_unknown_activity(
-    session: AsyncSession,
-) -> None:
-    # activity_list hasn't run for this activity yet -- must not error, must not
-    # write orphaned rows, and must not count them as written
-    user_id = uuid4()
-    await _insert_user(session, user_id, "canonical-orphan@test.com", "sub-canonical-orphan")
-    raw_repo = SqlRawPayloadRepository(session=session)
-    raw_payload_id = await raw_repo.upsert(
-        user_id=user_id,
-        connector_id="garmin",
-        kind="activity_fit",
-        window=Window(start=datetime(2026, 8, 4, tzinfo=UTC), end=datetime(2026, 8, 5, tzinfo=UTC)),
-        payload={"activities": []},
-        content_hash=b"hash-orphan",
-    )
-
-    repo = SqlCanonicalRepository(session)
-    records = _activity_records("never-listed", 10)
-
-    written = await repo.upsert_many(
-        user_id=user_id, connector_id="garmin", kind="activity_fit",
-        records=records, raw_payload_id=raw_payload_id,
     )
     await session.commit()
 

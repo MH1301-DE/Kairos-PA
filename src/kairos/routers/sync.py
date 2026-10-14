@@ -13,19 +13,20 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from kairos.activities.fit_archive import ingest_fit_files
 from kairos.auth.crypto import decrypt, kek_from_settings, unwrap_dek
 from kairos.auth.deps import current_user
 from kairos.config import settings
 from kairos.connectors.garmin.connector import GarminConnector
 from kairos.connectors.google_calendar.client import GoogleCalendarClient
 from kairos.connectors.google_calendar.connector import GoogleCalendarConnector
-from kairos.connectors.types import Window
+from kairos.connectors.types import RawPayloadEnvelope, Window
 from kairos.db.models import AppUser, Connection
 from kairos.db.rls import install_rls_listener
 from kairos.db.session import async_session_factory
 from kairos.ingestion.hash import payload_sha256
 from kairos.ingestion.job_registry import SyncJob, SyncJobRegistry, get_registry
-from kairos.ingestion.service import SyncService
+from kairos.ingestion.service import PostWindowHook, SyncService
 from kairos.repositories.calendar_event import CalendarEventRepository
 from kairos.repositories.canonical import SqlCanonicalRepository
 from kairos.repositories.metrics_recompute import (
@@ -217,12 +218,15 @@ async def _run_backfill_task(
                 job.finished_at = datetime.now(UTC).isoformat()
             return
 
-        connector = GarminConnector(garmin)
+        connector = GarminConnector(
+            garmin, fit_download_pause_s=settings.garmin_fit_download_pause_s
+        )
         service = SyncService(
             raw_repo=SqlRawPayloadRepository(session=session),
             canonical_repo=SqlCanonicalRepository(session=session),
             sync_state_repo=SqlSyncStateRepository(session=session),
             hash_payload=payload_sha256,
+            post_window=_make_fit_ingest_hook(session, user_id),
         )
 
         fetched_froms: list[datetime] = []
@@ -269,6 +273,19 @@ async def _run_backfill_task(
             await _recompute_after_sync(
                 session, user_id, start=min(fetched_froms).date(), end=date.today()
             )
+
+
+def _make_fit_ingest_hook(session: AsyncSession, user_id: UUID) -> PostWindowHook:
+    async def _hook(
+        kind: str, envelope: RawPayloadEnvelope, raw_payload_id: int, file_ids: dict[str, int]
+    ) -> None:
+        del raw_payload_id
+        if kind == "activity_fit" and envelope.files:
+            await ingest_fit_files(
+                session, user_id=user_id, file_ids_by_key=file_ids, files=envelope.files
+            )
+
+    return _hook
 
 
 async def _recompute_after_sync(

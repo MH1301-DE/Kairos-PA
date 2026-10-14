@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from kairos.activities.streams import _semicircle_to_deg
 from kairos.connectors.types import CanonicalRecord, JSONValue
 
 
@@ -25,8 +24,6 @@ def normalize_payload(*, kind: str, payload: JSONValue) -> list[CanonicalRecord]
         return _normalize_daily_summary(payload)
     if kind == "activity_list":
         return _normalize_activity_list(payload)
-    if kind == "activity_fit":
-        return _normalize_activity_fit(payload)
     return []
 
 
@@ -304,75 +301,6 @@ def _normalize_activity_list(payload: JSONValue) -> list[CanonicalRecord]:
             },
         ))
     return records
-
-
-# FIT field name → (metric_code, apply_semicircle_conversion)
-_FIT_FIELDS: dict[str, tuple[str, bool]] = {
-    "heart_rate":         ("hr",          False),
-    "cadence":            ("cadence",     False),
-    "enhanced_speed":     ("speed_mps",   False),
-    "speed":              ("speed_mps",   False),
-    "power":              ("power_w",     False),
-    "enhanced_altitude":  ("altitude_m",  False),
-    "altitude":           ("altitude_m",  False),
-    "position_lat":       ("lat_deg",     True),
-    "position_long":      ("lng_deg",     True),
-    "temperature":        ("temp_c",      False),
-}
-# Skip basic field if the enhanced version is present in the same record
-_ENHANCED_SUPERSEDES = {"speed", "altitude"}
-
-
-def _normalize_activity_fit(payload: JSONValue) -> list[CanonicalRecord]:
-    # connector._fetch_activity_fits → {"activities": [{"activity_id": "...", "records": [...], ...}]}
-    if not isinstance(payload, dict):
-        return []
-    activities = payload.get("activities")
-    if not isinstance(activities, list):
-        return []
-
-    canonical: list[CanonicalRecord] = []
-    for act in activities:
-        if not isinstance(act, dict) or "error" in act:
-            continue
-        activity_id = act.get("activity_id")
-        if not isinstance(activity_id, str):
-            continue
-        records = act.get("records") or []
-        if not isinstance(records, list):
-            continue
-
-        for rec in records:
-            if not isinstance(rec, dict):
-                continue
-            ts_raw = rec.get("timestamp")
-            occurred_at = _parse_datetime_utc(str(ts_raw)) if isinstance(ts_raw, str) else None
-            if occurred_at is None:
-                continue
-
-            has_enhanced_speed = isinstance(rec.get("enhanced_speed"), int | float)
-            has_enhanced_alt = isinstance(rec.get("enhanced_altitude"), int | float)
-
-            for field, (metric_code, is_semicircle) in _FIT_FIELDS.items():
-                if field == "speed" and has_enhanced_speed:
-                    continue
-                if field == "altitude" and has_enhanced_alt:
-                    continue
-                raw_val = rec.get(field)
-                if not isinstance(raw_val, int | float):
-                    continue
-                value = _semicircle_to_deg(raw_val) if is_semicircle else float(raw_val)
-                canonical.append(CanonicalRecord(
-                    record_type="activity_record",
-                    external_id=f"{activity_id}:{metric_code}:{occurred_at.isoformat()}",
-                    occurred_at=occurred_at,
-                    data={
-                        "activity_external_id": activity_id,
-                        "metric": metric_code,
-                        "value": value,
-                    },
-                ))
-    return canonical
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
