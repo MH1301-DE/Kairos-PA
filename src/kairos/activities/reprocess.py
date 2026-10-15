@@ -14,7 +14,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from kairos.activities.derive.service import derive_pending
+from kairos.activities.derive.service import derive_pending, pending_activity_ids
 from kairos.activities.fit_archive import ingest_fit_files, load_fit_messages
 from kairos.activities.stream_repository import STREAM_ALGO_VERSION, replace_streams
 from kairos.activities.streams import build_streams
@@ -101,17 +101,29 @@ async def reprocess_activities(
         result.aborted_reason = downloader.aborted_reason
     await session.commit()
 
-    by_id = {a.id: a.external_id for a in activities}
+    first = [a.id for a in activities]
     # the second pass catches activities outside the range with an outdated algo_version
-    for ids in ([a.id for a in activities], None):
+    in_range = set(first)
+    stale = [i for i in await pending_activity_ids(session, user_id=user_id) if i not in in_range]
+    failed_ids: list[int] = []
+    for ids in (first, stale):
         for outcome in await derive_pending(session, user_id=user_id, activity_ids=ids):
             if outcome.status == "failed":
-                result.derive_failed.append(
-                    by_id.get(outcome.activity_id, str(outcome.activity_id))
-                )
+                failed_ids.append(outcome.activity_id)
             elif outcome.status in ("derived", "summary_only"):
                 result.derived += 1
         await session.commit()
+    if failed_ids:
+        external = dict(
+            (
+                await session.execute(
+                    select(Activity.id, Activity.external_id).where(Activity.id.in_(failed_ids))
+                )
+            )
+            .tuples()
+            .all()
+        )
+        result.derive_failed = [external.get(i, str(i)) for i in failed_ids]
     return result
 
 

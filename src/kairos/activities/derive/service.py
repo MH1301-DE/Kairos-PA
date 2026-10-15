@@ -31,6 +31,9 @@ logger = logging.getLogger(__name__)
 
 DeriveStatus = Literal["derived", "summary_only", "deleted", "missing", "failed"]
 
+# (birth_date, hr_max_override) from user_setting
+_HrSettings = tuple[date | None, int | None]
+
 _DERIVED_TABLES = (ActivityStepResult, ActivityBestEffort, ActivitySplit, ActivityStats)
 
 
@@ -47,25 +50,48 @@ class DeriveOutcome:
 async def derive_activity(
     session: AsyncSession, *, user_id: UUID, activity_id: int
 ) -> DeriveOutcome:
-    try:
-        async with session.begin_nested():
-            return await _derive(session, user_id=user_id, activity_id=activity_id)
-    except Exception as exc:
-        logger.warning("Derivation failed for activity %s: %s", activity_id, exc, exc_info=True)
-        return DeriveOutcome(activity_id=activity_id, status="failed", error=str(exc))
+    hr_settings = await _hr_settings(session, user_id)
+    return await _derive_safe(session, user_id, activity_id, hr_settings)
 
 
 async def derive_pending(
     session: AsyncSession, *, user_id: UUID, activity_ids: Sequence[int] | None = None
 ) -> list[DeriveOutcome]:
     if activity_ids is None:
-        ids = await _pending_ids(session, user_id)
+        ids = await pending_activity_ids(session, user_id=user_id)
     else:
         ids = sorted(set(activity_ids))
-    return [await derive_activity(session, user_id=user_id, activity_id=i) for i in ids]
+    if not ids:
+        return []
+    hr_settings = await _hr_settings(session, user_id)
+    return [await _derive_safe(session, user_id, i, hr_settings) for i in ids]
 
 
-async def _pending_ids(session: AsyncSession, user_id: UUID) -> list[int]:
+async def _derive_safe(
+    session: AsyncSession, user_id: UUID, activity_id: int, hr_settings: _HrSettings
+) -> DeriveOutcome:
+    try:
+        async with session.begin_nested():
+            return await _derive(
+                session, user_id=user_id, activity_id=activity_id, hr_settings=hr_settings
+            )
+    except Exception as exc:
+        logger.warning("Derivation failed for activity %s: %s", activity_id, exc, exc_info=True)
+        return DeriveOutcome(activity_id=activity_id, status="failed", error=str(exc))
+
+
+async def _hr_settings(session: AsyncSession, user_id: UUID) -> _HrSettings:
+    row = (
+        await session.execute(
+            select(UserSetting.birth_date, UserSetting.hr_max_override).where(
+                UserSetting.user_id == user_id
+            )
+        )
+    ).one_or_none()
+    return (None, None) if row is None else (row[0], row[1])
+
+
+async def pending_activity_ids(session: AsyncSession, *, user_id: UUID) -> list[int]:
     stmt = (
         select(Activity.id)
         .outerjoin(ActivityStats, ActivityStats.activity_id == Activity.id)
@@ -88,7 +114,9 @@ async def _pending_ids(session: AsyncSession, user_id: UUID) -> list[int]:
     return list((await session.execute(stmt)).scalars())
 
 
-async def _derive(session: AsyncSession, *, user_id: UUID, activity_id: int) -> DeriveOutcome:
+async def _derive(
+    session: AsyncSession, *, user_id: UUID, activity_id: int, hr_settings: _HrSettings
+) -> DeriveOutcome:
     activity = (
         await session.execute(
             select(Activity)
@@ -115,7 +143,7 @@ async def _derive(session: AsyncSession, *, user_id: UUID, activity_id: int) -> 
         max_hr=activity.max_hr,
         elevation_gain_m=activity.elevation_gain_m,
     )
-    hr_max = await _hr_max(session, user_id, activity)
+    hr_max = _hr_max(hr_settings, activity)
     stream = await load_stream(session, activity_id=activity_id)
     if stream is None:
         stats = compute_stats(
@@ -173,19 +201,15 @@ async def _derive(session: AsyncSession, *, user_id: UUID, activity_id: int) -> 
     )
 
 
-async def _hr_max(session: AsyncSession, user_id: UUID, activity: Activity) -> int | None:
-    setting = (
-        await session.execute(select(UserSetting).where(UserSetting.user_id == user_id))
-    ).scalar_one_or_none()
-    if setting is None:
-        return None
+def _hr_max(hr_settings: _HrSettings, activity: Activity) -> int | None:
+    birth_date, override = hr_settings
     if activity.start_local is not None:
         as_of = activity.start_local.date()
     elif activity.start_at is not None:
         as_of = activity.start_at.date()
     else:
         as_of = date.today()
-    hr_max, _ = resolve_hr_max(setting.birth_date, setting.hr_max_override, as_of=as_of)
+    hr_max, _ = resolve_hr_max(birth_date, override, as_of=as_of)
     return hr_max
 
 

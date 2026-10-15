@@ -9,7 +9,6 @@ import pytest
 from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from kairos.activities import reprocess as reprocess_module
 from kairos.activities.derive import service as service_module
 from kairos.activities.derive.common import ACTIVITY_DERIVED_ALGO_VERSION
 from kairos.activities.derive.service import derive_activity, derive_pending
@@ -270,6 +269,84 @@ async def test_failure_of_one_activity_does_not_stop_the_others(
 
 
 @pytest.mark.asyncio
+async def test_failed_rederive_keeps_previous_rows_and_is_retried(
+    session: AsyncSession,
+    app_session: AsyncSession,
+    fixture_messages: ActivityFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    uid = await _user(session)
+    activity_id = await _fixture_activity(session, uid, fixture_messages, "keep")
+    install_rls_listener(app_session, uid)
+    await derive_activity(app_session, user_id=uid, activity_id=activity_id)
+    old_version = ACTIVITY_DERIVED_ALGO_VERSION - 1
+    await app_session.execute(update(ActivityStats).values(algo_version=old_version))
+    await app_session.commit()
+    counts = await _counts(app_session, activity_id)
+    real = service_module.compute_stats
+
+    def _boom(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(service_module, "compute_stats", _boom)
+    outcomes = await derive_pending(app_session, user_id=uid)
+    await app_session.commit()
+
+    assert [(o.activity_id, o.status) for o in outcomes] == [(activity_id, "failed")]
+    assert await _counts(app_session, activity_id) == counts
+    version = select(ActivityStats.algo_version).where(ActivityStats.activity_id == activity_id)
+    assert (await app_session.execute(version)).scalar_one() == old_version
+
+    monkeypatch.setattr(service_module, "compute_stats", real)
+    outcomes = await derive_pending(app_session, user_id=uid)
+    await app_session.commit()
+
+    assert [(o.activity_id, o.status) for o in outcomes] == [(activity_id, "derived")]
+    assert await _counts(app_session, activity_id) == counts
+    assert (await app_session.execute(version)).scalar_one() == ACTIVITY_DERIVED_ALGO_VERSION
+
+
+@pytest.mark.asyncio
+async def test_reprocess_reports_each_failure_once_and_derives_stale_outside_range(
+    session: AsyncSession,
+    app_session: AsyncSession,
+    fixture_messages: ActivityFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    uid = await _user(session)
+    target = await _fixture_activity(session, uid, fixture_messages, "target")
+    stale = await _fixture_activity(session, uid, fixture_messages, "stale")
+    real = service_module.best_efforts
+    calls: list[int] = []
+
+    # every derivation fails except the one after the first: pass 2 handles "stale"
+    def _flaky(prep: Any, **kwargs: Any) -> Any:
+        calls.append(1)
+        if len(calls) != 2:
+            raise RuntimeError("boom")
+        return real(prep, **kwargs)
+
+    monkeypatch.setattr(service_module, "best_efforts", _flaky)
+    install_rls_listener(app_session, uid)
+
+    result = await reprocess_activities(
+        app_session,
+        user_id=uid,
+        from_date=None,
+        to_date=None,
+        activity_ids=[target],
+        refetch_fit=False,
+        garmin=None,
+        pause_s=0.0,
+    )
+
+    assert result.derive_failed == ["target"]
+    assert result.derived == 1
+    assert len(calls) == 2
+    assert (await _counts(app_session, stale))[0] == 1
+
+
+@pytest.mark.asyncio
 async def test_reconcile_removes_derived_rows(
     session: AsyncSession, app_session: AsyncSession, fixture_messages: ActivityFixture
 ) -> None:
@@ -319,7 +396,6 @@ async def test_reprocess_derives_affected_activities(
         )
     ).scalar_one()
     assert hr is not None and hr > 1
-    assert reprocess_module.derive_pending is derive_pending
 
 
 @pytest.mark.asyncio
