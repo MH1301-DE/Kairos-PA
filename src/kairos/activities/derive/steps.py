@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from kairos.activities.derive.common import Prepared, interp, weighted_mean
 
 MIN_LAP_S = 5.0
 MIN_RATED_S = 20.0
+STEP_DONE_TOLERANCE_S = 1.0
+STEP_DONE_TOLERANCE_REL = 0.01
 AVG_TOLERANCE = 0.02
 HR_IN_TARGET_MIN_PCT = 80.0
 _STEP_TYPES = frozenset({"warmup", "interval", "recovery", "rest", "cooldown"})
@@ -51,6 +53,26 @@ class _Target:
     source: str
 
 
+@dataclass
+class _Exec:
+    index: int
+    windows: list[tuple[float, float]] = field(default_factory=list)
+    # watch lap counters, which end the step on the watch
+    timer_s: float = 0.0
+    distance_m: float = 0.0
+
+
+def _completed(ex: _Exec, step: Mapping[str, object]) -> bool:
+    # a single-step repeat puts its passes on consecutive laps with the same index
+    planned = _planned_amount(step)
+    if planned is None:
+        return False
+    kind, value = planned
+    if kind == "time":
+        return ex.timer_s >= value - STEP_DONE_TOLERANCE_S
+    return ex.distance_m >= value * (1 - STEP_DONE_TOLERANCE_REL)
+
+
 def _num(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, int | float):
         return None
@@ -66,9 +88,9 @@ def _offset(value: object, start_at: datetime) -> float | None:
 
 
 def _text(value: object) -> str | None:
-    # long notes decode as a list of string chunks
+    # list-decoded FIT strings: only chunk 0 is the string, the rest is decoder garbage
     if isinstance(value, list):
-        value = next((v for v in value if isinstance(v, str) and v.strip()), None)
+        value = value[0] if value else None
     if isinstance(value, str) and value.strip():
         return value.strip()
     return None
@@ -76,17 +98,12 @@ def _text(value: object) -> str | None:
 
 def _planned_end(step: Mapping[str, object]) -> str | None:
     kind = step.get("duration_type")
-    raw = _num(step.get("duration_value"))
-    if kind == "time":
-        secs = _num(step.get("duration_time"))
-        secs = secs if secs is not None else None if raw is None else raw / 1000
-        return "time" if secs is None else f"time {secs:g} s"
-    if kind == "distance":
-        metres = _num(step.get("duration_distance"))
-        metres = metres if metres is not None else None if raw is None else raw / 100
-        return "distance" if metres is None else f"distance {metres:g} m"
     if kind == "open":
         return "lap_button"
+    planned = _planned_amount(step)
+    if planned is not None:
+        unit, value = planned
+        return f"time {value:g} s" if unit == "time" else f"distance {value:g} m"
     return None if kind is None else str(kind)
 
 
@@ -134,8 +151,7 @@ def _target(
     return _Target(None, None, None, "unclear")
 
 
-def _repeat_blocks(steps: Sequence[Mapping[str, object]]) -> dict[int, int]:
-    block_of: dict[int, int] = {}
+def _repeat_blocks(steps: Sequence[Mapping[str, object]]) -> list[tuple[int, int]]:
     blocks: list[tuple[int, int]] = []
     for step in steps:
         end = step.get("message_index")
@@ -146,11 +162,26 @@ def _repeat_blocks(steps: Sequence[Mapping[str, object]]) -> dict[int, int]:
             and isinstance(start, int)
         ):
             blocks.append((start, end))
-    # widest first, so nested (narrower) blocks overwrite their outer block
-    for start, end in sorted(blocks, key=lambda b: b[0] - b[1]):
-        for i in range(start, end):
-            block_of[i] = end
-    return block_of
+    # narrowest first, so the first match is the innermost block
+    return sorted(blocks, key=lambda b: b[1] - b[0])
+
+
+def _innermost(blocks: Sequence[tuple[int, int]], a: int, b: int) -> tuple[int, int] | None:
+    lo, hi = min(a, b), max(a, b)
+    return next((blk for blk in blocks if blk[0] <= lo and hi < blk[1]), None)
+
+
+def _planned_amount(step: Mapping[str, object]) -> tuple[str, float] | None:
+    kind = step.get("duration_type")
+    # raw duration_value: ms for time, cm for distance
+    scale = {"time": 1000.0, "distance": 100.0}.get(str(kind))
+    if scale is None:
+        return None
+    value = _num(step.get(f"duration_{kind}"))
+    raw = _num(step.get("duration_value"))
+    if value is None and raw is not None:
+        value = raw / scale
+    return None if not value else (str(kind), value)
 
 
 def _step_type(step: Mapping[str, object]) -> str:
@@ -176,48 +207,56 @@ def step_results(
     steps = {mi: s for s in workout_steps if isinstance(mi := s.get("message_index"), int)}
     if not steps:
         return []
-    block_of = _repeat_blocks(workout_steps)
+    blocks = _repeat_blocks(workout_steps)
 
-    execs: list[tuple[int, list[tuple[float, float]]]] = []
+    execs: list[_Exec] = []
     for lap in laps:
         index = lap.get("wkt_step_index")
         a = _offset(lap.get("start_time"), start_at)
         elapsed = _num(lap.get("total_elapsed_time")) or 0.0
         if not isinstance(index, int) or index not in steps or a is None or elapsed < MIN_LAP_S:
             continue
-        if execs and execs[-1][0] == index:
-            execs[-1][1].append((a, a + elapsed))
-        else:
-            execs.append((index, [(a, a + elapsed)]))
+        lap_timer = _num(lap.get("total_timer_time"))
+        lap_dist = _num(lap.get("total_distance"))
+        last = execs[-1] if execs else None
+        if last is None or last.index != index or _completed(last, steps[index]):
+            last = _Exec(index)
+            execs.append(last)
+        last.windows.append((a, a + elapsed))
+        last.timer_s += lap_timer if lap_timer is not None else elapsed
+        last.distance_m += lap_dist or 0.0
 
     rows: list[StepResultRow] = []
-    iteration: dict[int, int] = {}
+    iteration: dict[tuple[int, int], int] = {}
     prev_index: int | None = None
-    for number, (index, windows) in enumerate(execs, start=1):
-        block = block_of.get(index)
-        repeat_iteration: int | None = None
-        if block is not None:
-            if prev_index is None or block_of.get(prev_index) != block:
+    for number, ex in enumerate(execs, start=1):
+        index = ex.index
+        for block in blocks:
+            start, end = block
+            if not start <= index < end:
+                continue
+            if prev_index is None or not start <= prev_index < end:
                 iteration[block] = 1
-            elif index <= prev_index:
-                # stepping back inside the block starts its next pass
+            elif index <= prev_index and block == _innermost(blocks, index, prev_index):
+                # stepping back inside this block, not a nested one, starts its next pass
                 iteration[block] += 1
-            repeat_iteration = iteration[block]
+        inner = _innermost(blocks, index, index)
+        repeat_iteration = None if inner is None else iteration[inner]
         prev_index = index
 
-        timer_s = 0.0
+        timer_s: float | None = 0.0
         distance: float | None = 0.0
         idx: list[int] = []
-        for a, b in windows:
+        for a, b in ex.windows:
             ta, tb = interp(prep.t, prep.timer_t, a), interp(prep.t, prep.timer_t, b)
-            timer_s += 0.0 if ta is None or tb is None else tb - ta
+            timer_s = None if timer_s is None or ta is None or tb is None else timer_s + tb - ta
             da, db = interp(prep.t, prep.distance, a), interp(prep.t, prep.distance, b)
             distance = None if distance is None or da is None or db is None else distance + db - da
             idx.extend(i for i, t in enumerate(prep.t) if a <= t < b)
         weights = [prep.weights[i] for i in idx]
         hr = [prep.hr[i] for i in idx]
-        pace = timer_s / distance * 1000 if distance and timer_s > 0 else None
-        speed = distance / timer_s if distance and timer_s > 0 else None
+        pace = timer_s / distance * 1000 if distance and timer_s else None
+        speed = distance / timer_s if distance and timer_s else None
         cadence = weighted_mean([prep.cadence_spm_or_rpm[i] for i in idx], weights)
         power = weighted_mean([prep.power[i] for i in idx], weights)
 
@@ -226,13 +265,15 @@ def step_results(
         hr_pct: float | None = None
         if target.kind == "hr_range" and target.low is not None and target.high is not None:
             lo, hi = target.low, target.high
+            # denominator: weighted time that has an HR sample
             rated = [(v, w) for v, w in zip(hr, weights, strict=True) if v is not None and w > 0]
             total = sum(w for _, w in rated)
             if total > 0:
                 hr_pct = 100.0 * sum(w for v, w in rated if lo <= v <= hi) / total
 
         hit: bool | None = None
-        if target.low is not None and target.high is not None and timer_s >= MIN_RATED_S:
+        rateable = timer_s is not None and timer_s >= MIN_RATED_S
+        if target.low is not None and target.high is not None and rateable:
             if target.kind == "hr_range":
                 hit = None if hr_pct is None else hr_pct >= HR_IN_TARGET_MIN_PCT
             elif target.kind == "pace":

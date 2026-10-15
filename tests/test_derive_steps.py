@@ -161,12 +161,22 @@ def test_fixture_targets_and_notes() -> None:
 
 
 def test_fixture_hr_targets_from_api() -> None:
-    rows, _ = _fixture_results(hr_targets={0: (100.0, 150.0)})
-    assert rows[0].target_source == "api"
-    assert (rows[0].target_low, rows[0].target_high) == (100.0, 150.0)
-    assert rows[0].hr_in_target_pct is not None
-    assert rows[0].hit is not None
+    rows, _ = _fixture_results(hr_targets={0: (150.0, 100.0)})
+    warmup = rows[0]
+    assert (warmup.target_type, warmup.target_source) == ("hr_range", "api")
+    assert (warmup.target_low, warmup.target_high) == (100.0, 150.0)
+    # plain 1 Hz sample count over the two warmup laps: 98.15 %
+    assert warmup.hr_in_target_pct == pytest.approx(98.15, abs=0.2)
+    assert warmup.avg_hr == pytest.approx(140.5, abs=0.1)
+    assert warmup.hit is True
     assert rows[2].target_source == "unclear"
+
+
+def test_fixture_hr_target_below_80_percent_misses() -> None:
+    rows, _ = _fixture_results(hr_targets={0: (130.0, 145.0)})
+    # plain 1 Hz sample count: 76.96 %
+    assert rows[0].hr_in_target_pct == pytest.approx(76.9, abs=0.2)
+    assert rows[0].hit is False
 
 
 def test_activity_without_workout_is_empty() -> None:
@@ -257,3 +267,108 @@ def test_open_target_has_no_rating() -> None:
     row = _synthetic(60, step)
     assert (row.target_type, row.target_source, row.hit) == ("none", "none", None)
     assert row.step_type == "interval"
+
+
+def _steps_run(
+    workout_steps: list[dict[str, Any]], laps: list[tuple[int, float]]
+) -> list[StepResultRow]:
+    total = int(sum(sec for _, sec in laps)) + 1
+    stream = LoadedStream(
+        start_at=START,
+        t_offset_s=list(range(total)),
+        channels={"distance_m": [3.5 * i for i in range(total)]},
+        source="fit_zip",
+    )
+    prep = prepare(stream, sport_profile="running", events=[])
+    lap_mesgs: list[dict[str, Any]] = []
+    offset = 0.0
+    for index, sec in laps:
+        lap_mesgs.append(
+            {
+                "start_time": START + timedelta(seconds=offset),
+                "total_elapsed_time": sec,
+                "total_timer_time": sec,
+                "total_distance": 3.5 * sec,
+                "wkt_step_index": index,
+            }
+        )
+        offset += sec
+    return step_results(
+        prep,
+        sport_profile="running",
+        workout_steps=workout_steps,
+        laps=lap_mesgs,
+        start_at=START,
+        hr_targets=None,
+    )
+
+
+def _time_step(index: int, secs: float) -> dict[str, Any]:
+    return {"message_index": index, "duration_type": "time", "duration_time": secs}
+
+
+def _repeat(index: int, first: int, count: int) -> dict[str, Any]:
+    return {
+        "message_index": index,
+        "duration_type": "repeat_until_steps_cmplt",
+        "duration_step": first,
+        "target_value": count,
+    }
+
+
+def test_nested_repeat_iterations() -> None:
+    # 0, outer x2 [1, inner x2 [2, 3], 5], 7
+    steps = [
+        _time_step(0, 60),
+        _time_step(1, 60),
+        _time_step(2, 30),
+        _time_step(3, 30),
+        _repeat(4, 2, 2),
+        _time_step(5, 60),
+        _repeat(6, 1, 2),
+        _time_step(7, 60),
+    ]
+    one_pass = [(1, 60.0), (2, 30.0), (3, 30.0), (2, 30.0), (3, 30.0), (5, 60.0)]
+    rows = _steps_run(steps, [(0, 60.0), *one_pass, *one_pass, (7, 60.0)])
+    assert [r.wkt_step_index for r in rows] == [0, 1, 2, 3, 2, 3, 5, 1, 2, 3, 2, 3, 5, 7]
+    assert [r.repeat_iteration for r in rows] == [
+        None, 1, 1, 1, 2, 2, 1, 2, 1, 1, 2, 2, 2, None
+    ]  # fmt: skip
+
+
+def test_single_step_repeat_splits_on_planned_duration() -> None:
+    steps = [_time_step(0, 60), _repeat(1, 0, 3)]
+    # auto-lap splits pass 1, passes 2 and 3 are one lap each
+    rows = _steps_run(steps, [(0, 40.0), (0, 20.0), (0, 60.0), (0, 60.0)])
+    assert [r.repeat_iteration for r in rows] == [1, 2, 3]
+    assert [r.timer_s for r in rows] == pytest.approx([60.0, 60.0, 60.0])
+
+
+def test_unresolvable_window_has_no_timer() -> None:
+    stream = LoadedStream(start_at=START, t_offset_s=[], channels={}, source="fit_zip")
+    prep = prepare(stream, sport_profile="running", events=[])
+    lap = {"start_time": START, "total_elapsed_time": 60.0, "wkt_step_index": 1}
+    rows = step_results(
+        prep,
+        sport_profile="running",
+        workout_steps=[_speed_step(1, 275, 285)],
+        laps=[lap],
+        start_at=START,
+        hr_targets=None,
+    )
+    assert rows[0].timer_s is None and rows[0].avg_pace_s_km is None and rows[0].hit is None
+
+
+@pytest.mark.parametrize(
+    ("notes", "name", "expected"),
+    [
+        (["Auslaufen", "", "UUxD0 D0iC0$e8"], None, "Auslaufen"),
+        (["", "", "junk"], "Trab", "Trab"),
+        (["", "", "junk"], None, None),
+    ],
+)
+def test_note_uses_fit_string_chunk_zero(
+    notes: list[str], name: str | None, expected: str | None
+) -> None:
+    step = {**_hr_step(2), "notes": notes, "wkt_step_name": name}
+    assert _synthetic(60, step).step_note == expected
