@@ -200,19 +200,38 @@ def weighted_median(values: Sequence[float | None], weights: Sequence[float]) ->
 def elevation_gain_loss(
     alt_smooth: Sequence[float | None], hysteresis_m: float = 2.0
 ) -> tuple[float, float]:
+    # extremes count in full once the reversal from them exceeds the threshold
     gain = loss = 0.0
-    ref: float | None = None
+    lo = hi = ref = ext = 0.0
+    rising: bool | None = None
+    started = False
     for v in alt_smooth:
         if v is None:
             continue
-        if ref is None:
-            ref = v
-        elif v - ref >= hysteresis_m:
-            gain += v - ref
-            ref = v
-        elif ref - v >= hysteresis_m:
-            loss += ref - v
-            ref = v
+        if not started:
+            lo = hi = v
+            started = True
+        elif rising is None:
+            lo, hi = min(lo, v), max(hi, v)
+            if v - lo > hysteresis_m:
+                rising, ref, ext = True, lo, v
+            elif hi - v > hysteresis_m:
+                rising, ref, ext = False, hi, v
+        elif rising:
+            if v > ext:
+                ext = v
+            elif ext - v > hysteresis_m:
+                gain += ext - ref
+                rising, ref, ext = False, ext, v
+        elif v < ext:
+            ext = v
+        elif v - ext > hysteresis_m:
+            loss += ref - ext
+            rising, ref, ext = True, ext, v
+    if rising:
+        gain += ext - ref
+    elif rising is False:
+        loss += ref - ext
     return gain, loss
 
 

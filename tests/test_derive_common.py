@@ -87,6 +87,22 @@ def test_altitude_median_and_hysteresis() -> None:
     assert p.altitude_smooth == [0.0, 0.0, 0.0, 0.0, 0.0]
 
 
+def test_hysteresis_counts_full_climb_once_reversal_is_confirmed() -> None:
+    # a 3.9 m climb counts in full, not in 2 m steps
+    assert elevation_gain_loss([100.0, 101.0, 102.0, 103.0, 103.9, 102.5, 101.8]) == (
+        pytest.approx(3.9),
+        pytest.approx(2.1),
+    )
+    assert elevation_gain_loss([100.0, 101.5, 100.0, 101.5, 100.0]) == (0.0, 0.0)
+    # reversals smaller than the threshold do not split a climb
+    assert elevation_gain_loss([100.0, 103.0, 101.5, 106.0, 99.0]) == (
+        pytest.approx(6.0),
+        pytest.approx(7.0),
+    )
+    # start drifting below the first sample: the climb starts at the low point
+    assert elevation_gain_loss([100.0, 99.0, 98.5, 101.0]) == (pytest.approx(2.5), 0.0)
+
+
 def test_gps_coverage() -> None:
     p = prepare(
         _stream([0, 1], lat_deg=[1.0, None], lng_deg=[1.0, None]),

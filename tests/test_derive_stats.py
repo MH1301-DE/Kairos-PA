@@ -272,6 +272,15 @@ def test_fixture_runs_match_garmin_hr_and_cadence(name: str) -> None:
     assert row.quality == "ok"
 
 
+@pytest.mark.parametrize(("name", "gain"), [(AUTO_LAP_RUN, 42.2), (WORKOUT_RUN, 34.0)])
+def test_fixture_elevation_gain_near_garmin(name: str, gain: float) -> None:
+    # V4 (spec §12.3): Garmin 40 m and 35 m; the 2 m step rule gave 28.2 m and 24.0 m
+    row, fx = _fixture_stats(name)
+    assert row.elev_gain_m == pytest.approx(gain, abs=0.5)
+    garmin = fx.list_item["elevationGain"]
+    assert abs(row.elev_gain_m - garmin) <= 0.1 * garmin
+
+
 def test_fixture_steady_run_has_decoupling() -> None:
     row, fx = _fixture_stats(AUTO_LAP_RUN)
     assert row.decoupling_pct is not None and row.decoupling_note is None
