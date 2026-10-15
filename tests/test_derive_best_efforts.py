@@ -134,6 +134,36 @@ def test_hr_average() -> None:
     assert row.hr_avg == 150
 
 
+def _brute_force(t: list[float], d: list[float], target: float) -> float:
+    def at(x: float) -> float | None:
+        for k in range(1, len(d)):
+            if d[k - 1] <= x <= d[k] and d[k] > d[k - 1]:
+                return t[k - 1] + (t[k] - t[k - 1]) * (x - d[k - 1]) / (d[k] - d[k - 1])
+        return None
+
+    cands = [(x, x + target) for x in d] + [(x - target, x) for x in d]
+    best = float("inf")
+    for a, b in cands:
+        ta, tb = at(a), at(b)
+        if ta is not None and tb is not None:
+            best = min(best, tb - ta)
+    return best
+
+
+def test_matches_brute_force_on_irregular_profile() -> None:
+    import random
+
+    rng = random.Random(7)
+    dist = [0.0]
+    for _ in range(900):
+        dist.append(dist[-1] + rng.uniform(1.5, 6.5))
+    t = list(range(len(dist)))
+    rows = _by_key(_prep(t, dist))
+    for key in ("800m", "1500m"):
+        expected = _brute_force([float(x) for x in t], dist, BEST_EFFORT_DISTANCES[key])
+        assert rows[key].duration_s == pytest.approx(expected, abs=1e-6)
+
+
 def test_v2_5k_against_garmin_fastest_split() -> None:
     fx = load_activity_fixture(AUTO_LAP_RUN)
     prep = prepare(fx.stream, sport_profile="running", events=fx.messages["event_mesgs"])

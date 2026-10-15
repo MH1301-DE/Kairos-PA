@@ -58,8 +58,8 @@ def _windows(timer: list[float], dist: list[float], target_m: float) -> list[_Wi
             q += 1
         if q >= n:
             break
-        out.append(_Window(_time_at(timer, dist, q, goal) - timer[p], timer[p],
-                           _time_at(timer, dist, q, goal), dist[p], (p + 1, q)))  # fmt: skip
+        end_t = _time_at(timer, dist, q, goal)
+        out.append(_Window(end_t - timer[p], timer[p], end_t, dist[p], (p + 1, q)))
     p = 0
     for q in range(n):
         goal = dist[q] - target_m
