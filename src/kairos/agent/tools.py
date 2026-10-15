@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kairos.agent.expiry import _parse_expiry
+from kairos.agent.format import cap_envelope, drop_last_row
 from kairos.agent.render_schemas import RENDER_COMPONENTS, validate_render_config
 from kairos.calendar.free_time import BusyBlock, CalendarPrefs, FreeBlock, compute_free_blocks
 from kairos.db.models import MetricDailyValue
@@ -49,18 +50,36 @@ class ToolSpec:
 
 
 def _envelope(
-    summary: str, data: Any, *, coverage: str | None = None, truncated: bool = False
+    summary: str,
+    data: Any,
+    *,
+    coverage: str | None = None,
+    truncated: bool = False,
+    next_hint: str | None = None,
+    quality: str | None = None,
+    max_tokens: int | None = None,
+    shrink: Callable[[dict[str, Any]], dict[str, Any] | None] = drop_last_row,
 ) -> dict[str, Any]:
-    return {
-        "summary": summary,
-        "data": data,
-        "meta": {
-            "row_count": len(data) if isinstance(data, list) else None,
-            "truncated": truncated,
-            "coverage": coverage,
-            "as_of": datetime.now(UTC).isoformat(),
-        },
+    if isinstance(data, list):
+        row_count: int | None = len(data)
+    elif isinstance(data, dict) and isinstance(data.get("rows"), list):
+        row_count = len(data["rows"])
+    else:
+        row_count = None
+    meta: dict[str, Any] = {
+        "row_count": row_count,
+        "truncated": truncated,
+        "coverage": coverage,
+        "as_of": datetime.now(UTC).isoformat(),
     }
+    if quality is not None:
+        meta["quality"] = quality
+    if next_hint is not None:
+        meta["next"] = next_hint
+    env = {"summary": summary, "data": data, "meta": meta}
+    if max_tokens is not None:
+        env = cap_envelope(env, max_tokens=max_tokens, shrink=shrink)
+    return env
 
 
 async def query_health_handler(
