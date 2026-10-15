@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 
 from kairos.activities.stream_repository import LoadedStream
 
-ACTIVITY_DERIVED_ALGO_VERSION = 1
+ACTIVITY_DERIVED_ALGO_VERSION = 2
 
 MAX_WEIGHT_S = 10.0
 PAUSE_MIN_GAP_S = 10.0

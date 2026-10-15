@@ -103,6 +103,20 @@ def test_hysteresis_counts_full_climb_once_reversal_is_confirmed() -> None:
     assert elevation_gain_loss([100.0, 99.0, 98.5, 101.0]) == (pytest.approx(2.5), 0.0)
 
 
+def test_hysteresis_single_step_and_falling_segments() -> None:
+    assert elevation_gain_loss([100.0, 105.0]) == (5.0, 0.0)
+    # falling first, open final segment still falling
+    assert elevation_gain_loss([110.0, 108.0, 105.0, 103.0, 104.0]) == (0.0, pytest.approx(7.0))
+    # falling first, final segment rising
+    assert elevation_gain_loss([110.0, 105.0, 108.0]) == (pytest.approx(3.0), pytest.approx(5.0))
+
+
+def test_hysteresis_reversal_of_exactly_threshold_is_not_counted() -> None:
+    assert elevation_gain_loss([100.0, 102.0, 100.0]) == (0.0, 0.0)
+    # a 2.0 m dip inside a climb neither ends it nor counts as loss
+    assert elevation_gain_loss([100.0, 103.0, 101.0, 104.0]) == (pytest.approx(4.0), 0.0)
+
+
 def test_gps_coverage() -> None:
     p = prepare(
         _stream([0, 1], lat_deg=[1.0, None], lng_deg=[1.0, None]),
