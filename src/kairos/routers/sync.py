@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from kairos.activities.derive.service import derive_pending
 from kairos.activities.fit_archive import ingest_fit_files
 from kairos.activities.reconcile import (
     local_days_of_activities,
@@ -25,7 +26,7 @@ from kairos.connectors.garmin.connector import GarminConnector
 from kairos.connectors.google_calendar.client import GoogleCalendarClient
 from kairos.connectors.google_calendar.connector import GoogleCalendarConnector
 from kairos.connectors.types import RawPayloadEnvelope, Window
-from kairos.db.models import AppUser, Connection
+from kairos.db.models import Activity, AppUser, Connection
 from kairos.db.rls import install_rls_listener
 from kairos.db.session import async_session_factory
 from kairos.ingestion.hash import payload_sha256
@@ -274,6 +275,8 @@ async def _run_backfill_task(
                 finally:
                     job.finished_at = datetime.now(UTC).isoformat()
 
+        await _derive_after_sync(session, user_id)
+
         if fetched_froms or reconciled_days:
             starts = [f.date() for f in fetched_froms] + list(reconciled_days)
             await _recompute_after_sync(
@@ -289,9 +292,10 @@ def _make_fit_ingest_hook(
     ) -> None:
         del raw_payload_id
         if kind == "activity_fit" and envelope.files:
-            await ingest_fit_files(
+            failed = await ingest_fit_files(
                 session, user_id=user_id, file_ids_by_key=file_ids, files=envelope.files
             )
+            await _derive_ingested(session, user_id, [k for k in file_ids if k not in failed])
         if kind == "activity_list":
             marked = await reconcile_deleted_activities(
                 session, user_id=user_id, window=envelope.window, payload=envelope.payload
@@ -303,6 +307,27 @@ def _make_fit_ingest_hook(
                 )
 
     return _hook
+
+
+async def _derive_ingested(session: AsyncSession, user_id: UUID, keys: list[str]) -> None:
+    if not keys:
+        return
+    ids = (
+        await session.execute(
+            select(Activity.id).where(Activity.user_id == user_id, Activity.external_id.in_(keys))
+        )
+    ).scalars()
+    await derive_pending(session, user_id=user_id, activity_ids=list(ids))
+
+
+async def _derive_after_sync(session: AsyncSession, user_id: UUID) -> None:
+    # catches a raised ACTIVITY_DERIVED_ALGO_VERSION and activities never derived
+    try:
+        await derive_pending(session, user_id=user_id)
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        logger.exception("Activity derivation after backfill failed for user %s", user_id)
 
 
 async def _recompute_after_sync(

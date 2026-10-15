@@ -46,8 +46,9 @@ def harness() -> Iterator[SimpleNamespace]:
         patch.object(sync_module, "recompute_wellness_daily_stats", recompute.wellness),
         patch.object(sync_module, "recompute_hr_bucket_seconds_daily", recompute.hr),
         patch.object(sync_module, "recompute_metric_daily_values", recompute.metrics),
+        patch.object(sync_module, "derive_pending", AsyncMock(return_value=[])) as derive,
     ):
-        yield SimpleNamespace(session=session, recompute=recompute, service=service)
+        yield SimpleNamespace(session=session, recompute=recompute, service=service, derive=derive)
 
 
 async def _run(harness: SimpleNamespace, results: list[BackfillResult | Exception]) -> Any:
@@ -139,3 +140,26 @@ async def test_reconciled_days_extend_recompute_start(harness: SimpleNamespace) 
     harness.recompute.hr.assert_awaited_once_with(
         harness.session, user_id=user_id, start=date(2026, 8, 2), end=date.today()
     )
+
+
+@pytest.mark.asyncio
+async def test_every_garmin_sync_ends_with_derive_pending(harness: SimpleNamespace) -> None:
+    jobs, user_id = await _run(harness, [BackfillResult(0, True, None)])
+
+    harness.derive.assert_awaited_once_with(harness.session, user_id=user_id)
+    assert jobs[0].status == "done"
+
+
+@pytest.mark.asyncio
+async def test_derive_failure_keeps_jobs_done_and_still_recomputes(
+    harness: SimpleNamespace,
+) -> None:
+    harness.derive.side_effect = RuntimeError("db down")
+    results: list[BackfillResult | Exception] = [
+        BackfillResult(1, True, None, fetched_from=datetime(2026, 8, 5, tzinfo=UTC)),
+    ]
+    jobs, _ = await _run(harness, results)
+
+    assert jobs[0].status == "done"
+    harness.session.rollback.assert_awaited()
+    harness.recompute.metrics.assert_awaited_once()

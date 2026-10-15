@@ -234,10 +234,14 @@ async def test_sync_hook_ingests_only_activity_fit_windows() -> None:
     )
     hook = sync_module._make_fit_ingest_hook(session, uid, set())
 
-    with patch.object(sync_module, "ingest_fit_files", AsyncMock(return_value=[])) as ingest:
+    with (
+        patch.object(sync_module, "ingest_fit_files", AsyncMock(return_value=[])) as ingest,
+        patch.object(sync_module, "_derive_ingested", AsyncMock()) as derive,
+    ):
         await hook("activity_list", envelope, 1, {"1": 5})
         await hook("activity_fit", envelope, 1, {"1": 5})
 
     ingest.assert_awaited_once_with(
         session, user_id=uid, file_ids_by_key={"1": 5}, files=envelope.files
     )
+    derive.assert_awaited_once_with(session, uid, ["1"])

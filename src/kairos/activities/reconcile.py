@@ -6,6 +6,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from kairos.activities.derive.service import derive_pending
 from kairos.connectors.types import JSONValue, Window
 
 
@@ -32,7 +33,11 @@ async def reconcile_deleted_activities(
             "present": present,
         },
     )
-    return sorted((int(r[0]), r[1]) for r in result.all())
+    marked = sorted((int(r[0]), r[1]) for r in result.all())
+    if marked:
+        # spec A.3: derived rows go, activity/stream/FIT archive stay
+        await derive_pending(session, user_id=user_id, activity_ids=[i for i, _ in marked])
+    return marked
 
 
 async def local_days_of_activities(session: AsyncSession, ids: list[int]) -> set[date]:

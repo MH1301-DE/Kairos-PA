@@ -14,6 +14,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from kairos.activities.derive.service import derive_pending
 from kairos.activities.fit_archive import ingest_fit_files, load_fit_messages
 from kairos.activities.stream_repository import STREAM_ALGO_VERSION, replace_streams
 from kairos.activities.streams import build_streams
@@ -41,6 +42,8 @@ class ReprocessResult:
     fetch_failed: list[dict[str, str]] = field(default_factory=list)
     fetched: int = 0
     aborted_reason: str | None = None
+    derived: int = 0
+    derive_failed: list[str] = field(default_factory=list)
 
 
 async def reprocess_activities(
@@ -97,6 +100,18 @@ async def reprocess_activities(
     if downloader is not None:
         result.aborted_reason = downloader.aborted_reason
     await session.commit()
+
+    by_id = {a.id: a.external_id for a in activities}
+    # the second pass catches activities outside the range with an outdated algo_version
+    for ids in ([a.id for a in activities], None):
+        for outcome in await derive_pending(session, user_id=user_id, activity_ids=ids):
+            if outcome.status == "failed":
+                result.derive_failed.append(
+                    by_id.get(outcome.activity_id, str(outcome.activity_id))
+                )
+            elif outcome.status in ("derived", "summary_only"):
+                result.derived += 1
+        await session.commit()
     return result
 
 
