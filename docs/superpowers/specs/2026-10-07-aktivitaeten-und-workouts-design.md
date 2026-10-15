@@ -1572,12 +1572,12 @@ Die Validierung ergibt einen einmaligen Bericht in AP 2 und danach Regressionste
 | V7 | Soll/Ist (B.6) für Aktivität 272 und zwei weitere Workout-Läufe: Zahl der Ausführungen und Dauer je Ausführung gegen die Runden in Garmin Connect | Ausführungen = Schritte × Wiederholungen; Dauer ±1 s gegen die Summe der zugehörigen Runden |
 | V8 | Vollständigkeit von `activity_stream` (AP 1a) | je Aktivität und Kanal Nicht-NULL-Werte = `activity_record`-Zeilen; der neue Kanal `distance_m` ist ausgenommen |
 
-**Nachtrag 2026-10-15 (Bericht `docs/validation/2026-10-15-stufe1-ableitungen-v1-v7.md`).** Erfüllt: V1, V3, V5, V6, V7, V2 für 1 km. Nicht erfüllt: V2 für 5 km und V4. Korrekturen und offene Punkte:
+**Nachtrag 2026-10-15 (Bericht `docs/validation/2026-10-15-stufe1-ableitungen-v1-v7.md`).** Erfüllt: V1, V3, V5, V6, V2 für 1 km. Nicht erfüllt: V2 für 5 km und V4. V7 ist nach Wortlaut nicht erfüllt (9/10, 9/10, 7/8 — letzte Erholung nicht gelaufen); erfüllt bei geänderter Zählregel — Zählregel zur Bestätigung durch Max. Offene Punkte:
 
-- **V7, Zählregel:** „Ausführungen = Schritte × Wiederholungen“ zählt nur gelaufene Ausführungen. Ein geplanter Schritt, der nicht gelaufen wurde, ist keine Ausführung, z. B. die letzte Trabpause in 272: Auf das letzte Intervall folgt dort direkt das Auslaufen.
+- **V7, Zählregel (vorläufig, zur Bestätigung durch Max):** Vorschlag: „Ausführungen = Schritte × Wiederholungen“ zählt nur gelaufene Ausführungen. Ein geplanter Schritt, der nicht gelaufen wurde, ist keine Ausführung, z. B. die letzte Trabpause in 272: Auf das letzte Intervall folgt dort direkt das Auslaufen.
 - **V2, Timer- gegen Gesamtzeit:** B.4 bleibt bei der Timer-Zeit. Garmins `fastestSplit_*` misst die Gesamtzeit; Läufe mit Timer-Stopp im Fenster weichen deshalb ab. Strikt erreicht 5 km 81,4 %, mit Gesamtzeit 94,2 %. Offen (Entscheidung): Der Sprungfilter aus B.4 (ein 1-s-Schritt > 8,5 m/s verwirft das Fenster) trifft GPS-Zittern in Intervall-Läufen und echte Sprints. Ohne Filter erreichen beide Distanzen 100 %.
 - **V4:** Die Hysterese in B.1 gilt für Extremwerte. Hoch- und Tiefpunkte zählen voll, sobald die Gegenbewegung 2 m übersteigt; das ist kein Zähler in 2-m-Stufen (korrigiert am 2026-10-15). Auch damit verfehlt V4 das Kriterium: 58,7 %, Median 102 % von Garmin. Garmins Wert ist das `total_ascent`, das die Uhr selbst berechnet; mit Sekunden-Höhendaten in 0,2-m-Auflösung ist er nicht auf ±10 % nachzubauen. Offen (Entscheidung): Wert der Uhr übernehmen, Kriterium ändern oder V4 als nicht erreichbar festhalten.
-- **Laufband:** keine Skalierung der Stream-Distanz auf die (bearbeitete) Garmin-Distanz in Stufe 1. Betroffen ist Aktivität 22 (5,3 statt 7,3 km); Splits und Pace je Schritt bleiben im Stream-Maßstab.
+- **Laufband (vorläufig, zur Bestätigung durch Max):** keine Skalierung der Stream-Distanz auf die (bearbeitete) Garmin-Distanz in Stufe 1. Betroffen ist Aktivität 22 (5,3 statt 7,3 km); Splits und Pace je Schritt bleiben im Stream-Maßstab.
 
 ---
 

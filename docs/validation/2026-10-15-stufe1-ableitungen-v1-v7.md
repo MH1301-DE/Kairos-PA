@@ -8,7 +8,7 @@ Erzeugt mit `scripts/validate_activity_derivations.py --user-id <uuid> --out <da
 
 | Kriterium | Ergebnis |
 |---|---|
-| gesamte Historie inkl. FIT-Dekodierung < 2 min | `derive_pending` 139/139 in 68,1 s (Erstlauf); nach dem Höhen-Fix (s. V4) erneut 139/139 in 67,2 s, 0 Fehlschläge |
+| gesamte Historie inkl. FIT-Dekodierung < 2 min | `derive_pending` 139/139 in 68,1 s (Erstlauf); nach dem Höhen-Fix (s. V4) erneut 139/139 in 67,2 s; nach Anhebung von `ACTIVITY_DERIVED_ALGO_VERSION` auf 2 über `derive_pending` ohne Auswahl 139/139 in 68,9 s, Prüfergebnisse unverändert; 0 Fehlschläge |
 | Zeilen | `activity_stats` 139 (quality ok 132, partial 7), `activity_split` 2.404, `activity_best_effort` 391, `activity_step_result` 273 |
 
 ## Übersicht
@@ -21,9 +21,9 @@ Erzeugt mit `scripts/validate_activity_derivations.py --user-id <uuid> --out <da
 | V4 | Σ Hm↑ gegen `elevationGain` | ±10 % in ≥ 90 % | 71/121 = 58,7 % (vor dem Fix 22/121 = 18,2 %) | nein — mit B.1 nicht erreichbar (H5) |
 | V5 | Ø-Kadenz gegen `averageRunningCadenceInStepsPerMinute` | ±2 spm | 103/103, max 0,80 spm | ja |
 | V6 | Ø-HF gegen `activity.avg_hr` | ±1 bpm | 139/139, davon 136 exakt | ja |
-| V7 | Soll/Ist 272 + zwei Workout-Läufe (402, 250) | Ausführungen = Schritte × Wdh.; Dauer ±1 s | 272, 402, 250: alle gelaufenen Ausführungen ±0,74 s; je eine geplante Ausführung (letzte Trabpause) nicht gelaufen. Alle 43 Workout-Läufe: 40/43 | ja (Zählregel s. u.) |
+| V7 | Soll/Ist 272 + zwei Workout-Läufe (402, 250) | Ausführungen = Schritte × Wdh.; Dauer ±1 s | 272, 402, 250: alle gelaufenen Ausführungen ±0,74 s. Alle 43 Workout-Läufe: 40/43 | nach Wortlaut nicht erfüllt (9/10, 9/10, 7/8 — letzte Erholung nicht gelaufen); erfüllt bei geänderter Zählregel — Zählregel zur Bestätigung durch Max |
 
-Laufband-Lauf 22 (Stream-Distanz 5,3 km, Garmin nach Bearbeitung 7,3 km; Entscheidung: keine Skalierung in Stufe 1): ohne Höhenkanal, ohne Auto-Lap und ohne `fastestSplit_*`, also nur in V5, V6 und V7. Dort prüfen wir Kadenz, HF und Dauer, die von der Distanz nicht abhängen; die Distanz und die Pace je Schritt (Stream-Maßstab) prüft V7 nicht.
+Laufband-Lauf 22 (Stream-Distanz 5,3 km, Garmin nach Bearbeitung 7,3 km; vorläufig, zur Bestätigung durch Max: keine Skalierung in Stufe 1): ohne Höhenkanal, ohne Auto-Lap und ohne `fastestSplit_*`, also nur in V5, V6 und V7. Dort prüfen wir Kadenz, HF und Dauer, die von der Distanz nicht abhängen; die Distanz und die Pace je Schritt (Stream-Maßstab) prüft V7 nicht.
 
 ## V1 Km-Splits gegen Uhr-Runden
 
@@ -279,7 +279,7 @@ Ausführungen mit Abweichung > 1 s:
 | 156 | 1 | 1797.65 | 1800.00 | 6 | 21.11 |
 | 160 | 1 | 1546.09 | 1548.98 | 5 | 89.09 |
 
-**Zählregel (Entscheidung, Korrektur zu §12.3).** „Ausführungen = Schritte × Wiederholungen“ zählt die tatsächlich gelaufenen Ausführungen. Ein geplanter Schritt, der nie gelaufen wurde, ist keine Ausführung. In 272, 402 und 250 fehlt jeweils die letzte Trabpause vor dem Auslaufen: Auf das letzte Intervall folgt direkt die Auslauf-Runde. Dasselbe Muster (nur die letzte Pause fehlt) haben 10 weitere Workouts; 24 hat den Wiederholungsblock nach 5 von 6 Durchgängen beendet, 168 hat zusätzlich eine Pause in der Mitte übersprungen. Gemessen wird gegen die `lap_mesgs` der FIT (aus denen Garmin Connect die Runden zeigt). Die Reihenfolge der gelaufenen Schritte ist in allen 43 Workouts ein geordneter Teil des Plans, und die Kairos-Zeilen haben dieselben Schrittindizes wie die Rundengruppen.
+**Zählregel (vorläufig, zur Bestätigung durch Max).** Nach Wortlaut von §12.3 ist V7 nicht erfüllt: 272 9/10, 250 9/10, 402 7/8. Vorgeschlagen ist: „Ausführungen = Schritte × Wiederholungen“ zählt die tatsächlich gelaufenen Ausführungen; damit ist V7 erfüllt. Ein geplanter Schritt, der nie gelaufen wurde, ist keine Ausführung. In 272, 402 und 250 fehlt jeweils die letzte Trabpause vor dem Auslaufen: Auf das letzte Intervall folgt direkt die Auslauf-Runde. Dasselbe Muster (nur die letzte Pause fehlt) haben 10 weitere Workouts; 24 hat den Wiederholungsblock nach 5 von 6 Durchgängen beendet, 168 hat zusätzlich eine Pause in der Mitte übersprungen. Gemessen wird gegen die `lap_mesgs` der FIT (aus denen Garmin Connect die Runden zeigt). Die Reihenfolge der gelaufenen Schritte ist in allen 43 Workouts ein geordneter Teil des Plans, und die Kairos-Zeilen haben dieselben Schrittindizes wie die Rundengruppen.
 
 **Erklärung der 3 Dauer-Ausreißer außerhalb der Kernstichprobe.** In 100 (Auslaufen), 156 und 160 (Ein-Schritt-Workouts „Basis“ über den ganzen Lauf) liegen Timer-Stopps in der Ausführung (21,9 s / 21,1 s / 89,1 s Pause). Kairos ist 1,1–2,9 s kürzer — dieselbe Ursache wie in V1: Die Ereignisse sind nur sekundengenau, und es kommt der Distanzversatz der ersten Runde hinzu. Bei 156 und 160 steckt darin auch die V1-Abweichung von km 1 (1,19 bzw. 1,76 s).
 
