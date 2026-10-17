@@ -15,7 +15,7 @@ Internet
 ┌─────────────────────────────────────────────────────┐
 │ VM  (Hetzner Cloud, Ubuntu 24.04 LTS — geplant)     │
 │                                                     │
-│  Caddy ──▶ API  ──▶ Postgres + TimescaleDB          │
+│  Caddy ──▶ API  ──▶ Postgres 16                     │
 │         ──▶ Web        ──▶ Redis                    │
 │  migrate (alembic upgrade, einmalig je Start)       │
 └─────────────────────────────────────────────────────┘
@@ -25,7 +25,7 @@ Alle Services laufen als Docker Compose Stack unter `deploy/docker-compose.yml`.
 
 | Dienst | Status |
 |---|---|
-| Caddy, Web (SvelteKit), API (FastAPI), migrate, Postgres + TimescaleDB, Redis | **gebaut** (in Compose, lokal verifiziert) |
+| Caddy, Web (SvelteKit), API (FastAPI), migrate, Postgres 16 (`postgres:16`), Redis | **gebaut** (in Compose, lokal verifiziert) |
 | MinIO (Object Store) | Zielbild — kein Object-Storage-Code, in Compose auskommentiert |
 | Scheduler | im API-Prozess (ADR-0007), kein eigener Container; uvicorn mit genau einem Worker |
 | Backup-Container (restic, täglich 02:00) | Zielbild — in Compose auskommentiert, Backup-Ziel nicht entschieden |
@@ -40,7 +40,7 @@ Alle Services laufen als Docker Compose Stack unter `deploy/docker-compose.yml`.
 
 | Service | Typischer RSS |
 |---|---|
-| Postgres + TimescaleDB (`shared_buffers=256 MB`) | ~700 MB |
+| Postgres 16 (`shared_buffers=256 MB`) | ~700 MB |
 | API (FastAPI, uvicorn, 1 Prozess) | ~200 MB |
 | Web (SvelteKit, Node) | ~100 MB |
 | Redis | ~50 MB |
@@ -55,12 +55,14 @@ Peak (Backfill + Metrics-Recompute gleichzeitig): +400 MB → ~2,2 GB.
 
 ### 2.2 Empfehlung
 
-**SSD-Bedarf neu gerechnet** (Messung vom 2026-10-08, siehe
+**SSD-Bedarf** (Messung vom 2026-10-17 nach Stufe 1, siehe
 [02 §1.3](02-datenmodell-und-volumen.md#13-speicherbedarf)): Daten für 5 Nutzer über
-5 Jahre ≈ **14 GB bei der realen Aktivitätsrate** (≈ 96/Jahr), ≈ **30 GB im
-Doku-Szenario** (250/Jahr). Hauptposten ist `activity_record` (≈ 4 MB je Aktivität,
-Timescale-Kompression mit RLS nicht nutzbar). Dazu kommen OS, Docker-Images
-(≈ 8–10 GB) und Platz für lokale Dumps vor dem Upload ins Backup.
+5 Jahre ≈ **4 GB bei der realen Aktivitätsrate** (≈ 98/Jahr), ≈ **5,5 GB im
+Doku-Szenario** (250/Jahr). Seit Stufe 1 liegen Sekundendaten als Arrays in
+`activity_stream` (≈ 0,13 MB je Aktivität statt ≈ 4 MB in `activity_record`), dazu das
+Original-FIT-ZIP (≈ 0,09 MB). Hauptposten ist jetzt `wellness_sample`. Dazu kommen OS,
+Docker-Images (≈ 8–10 GB, ohne TimescaleDB-Image) und Platz für lokale Dumps vor dem
+Upload ins Backup. **40 GB SSD reichen** (Hetzner CX22).
 
 | VM (Hetzner, Angaben vor Buchung prüfen) | RAM | SSD | Bewertung |
 |---|---|---|---|

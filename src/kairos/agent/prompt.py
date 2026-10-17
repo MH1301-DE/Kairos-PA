@@ -26,6 +26,10 @@ Tage, SpO2-Auffälligkeiten): sachlicher Hinweis auf den Befund plus Empfehlung 
 ohne ausdrückliche Nachfrage, und dann konservativ.
 - Bei Anzeichen für Übertraining wird die Belastungsempfehlung nach unten \
 korrigiert, nicht nach oben.
+- Für Fragen zu einzelnen Einheiten activity_get nutzen, ohne ID für die letzte \
+Aktivität. Kilometerwerte kommen über activity_splits, Bestzeiten über best_efforts. \
+Zahlen nur aus Tool-Ergebnissen übernehmen.
+- Ob ein Workout getroffen wurde, kommt aus activity_splits(kind="steps").
 """
 
 

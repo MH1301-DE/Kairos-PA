@@ -3,24 +3,29 @@
 | | |
 |---|---|
 | **Datum** | 2026-10-07 |
-| **Status** | Design abgestimmt. **AP 0 (Verifikation) abgeschlossen am 2026-10-13**, Ergebnisse in §2.1; Fixtures unter `tests/fixtures/garmin/`. |
+| **Status** | Design abgestimmt. **AP 0 (Verifikation) abgeschlossen am 2026-10-13**, Ergebnisse in §2.1; Fixtures unter `tests/fixtures/garmin/`. **Überarbeitet am 2026-10-13 nach dem Brainstorming** (Entscheidungen D1–D34, Prüfaufträge P1–P3): Diese Spec ist jetzt **Stufe 1**. |
+| **Umsetzung** | **AP 1a–3 umgesetzt** auf Branch `stufe1-datenbasis` (2026-10-14 bis 2026-10-17), Plan `docs/superpowers/plans/2026-10-13-stufe1-datenbasis-und-lese-tools.md`. Offen: Live-Eval 17–21/26 (LLM-Key). Entscheidungen zu V2, V4, V7 und Laufband am 2026-10-17 getroffen (§12.3). |
 | **Baut auf** | `03-agent-design.md` §4.2 · Agent-Harness v2 (`2026-10-05-agent-harness-v2-design.md`) · Phase 5 Planning (`2026-09-12-phase-5-planning-design.md`) |
-| **Ist-Stand** | Code- und DB-Prüfung vom 2026-10-07 (26 Fragen, inkl. Live-Abruf von `get_personal_record` und `get_activity_splits`) |
-| **Folgedokument** | `superpowers/plans/2026-10-07-doku-abgleich.md` (Korrekturen an `00`–`08`, HANDOVER, ADR-0004) |
+| **Ist-Stand** | Code- und DB-Prüfung vom 2026-10-07 (26 Fragen, inkl. Live-Abruf von `get_personal_record` und `get_activity_splits`); Prüfaufträge P1–P3 vom 2026-10-13 (§2.2) |
+| **Entscheidungen** | [`2026-10-13-brainstorming-entscheidungen.md`](2026-10-13-brainstorming-entscheidungen.md) (D1–D34, Stufenplan) |
+| **Folgedokumente** | `superpowers/plans/2026-10-07-doku-abgleich.md` (erledigt); Spec Stufe 2 „Scheduler & Proaktivität“ und Spec Stufe 3 „Coach-Modus“ (beide offen) |
 
 ---
 
 ## 0. Zusammenfassung
 
-Kairos bekommt fünf Bausteine:
+Kairos bekommt in Stufe 1 sechs Bausteine:
 
-1. **Abgeleitete Aktivitätsdaten.** Pro Aktivität entstehen ein Steckbrief (`activity_stats`), Splits pro Kilometer bzw. Uhr-Runde (`activity_split`) und die schnellsten Abschnitte über Standarddistanzen (`activity_best_effort`). Alles wird deterministisch aus den bereits archivierten FIT-Daten berechnet.
-2. **Fünf Lese-Tools in vier Detailstufen:** Suche → Steckbrief → Split-Tabelle (eine Zeile pro km) → Analyse. Dazu kommen Lauf-Bestleistungen. Kein Sekundenwert erreicht den Kontext.
-3. **Workout-Verwaltung in Garmin.** Strukturierte Workouts lassen sich anlegen, ändern, terminieren und löschen, einzeln oder gesammelt. Jedes Terminieren legt zusätzlich einen Google-Kalendertermin an.
-4. **Planung → Garmin.** `plan_commit` legt pro Trainingsblock ein Garmin-Workout an, terminiert es und trägt einen Google-Termin ein. `plan_adjust` passt Workout und Termin an.
-5. **Zwei Harness-Erweiterungen:**
+1. **Neue Datenbasis.** Sekundendaten liegen als Arrays je Aktivität und Kanal (`activity_stream`) statt als eine Zeile pro Sekunde und Kanal; gemessen 58× kleiner. Die Original-FIT wird als ZIP archiviert. TimescaleDB entfällt, Tageswerte werden nach Ortszeit geschnitten, und die HFmax kommt aus der Nutzereingabe.
+2. **Abgeleitete Aktivitätsdaten.** Pro Aktivität entstehen ein Steckbrief (`activity_stats`), Splits pro Kilometer bzw. Uhr-Runde (`activity_split`), die schnellsten Abschnitte über Standarddistanzen (`activity_best_effort`) und für Workouts der Soll/Ist-Vergleich pro Schritt (`activity_step_result`). Alles wird deterministisch aus der archivierten FIT berechnet.
+3. **Fünf Lese-Tools in vier Detailstufen:** Suche → Steckbrief → Split-Tabelle (eine Zeile pro km, pro Runde oder pro Workout-Schritt) → Analyse. Dazu kommen Lauf-Bestleistungen. Kein Sekundenwert erreicht den Kontext.
+4. **Workout-Verwaltung in Garmin.** Strukturierte Workouts mit Schritt-Notizen und (nach dem Uhr-Test AP 0b) Sekundärzielen lassen sich anlegen, ändern, terminieren und löschen, einzeln oder gesammelt. Jedes Terminieren legt zusätzlich einen Google-Kalendertermin an.
+5. **Aktivitäten in Garmin** umbenennen und löschen.
+6. **Zwei Harness-Erweiterungen:**
    - Vorschau-Snapshots: Der Nutzer bestätigt genau das, was er gesehen hat, auch bei „lösche alle“.
    - Ein gemeinsamer Garmin-Schreibdienst: nur Token-Login, gedrosselt, mit Kompensation bei Teilfehlern.
+
+**Nicht mehr in dieser Spec:** Die Kopplung der Planung an Garmin (`plan_commit`/`plan_adjust` mit Workouts, früher Teil E) zieht in den Coach-Modus (Stufe 3, D28). Bis dahin legt der Chat Workouts direkt über die Workout-Tools an.
 
 Der Tool-Satz wächst von 12 auf 26. Die Tool-Schemas kosten danach geschätzt 4.000–4.500 Tokens pro Turn; heute sind es gemessen 1.461. Das liegt weiterhin deutlich unter dem Ziel von 15.000 Tokens Median-Input.
 
@@ -41,7 +46,7 @@ Der Tool-Satz wächst von 12 auf 26. Die Tool-Schemas kosten danach geschätzt 4
 | Eigentum | unerheblich: Der Agent darf jedes Workout im Konto ändern und löschen |
 | Löschen | immer mit Bestätigung; mehrere oder alle Workouts in einem Vorgang |
 | Terminieren | legt immer zusätzlich einen kurzen Google-Kalendertermin an |
-| Plan | `plan_commit` = Workouts in Garmin anlegen, terminieren und je einen Kalendertermin anlegen |
+| Plan | `plan_commit` = Workouts in Garmin anlegen, terminieren und je einen Kalendertermin anlegen. **Seit 2026-10-13 Teil von Stufe 3** (Coach-Modus, D28). |
 
 ### 1.2 In dieser Spec getroffen (bitte prüfen)
 
@@ -50,12 +55,12 @@ Der Tool-Satz wächst von 12 auf 26. Die Tool-Schemas kosten danach geschätzt 4
 | E1 | Km-Splits werden aus dem FIT-Feld `distance` selbst geschnitten; die Uhr-Runden kommen zusätzlich als eigene Split-Art dazu. | Garmins Runden sind nur bei Auto-Lap auf 1 km auch Kilometer. Die FIT-Distanz ist Garmins eigene Distanz und liegt lokal vor, ein Request ist nicht nötig. |
 | E2 | Best Efforts werden selbst berechnet (gleitendes Fenster); `get_personal_record` wird nicht importiert. | Garmin führt 800 m, 1.500 m, 3.000 m, 50 km und 100 km nicht. Validiert wird gegen Garmins `fastestSplit_*` und die PR-Werte (Abschnitt 12.3). |
 | E3 | Distanzliste: 800 m · 1.500 m · 3.000 m · 5 km · 10 km · HM · M · 50 km · 100 km | Vorschlag vom 07.10., unwidersprochen; als Konstante jederzeit änderbar |
-| E4 | Workouts in V1 nur für Laufen und Rad | Schwimm-Workouts haben eine eigene Schrittlogik (Bahnen, Schwimmstil, Pausen) und kommen in V1.1. Wandern hat keine sinnvolle Struktur. |
+| E4 | Workouts in V1 nur für Laufen und Rad; Kraft-Workouts mit Übungen folgen als V1.1 (D15) | Schwimm-Workouts haben eine eigene Schrittlogik (Bahnen, Schwimmstil, Pausen) und kommen später. Wandern hat keine sinnvolle Struktur. |
 | E5 | Aktivitäts-Lese-Tools lesen nur die DB, nie Garmin live. | Kein Rate-Limit-Risiko, deterministische Zahlen, kurze Antwortzeit |
 | E6 | Workout-Lese-Tools frischen einen lokalen Spiegel auf, höchstens alle 5 min. | Garmin ist führend, und der Nutzer legt Workouts auch in Garmin Connect an. |
-| E7 | Ein Garmin-Workout pro Planblock, keine Wiederverwendung | Einzelne Tage bleiben unabhängig änderbar. Aufgeräumt wird per `workout_delete(plan_id=…)`. |
-| E8 | Workout-Templates für Planblöcke sind Platzhalter mit HF-Zonen-Zielen. | Die Trainingsphilosophie ist noch offen (Roadmap, offener Punkt 12). |
-| E9 | **HF-Ziele in Workouts sind immer bpm-Bereiche** (`hr_range`). Zonen-Kürzel (Z1–Z5) in Templates und Nutzeranfragen werden beim Erzeugen über die Kairos-Zonen in bpm umgerechnet. `hr_zone` (Garmin-Zonennummer) bleibt im Modell nur, um bestehende Garmin-Workouts mit `zoneNumber` lesen, anzeigen und unverändert zurückschreiben zu können. | Entscheidung des Nutzers (2026-10-13). Alle bestehenden Workouts nutzen bpm; die Zahl auf der Uhr ist dieselbe, die Kairos in Vorschau und Kalender zeigt — kein Auseinanderlaufen von Garmin- und Kairos-Zonen. |
+| E7 | Ein Garmin-Workout pro Planblock, keine Wiederverwendung | Gilt als Vorgabe für Stufe 3 (§8). Einzelne Tage bleiben unabhängig änderbar. |
+| E8 | ~~Workout-Templates für Planblöcke sind Platzhalter mit HF-Zonen-Zielen.~~ | Entfällt: Pläne erzeugt der Coach-Modus aus der Wissensbank (D19, D24). |
+| E9 | **HF-Ziele in Workouts sind immer bpm-Bereiche** (`hr_range`). Zonen-Kürzel (Z1–Z5) in Nutzeranfragen werden beim Erzeugen über die Kairos-Zonen in bpm umgerechnet; die HFmax dafür kommt aus A.6. `hr_zone` (Garmin-Zonennummer) bleibt im Modell nur, um bestehende Garmin-Workouts mit `zoneNumber` lesen, anzeigen und unverändert zurückschreiben zu können. | Entscheidung des Nutzers (2026-10-13). Alle bestehenden Workouts nutzen bpm; die Zahl auf der Uhr ist dieselbe, die Kairos in Vorschau und Kalender zeigt — kein Auseinanderlaufen von Garmin- und Kairos-Zonen. |
 | E10 | Aktivitäten umbenennen und löschen bleibt als kleines Paket erhalten (Teil F). | Stand in der ursprünglichen Anfrage. Lässt sich streichen, ohne den Rest zu berühren. |
 | E11 | `Connector.write_back` wird für Garmin nicht genutzt. | Workout-Operationen sind mehrstufig (anlegen → terminieren → Kalender). Schreibzugriffe laufen wie beim Kalender über Domänen-Services. |
 | E12 | Keine Kalorien im Steckbrief | Ernährung ist Nicht-Ziel (`00` §3). Der Wert bleibt in der DB. |
@@ -63,11 +68,28 @@ Der Tool-Satz wächst von 12 auf 26. Die Tool-Schemas kosten danach geschätzt 4
 ### 1.3 Nicht-Ziele (V1)
 
 - Sekundendaten im Kontext, manuelle Aktivitäten, FIT-/GPX-Upload
+- Auswertungen über die Sekundendaten mehrerer Aktivitäten (D2)
 - Klettern; Bestleistungen außerhalb des Laufens
-- Workouts für Schwimmen, Wandern und Kraft
-- Soll/Ist-Auswertung pro Intervall. Die Datengrundlage (`wkt_step_index` der Runden) wird aber schon gespeichert.
+- Workouts für Schwimmen und Wandern; Kraft folgt als V1.1 (D15)
+- Planung mit Garmin-Workouts (Stufe 3, D28); Scheduler, Push und automatische Reaktionen (Stufe 2)
 - Aktivitätstyp ändern (`set_activity_type`)
 - `push_workout_to_device`. Ein terminiertes Workout synchronisiert ohnehin über den Garmin-Kalender auf die Uhr.
+
+### 1.4 Änderungen aus dem Brainstorming (2026-10-13)
+
+| Entscheidung | Inhalt | Abschnitt |
+|---|---|---|
+| D1, D2 | Sekundendaten als Arrays (`activity_stream`), `activity_record` entfällt | A.2 |
+| D3 | Original-FIT als ZIP archivieren statt dekodiertem JSON; Bestand einmal neu laden | A.2, A.4 |
+| D4 | TimescaleDB entfernen, Standard-Postgres 16 | A.7 |
+| D8 | Tagesgrenzen nach Ortszeit | A.8 |
+| D9 | TRIMP zählt weiter Samples als Sekunden (P1: sekündliche Aufzeichnung) | §2.2 |
+| D10 | HFmax aus Nutzereingabe, sonst 220 − Alter; Einstellungsseite | A.6 |
+| D11 | Pace kurzer Abschnitte aus der Distanz; Laufleistung nur mit Hinweis | B.1, C.2 |
+| D12, D13 | Soll/Ist pro Workout-Schritt mit Trefferregel | B.6, C.3 |
+| D14 | Sekundärziele nach Uhr-Test | D.1, D.2, AP 0b |
+| — (Befund) | Schritt-Notizen ins Workout-Modell, sonst gehen sie beim Ändern verloren | D.1, D.2 |
+| D28 | Planung mit Garmin-Workouts nach Stufe 3 | §8 |
 
 ---
 
@@ -78,15 +100,18 @@ Belege stehen im Prüfbericht vom 2026-10-07.
 | Bereich | Ist-Stand | Folge |
 |---|---|---|
 | `activity` | Summary-Spalten aus `activity_list`. `activity_type` ist immer NULL, weil `normalize.py:295` einen String erwartet, Garmin aber ein Dict liefert. Zeitzone, `movingDuration`, Training Load, VO₂max und `fastestSplit_*` liegen nur im `raw_payload`. Der Upsert aktualisiert `start_at`/`end_at` nicht (`canonical.py:140-151`). | Teil A.1 |
-| `activity_record` | narrow (`metric`, `value`), Hypertable; 7 Kanäle befüllt. **`distance` fehlt** in `_FIT_FIELDS` (`normalize.py:309-320`), steht aber in jedem FIT-Record im `raw_payload`. | Teil A.2 |
-| FIT-Archiv | nur `record`, `session`, `lap` (`connector.py:81-86`); `length`, `event`, `device_info` werden verworfen; keine FIT-Dateien gespeichert | Teil A.2 |
+| `activity_record` | narrow (`metric` als Text, `value` als double), Hypertable; 7 Kanäle befüllt; gemessen 224 B pro Zeile inkl. Indizes, ≈ 3,5 MB pro Aktivität. **`distance` fehlt** in `_FIT_FIELDS` (`normalize.py:309-320`), steht aber in jedem FIT-Record im `raw_payload`. Gelesen nur von `recompute_hr_bucket_seconds_daily` (`metrics_recompute.py`) und `get_activity_detail` (`data_read.py`, Endpoint `GET /api/data/activities/{external_id}`, vom Frontend nicht aufgerufen). | Teil A.2 |
+| FIT-Archiv | nur `record`, `session`, `lap` als JSON (`connector.py:81-86`); `length`, `event`, `workout`, `workout_step`, `device_info` werden verworfen; keine FIT-Dateien gespeichert | Teil A.2 |
+| TimescaleDB | nur `create_hypertable` für `wellness_sample` und `activity_record` (Migration `6bf30be597a0`); kein `time_bucket`, keine Kompression und keine Continuous Aggregates (beide mit RLS gesperrt). Images: `timescale/timescaledb-ha:pg16` (Compose, CI), `timescale/timescaledb:latest-pg16` (`tests/conftest.py`). | Teil A.7 |
+| Tagesgrenzen | `metrics_recompute.py` und `metrics_data.py` schneiden Tage nach UTC (`AT TIME ZONE 'UTC'`); `app_user.home_timezone` existiert (Default `Europe/Berlin`), wird dort aber nicht genutzt. | Teil A.8 |
+| HFmax | `estimate_hr_max()` (`metrics/hr_zones.py`) nimmt `hr_max_override`, sonst das Maximum aus 220 − Alter und der höchsten gemessenen Aktivitäts-HF. `birth_date` und `hr_max_override` stehen in `user_setting`, sind aber weder über die API noch im Frontend setzbar. | Teil A.6 |
 | Löschungen | kein Abgleich, kein Soft-Delete | Teil A.3 |
 | Garmin-Client | `_build_garmin_client` (`sync.py:288-345`): nur Token, kein Passwort. Bei Ablehnung setzt er `reauth_required` **und committet**. | Teil D.7 |
 | Proposals | keine Tabelle; `conversation_message.tool_calls` + `tool_call_id`, `FOR UPDATE` + 409 | Teil G.1 |
 | Tool-Ausgaben | Hülle `summary/data/meta`; `meta.truncated` wird nie gesetzt; kein globaler Cap; keine Token-Telemetrie | Teil G.2–G.4 |
 | Scheduler | keiner; Syncs nur manuell als BackgroundTask; Recompute nach dem Backfill | Ableitungen hängen sich an Sync und Recompute. |
 | Durchsatz | 1,5 s zwischen Tagesfenstern; FIT-Downloads innerhalb eines Fensters ohne Pause; 300 s Cooldown | Teil A.5 |
-| Reale Daten | 136 Aktivitäten (11.05.2025–07.10.2026): running 99, hiking 11, lap_swimming 7, cycling 7, strength_training 6, hiit 2, breathwork 2, treadmill_running 1, resort_skiing 1 | Sportprofile, Teil A.1 |
+| Reale Daten | 136 Aktivitäten (11.05.2025–07.10.2026): running 99, hiking 11, lap_swimming 7, cycling 7, strength_training 6, hiit 2, breathwork 2, treadmill_running 1, resort_skiing 1. Stand 13.10.: 139 Aktivitäten. | Sportprofile, Teil A.1 |
 | `garminconnect` | Laut aktuellem `master`-README gibt es `upload_running_workout`/`upload_cycling_workout`, `get_workout_by_id`, `update_workout` (behält die ID, Termine bleiben gültig), `delete_workout`, `schedule_workout(id, datum)` und `unschedule_workout(schedule_id)`. | In 0.3.17 bestätigt (AP 0, §2.1) |
 
 ### 2.1 Ergebnisse AP 0 (2026-10-13)
@@ -115,6 +140,17 @@ Workouts, Update-Fallstrick, siehe unten).
 - **Garmin Coach.** Der Kalender enthielt adaptive Coach-Workouts (`itemType: "fbtAdaptiveWorkout"`, mit `trainingPlanId`, **ohne `workoutId`**). Sie stehen nicht in `get_workouts` und sind damit für `workout_delete`/`workout_unschedule` unerreichbar — die geplante Markierung „Workout aus Trainingsplan“ entfällt. Der Nutzer hat den Coach-Plan inzwischen gelöscht (§15, Punkt 7).
 - **Update-Fallstrick (aus dem Importer):** Werden bei `update_workout` zusätzliche, Garmin unbekannte Feldnamen mitgeschickt (z. B. `targetValueLow/High` neben `targetValueOne/Two`), setzt Garmin die Zielwerte serverseitig auf `null` — Ursache des Uhr-Fehlers „HF 101–101“. Der Mapper schickt deshalb nur bekannte Felder; ein `update_workout` mit der vollständigen, unveränderten `get_workout_by_id`-Antwort plus geänderten Feldern funktioniert (AP 0 live geprüft).
 - **Garmin-Termine haben keine Uhrzeit** (`startTimestampLocal` ist `null`); die Uhrzeit existiert nur im Google-Termin und in `garmin_workout_schedule.start_at`.
+- **Schritt-Notizen.** Die Workouts aus dem Importer nutzen das Schrittfeld `description` (bis 39 Zeichen, z. B. „KADENZ - Tempo halten! Metronom 164 spm“). Das Kairos-Modell muss es führen, sonst gehen die Notizen beim Ändern verloren (D.1).
+- **Sekundärziele.** Jeder Schritt enthält `secondaryTargetType`, `secondaryTargetValueOne/Two`, `secondaryTargetValueUnit` und `secondaryZoneNumber`; in allen Fixtures leer.
+- **Pace-Reihenfolge.** Der Importer schickte die schnellere Grenze als `targetValueOne` (z. B. 3,636/3,509 m/s), das AP-0-Wegwerf-Workout die langsamere. Garmin speichert beides so, wie gesendet. `from_garmin` sortiert deshalb nach Wert.
+
+### 2.2 Prüfaufträge P1–P3 (2026-10-13)
+
+| # | Frage | Ergebnis | Folge |
+|---|---|---|---|
+| P1 | Zeichnet die Uhr sekündlich auf? | Ja: HF-Zeilen / `duration_s` = 1,000–1,003 bei den letzten 20 Aktivitäten, Median-Abstand 1 s; Lücken von 13–91 s sind Pausen. `activity.duration_s` ist die Timer-Zeit. | Tages-TRIMP zählt weiter Samples als Sekunden (D9). Die Zeitgewichtung in B.1 bleibt als Absicherung für andere Geräte. |
+| P2 | Wie groß ist das Array-Format an echten Daten? | 475 MB → 8,5 MB für 139 Aktivitäten (3.499,5 → 59,9 KB je Aktivität, Faktor ≈ 58). Je Kanal: HF 3,6 KB, Kadenz 2,7, Höhe 4,3, Geschwindigkeit 5,0, Leistung 6,3, Breite 13,4, Länge 14,2, Zeitachse 9,8 KB. | Format aus A.2 übernommen. Die Zeitachse lässt sich später per Lauflängen-Kodierung fast ganz einsparen. |
+| P3 | Enthält die Aktivitäts-FIT die Workout-Schritte? | Ja (Aktivität 272, „W3 Do Schwelle 4x6“): `workout_mesgs` und `workout_step_mesgs` mit Dauer, Zieltyp, Zielwerten und Notiz; die Runden tragen `wkt_step_index` (Wiederholungsschritt ohne eigene Runde, letzte Runde mit `session_end` ohne Index). Ein Intervall verteilt sich wegen Auto-Lap auf mehrere Runden. **HF-Ziele sind in der FIT mehrdeutig** (Profil: ≤ 100 = % HFmax, > 100 = bpm + 100; die Datei enthält 100/150, die API 100–150 bpm). | Soll/Ist nach B.6: Struktur aus der FIT, Runden je Schritt zusammenfassen, HF-Ziele aus der API. |
 
 ---
 
@@ -122,13 +158,14 @@ Workouts, Update-Fallstrick, siehe unten).
 
 ```
                   Sync (bestehend, erweitert)
-Garmin ── activity_list / activity_fit ──▶ raw_payload
-                                              │ normalize
+Garmin ── activity_list ──────────────────▶ raw_payload (JSON)
+       └─ activity_fit (ZIP je Aktivität) ──▶ raw_payload (kind 'activity_fit_file')
+                                              │ normalize / decode
                                               ▼
-                              activity, activity_record
+                activity, activity_stream_axis, activity_stream
                                               │ derive            ◀── reprocess (ohne Garmin-Request)
                                               ▼
-                 activity_stats · activity_split · activity_best_effort
+ activity_stats · activity_split · activity_best_effort · activity_step_result
                                               ▲
                                               │ nur DB
                                      Aktivitäts-Lese-Tools
@@ -145,7 +182,7 @@ Agent-Schreib-Tools ── Proposal + Vorschau ──▶ Bestätigung ──▶ 
 **Leitregeln**
 
 - **R1** Aktivitäts-Lese-Tools lesen nur die DB.
-- **R2** Alles Abgeleitete ist aus `raw_payload` reproduzierbar (`algo_version`).
+- **R2** Alles Abgeleitete ist aus `raw_payload` reproduzierbar (`algo_version`). Für Aktivitäten ist die Quelle das archivierte FIT-ZIP; auch `activity_stream` ist eine Ableitung davon.
 - **R3** Der Server formatiert jede Zahl, die der Agent nennen soll: Pace, Zeiten, Distanzen, Differenzen. Das Modell rechnet nicht (Rechenverbot, `03` §1).
 - **R4** Jede Schreibaktion bei Garmin oder Google läuft über Proposal → Vorschau-Snapshot → Bestätigung.
 - **R5** Garmin ist führend für Workouts und Aktivitäten. Lokale Tabellen sind Spiegel oder Ableitungen.
@@ -168,7 +205,9 @@ Eine Migration, danach der Normalizer-Fix:
 | neu | `moving_duration_s real`, `avg_speed_mps real`, `lap_count smallint` | `movingDuration`, `averageSpeed`, `lapCount` |
 | neu | `garmin_training_load real`, `garmin_vo2max real` | `activityTrainingLoad`, `vO2MaxValue` |
 | neu | `deleted_at timestamptz`, `deleted_reason text`, CHECK (`kairos`, `garmin_sync`) | Teil A.3 und F |
-| entfällt | `activity_type` | Ist immer NULL. Vorher die Lesestellen prüfen (AP 0). |
+| neu | `fit_payload_id` | Verweis auf das archivierte FIT-ZIP (A.2) |
+| entfällt | `activity_type` | Ist immer NULL; wird laut AP 0 nirgends gelesen. |
+| entfällt | `fit_object_key` | ungenutzt (0 von 136 befüllt); ersetzt durch `fit_payload_id` |
 
 - `sport` bleibt der Garmin-`typeKey`.
 - **Upsert-Fix:** Bei einem Konflikt werden alle fachlichen Spalten aktualisiert, auch `start_at`, `end_at` und `start_local`. Ausgenommen sind `id`, `user_id`, `external_id` und `created_at`. Taucht eine als gelöscht markierte Aktivität bei Garmin wieder auf, wird `deleted_at` geleert.
@@ -186,19 +225,68 @@ Eine Migration, danach der Normalizer-Fix:
 
 Die Elterntypen werden über eine Typliste aufgelöst, die einmal per `get_activity_types()` abgerufen und als Fixture eingecheckt wird (`typeId → typeKey → parentTypeId`). Ein Test stellt sicher, dass alle neun real vorkommenden `typeKey`s ohne Fallback zugeordnet werden.
 
-### A.2 FIT-Import erweitern
+### A.2 FIT-Archiv und Sekundendaten (D1, D3)
 
-1. **Distanz speichern.** In `_FIT_FIELDS` kommt `distance` dazu und wird auf die neue Metrik `distance_m` abgebildet (Seed in `metric_def`). Das sind heute rund 0,3 Mio. zusätzliche Zeilen, ein achter Kanal neben den sieben bestehenden.
-   **Kadenz (AP 0):** Garmin rechnet Lauf-spm als 2 × (`cadence` + `fractional_cadence`). Damit km-Splits auf ±1 spm genau werden, wird `cadence` beim Normalisieren als `cadence + fractional_cadence` gespeichert (kein neuer Kanal); der Reprocess (A.4) korrigiert die Bestandsdaten.
-2. **Mehr Messages archivieren.** Zusätzlich bleiben im `raw_payload`:
-   - `length_mesgs` (Schwimmbahnen),
-   - `event_mesgs` (Timer-Start/-Stopp, also Pausen),
-   - `workout_mesgs` und `workout_step_mesgs` (das ausgeführte Workout; Grundlage für eine spätere Soll/Ist-Auswertung).
-3. **Benötigte Lap-Felder.** Aus `lap_mesgs` werden diese Felder gebraucht; es sind Skalare, sie bleiben also erhalten:
-   - Zeit und Distanz: `start_time`, `total_elapsed_time`, `total_timer_time`, `total_distance`
-   - HF, Höhe, Technik: `avg_heart_rate`, `max_heart_rate`, `total_ascent`, `total_descent`, `avg_cadence`, `avg_power`
-   - Struktur: `intensity`, `lap_trigger`, `wkt_step_index`, `num_lengths`
-4. **`records_to_json()` bleibt unverändert.** Listen werden weiterhin verworfen; für diese Spec ist das unkritisch.
+**1. FIT-ZIP archivieren.** `_fetch_activity_fits` speichert für jede Aktivität das ZIP aus `download_activity(…, ORIGINAL)` unverändert als eigene `raw_payload`-Zeile:
+
+| Feld | Wert |
+|---|---|
+| `kind` | `'activity_fit_file'` |
+| `window_start`, `window_end` | Startzeit der Aktivität (UTC) |
+| `content_hash` | SHA-256 des ZIP |
+| `payload_gzip` | das ZIP selbst (schon komprimiert, kein zweites gzip) |
+| `payload_format` (neu) | `'fit_zip'`; bestehende Zeilen `'json_gzip'` (CHECK auf beide Werte) |
+
+- Die Aktivität verweist darauf über die neue Spalte `activity.fit_payload_id` (FK auf `raw_payload.id`, Typ wie dort). Die ungenutzte Spalte `activity.fit_object_key` entfällt.
+- Das dekodierte JSON (`records`/`sessions`/`laps`) wird für neue Aktivitäten **nicht mehr** gespeichert. Der vorhandene `activity_fit`-JSON-Bestand bleibt unangetastet (Rohdaten werden nie gelöscht) und dient als Rückfall, falls ein ZIP nicht mehr ladbar ist.
+- Normalisierung und Ableitung dekodieren das ZIP (`decode_fit_zip`) und haben damit alle Messages: `record`, `session`, `lap`, `length`, `event`, `workout`, `workout_step`, `device_info`.
+- Aufwand: ≈ 125 KB pro Aktivität, im Doku-Szenario ≈ 0,8 GB in 5 Jahren.
+
+**2. Sekundendaten als Arrays.** Zwei neue Tabellen ersetzen `activity_record`. Das Format ist das in P2 gemessene (59,9 KB pro Aktivität):
+
+```sql
+CREATE TABLE activity_stream_axis (
+  activity_id   bigint PRIMARY KEY REFERENCES activity(id) ON DELETE CASCADE,
+  user_id       uuid NOT NULL,
+  start_at      timestamptz NOT NULL,     -- Zeitstempel des ersten Records
+  t_offset_s    int4[] NOT NULL,          -- Sekunden ab start_at, streng aufsteigend
+  source        text NOT NULL CHECK (source IN ('fit_zip', 'fit_json')),
+  algo_version  smallint NOT NULL
+);
+
+CREATE TABLE activity_stream (
+  activity_id   bigint REFERENCES activity(id) ON DELETE CASCADE,
+  channel       text NOT NULL,            -- 'hr', 'speed_mps', 'distance_m', …
+  user_id       uuid NOT NULL,
+  v4            real[],                   -- alle Kanäle außer Position
+  v8            float8[],                 -- 'lat_deg', 'lng_deg'
+  PRIMARY KEY (activity_id, channel),
+  CHECK (num_nonnulls(v4, v8) = 1)
+);
+-- TOAST-Kompression lz4 für t_offset_s, v4, v8 (ALTER TABLE … ALTER COLUMN … SET COMPRESSION lz4)
+```
+
+| Regel | Festlegung |
+|---|---|
+| Ausrichtung | Jedes Kanal-Array hat die Länge von `t_offset_s`; fehlende Werte sind `NULL`-Elemente. Prüfung beim Schreiben: Zahl der Nicht-NULL-Werte = Zahl der gelesenen FIT-Werte. |
+| Kanäle (V1) | `hr`, `cadence`, `speed_mps` (aus `enhanced_speed`, sonst `speed`), `distance_m` (neu), `altitude_m` (aus `enhanced_altitude`, sonst `altitude`), `power_w`, `lat_deg`, `lng_deg`, `temp_c`. Ein Kanal ohne Werte wird nicht geschrieben. |
+| Neuer Kanal | Eintrag in der Konstante `STREAM_CHANNELS` (Code, Einheit, `v4`/`v8`); keine Schema-Migration. |
+| Kadenz (AP 0) | `cadence` = FIT `cadence + fractional_cadence` pro Bein; Lauf-spm = 2 × Wert. Damit stimmen Splits auf ±1 spm mit Garmin überein. |
+| Schreiben | pro Aktivität in einer Transaktion: Achse und alle Kanäle löschen und neu schreiben. Die FIT ist unveränderlich, ein erneutes Schreiben ergibt dieselben Daten. |
+| RLS | wie alle fachlichen Tabellen: ENABLE + FORCE + Policy auf `user_id` |
+| Lesen | ein Helfer `load_stream(activity_id, channels)` liefert die ausgerichteten Arrays; genutzt von Teil B, `activity_analyze` und dem Detail-Endpoint |
+| Später möglich | Die Zeitachse macht ≈ 16 % aus. Da die Uhr sekündlich aufzeichnet (P1), würde eine Lauflängen-Kodierung sie fast ganz einsparen. Nicht in V1. |
+
+**3. Lesepfade umstellen.** Es gibt genau zwei:
+- `recompute_hr_bucket_seconds_daily` zählt künftig die HF-Werte aus `activity_stream` (SQL über `unnest(v4)` oder in Python) und ordnet sie dem lokalen Tag zu (A.8).
+- `GET /api/data/activities/{external_id}` liefert die Kurven aus `activity_stream`. Das alte Limit von 5.000 Zeilen schnitt im narrow-Format nach rund 12 Minuten ab; künftig begrenzt der Parameter `max_points` (Default 2.000) die Punkte durch Mittelung.
+
+**4. Benötigte Lap-Felder** (aus dem dekodierten ZIP):
+- Zeit und Distanz: `start_time`, `total_elapsed_time`, `total_timer_time`, `total_distance`
+- HF, Höhe, Technik: `avg_heart_rate`, `max_heart_rate`, `total_ascent`, `total_descent`, `avg_cadence`, `avg_fractional_cadence`, `avg_power`
+- Struktur: `intensity`, `lap_trigger`, `wkt_step_index`, `num_lengths`
+
+**5. `activity_record` entfällt** nach der Migration (Reihenfolge in A.7).
 
 ### A.3 Abgleich bei Garmin gelöschter Aktivitäten
 
@@ -211,7 +299,7 @@ Dabei gilt:
 
 - **Nur vollständige Antworten.** Die Paginierung muss abgeschlossen sein, und es darf keine Exception aufgetreten sein.
 - **Gleiches Datumskriterium wie Garmin.** Garmin filtert nach dem **lokalen Startdatum** (AP 0 bestätigt). Ein Fenster deckt zwei Tage ab (`get_activities_by_date(d, d+1)`, beide inklusive); abgeglichen werden alle Aktivitäten, deren lokales Startdatum `d` oder `d+1` ist.
-- **Folgen:** Die abgeleiteten Zeilen der Aktivität werden entfernt und die Tageskennzahlen der betroffenen Tage neu berechnet. `activity` und `activity_record` bleiben erhalten (Rohdaten-nah).
+- **Folgen:** Die abgeleiteten Zeilen der Aktivität werden entfernt und die Tageskennzahlen der betroffenen Tage neu berechnet. `activity`, `activity_stream` und das FIT-Archiv bleiben erhalten (Rohdaten-nah).
 - **Recompute anpassen:** `metrics_recompute.py` muss gelöschte Aktivitäten ausschließen. Heute gibt es keinen solchen Filter.
 
 ### A.4 Reprocess-Job
@@ -219,9 +307,11 @@ Dabei gilt:
 `POST /api/activities/reprocess`, Body optional: `from_date`, `to_date`, `activity_ids`, `refetch_fit` (Default `false`).
 
 1. `activity_list`-Payloads im Bereich neu normalisieren (neue Spalten), **ohne Garmin-Request**.
-2. `activity_fit`-Payloads neu normalisieren; das ergibt die `distance_m`-Zeilen (Bulk-Insert wie bestehend).
+2. Je Aktivität das FIT-ZIP dekodieren (Rückfall: jüngster `activity_fit`-JSON-Payload, `source = 'fit_json'`) und `activity_stream_axis`/`activity_stream` neu schreiben.
 3. Abgeleitete Daten (Teil B) für alle betroffenen Aktivitäten berechnen.
-4. Nur mit `refetch_fit=true`: FIT-Dateien erneut laden, deren Payload keine `length_mesgs`/`event_mesgs` enthält. Sinnvoll ist das heute für die 7 Schwimmeinheiten. Der Job teilt Lock und Cooldown mit dem Backfill.
+4. Nur mit `refetch_fit=true`: das ZIP für alle Aktivitäten ohne `fit_payload_id` laden, mit `GARMIN_FIT_DOWNLOAD_PAUSE_S` zwischen den Downloads. Der Job teilt Lock und Cooldown mit dem Backfill. Downloads, die scheitern (z. B. bei Garmin gelöschte Aktivitäten), werden im Ergebnis gelistet; diese Aktivitäten nutzen den JSON-Rückfall.
+
+**Einmalig bei der Umstellung:** Reprocess über die gesamte Historie mit `refetch_fit=true` (139 Downloads, je 2 s Pause, also rund 5–10 min).
 
 Automatisch läuft der Job in zwei Fällen:
 
@@ -232,6 +322,51 @@ Automatisch läuft der Job in zwei Fällen:
 
 Zwischen zwei FIT-Downloads innerhalb eines Fensters wird `GARMIN_FIT_DOWNLOAD_PAUSE_S` gewartet (Default 2,0 s). Heute werden alle FIT-Dateien eines Tages ohne Pause geladen.
 
+### A.6 HFmax und Profileinstellungen (D10)
+
+**Regel.** `estimate_hr_max()` liefert künftig:
+1. `user_setting.hr_max_override`, falls gesetzt;
+2. sonst 220 − Alter aus `user_setting.birth_date`;
+3. sonst nichts.
+
+Der höchste gemessene Wert ist **kein** Kandidat mehr. Liegt `max(activity.max_hr)` der letzten 12 Monate über der verwendeten HFmax, zeigen Einstellungsseite und Lagebild einen Hinweis („gemessen 219 bpm, eingetragen 214 – prüfen“).
+
+**Folgen.**
+- Ohne HFmax liefern TRIMP, HF-Zonen und `hr_range`-Umrechnungen keinen Wert, sondern den Hinweis „HFmax fehlt – bitte in den Einstellungen eintragen“.
+- **Vor dem Umschalten** für bestehende Nutzer die HFmax eintragen (Max: 214 bpm), sonst fehlt deren TRIMP ab dem nächsten Recompute.
+- Danach Recompute der gesamten Historie, weil sich die Zonen ändern können.
+
+**API und Oberfläche.** Neu: `GET/PUT /api/settings/profile` mit `birth_date`, `hr_max_override` (120–230 bpm) und `resting_hr_override`. Die Einstellungsseite fragt ausdrücklich nach dem gemessenen HFmax-Wert und erklärt, dass 220 − Alter individuell stark streut. Sie zeigt die aktuell verwendete HFmax und ihre Herkunft (eingetragen / aus Alter).
+
+### A.7 TimescaleDB entfernen (D4)
+
+Genutzt wird nur `create_hypertable`; Kompression und Continuous Aggregates sind wegen RLS gesperrt (§2). Nach A.2 bleibt als Hypertable nur `wellness_sample`, und die braucht keine.
+
+**Reihenfolge**, damit kein Datenverlust entsteht (alles noch auf dem Timescale-Image):
+
+1. Migration: `activity_stream_axis`, `activity_stream`, `payload_format`, `fit_payload_id` anlegen.
+2. Reprocess mit `refetch_fit=true` (A.4) füllt die Arrays. Prüfung (V8): Je Aktivität entspricht die Zahl der Nicht-NULL-Werte je Kanal der Zahl der `activity_record`-Zeilen dieses Kanals; ausgenommen ist der neue Kanal `distance_m`, bei der Kadenz ändert sich nur der Wert. Abweichungen werden gelistet, nicht übergangen.
+3. Migration: `wellness_sample` als normale Tabelle neu anlegen (Primärschlüssel nur `id`; fachlicher Unique-Key `(user_id, metric_id, observed_at)` wie bisher), Daten kopieren, Zeilenzahl prüfen, Hypertable löschen, umbenennen, RLS (ENABLE, FORCE, Policy) und Indizes neu anlegen.
+4. Migration: `activity_record` löschen, danach `DROP EXTENSION timescaledb`. Ein Downgrade gibt es nicht; vorher `pg_dump`.
+5. Image-Wechsel auf `postgres:16` (offizielles Image) in `deploy/docker-compose.yml`, `deploy/docker-compose.dev.yml`, `.github/workflows/ci.yml` und `tests/conftest.py`. Die Daten wandern per `pg_dump -Fc` / `pg_restore` in ein neues Volume; das `timescaledb-ha`-Image nutzt ein anderes Datenverzeichnis und eine andere UID, eine direkte Übernahme des Volumes geht nicht.
+6. Modelle: `ActivityRecord` entfällt; die Kommentare „Timescale needs the partitioning column …“ und `observed_at` als PK-Bestandteil entfallen.
+
+**Nachtrag 2026-10-14 (Umsetzung, Q2).** Schritte 3 und 4 sind eine Migration (`fed6d2d1311b_drop_timescaledb`). Damit `alembic upgrade head` auf einem leeren `postgres:16` durchläuft, ist die alte Migration `6bf30be597a0` ein No-op, wenn `pg_available_extensions` keine Zeile `timescaledb` hat; `wellness_sample` behält dann den PK `(id)`, und die neue Migration baut die Tabelle in beiden Fällen gleich um. Die Dev-DB hat zusätzlich `timescaledb_toolkit`; die Migration löscht erst `timescaledb_toolkit`, dann `timescaledb` (beide `IF EXISTS`). Sie bricht ab, wenn die Rolle RLS nicht umgeht (sonst würde die Kopie unter FORCE RLS leer) oder wenn Aktivitäten `activity_record`-Zeilen, aber keine `activity_stream_axis` haben. Der von Timescale angelegte Index `wellness_sample_observed_at_idx` wird nicht nachgebaut; der Unique-Key `(user_id, metric_id, observed_at)` deckt alle Abfragen ab.
+
+Das Vorgehen gehört als Runbook in `docs/HANDOVER.md`. Die Doku-Folgen (ADR-0002, `01`, `02`, `07`, `README.md`) sind Teil von AP 8.
+
+### A.8 Tagesgrenzen nach Ortszeit (D8)
+
+| Daten | Tag |
+|---|---|
+| Aktivitäten (HF-Buckets, Tages-TRIMP, Zonen) | lokales Startdatum der Aktivität (`start_local::date`, A.1); eine Aktivität über Mitternacht zählt ganz zum Starttag, wie bei Garmin |
+| Wellness-Werte (`wellness_daily_stats`) | `(observed_at AT TIME ZONE app_user.home_timezone)::date` |
+
+- Betroffen sind `metrics_recompute.py` und `metrics_data.py`, also alle Stellen mit `AT TIME ZONE 'UTC'`.
+- Nach der Umstellung werden alle Tageswerte einmal neu berechnet. Tageswerte, die bisher durch UTC verschoben waren (Aktivitäten zwischen 0 und 2 Uhr Ortszeit), wandern auf den richtigen Tag.
+- Testfall: Lauf um 00:30 Ortszeit (22:30 UTC am Vortag) zählt zum lokalen Tag.
+- Nicht Teil dieser Spec: Schlaf dem Aufwachtag zuordnen (`02` §2.7, weiter offen).
+
 ---
 
 ## 5. Teil B — Abgeleitete Aktivitätsdaten
@@ -240,14 +375,16 @@ Zwischen zwei FIT-Downloads innerhalb eines Fensters wird `GARMIN_FIT_DOWNLOAD_P
 
 | Thema | Regel |
 |---|---|
-| Datenbasis | Pivot der `activity_record`-Zeilen einer Aktivität (eine Zeile je Zeitstempel) plus `lap`-, `length`-, `event`- und `session`-Messages aus `raw_payload` |
-| Gewichtung | Mittelwerte und Mediane sind zeitgewichtet. Gewicht eines Samples = Abstand zum nächsten, gedeckelt auf 10 s (robust gegen „Smart Recording“). |
+| Datenbasis | die ausgerichteten Arrays aus `activity_stream` (A.2) plus `lap`-, `length`-, `event`-, `session`-, `workout`- und `workout_step`-Messages aus dem dekodierten FIT-ZIP |
+| Gewichtung | Mittelwerte und Mediane sind zeitgewichtet. Gewicht eines Samples = Abstand zum nächsten, gedeckelt auf 10 s. Max' Uhr zeichnet sekündlich auf (P1); die Gewichtung schützt vor Geräten mit „Smart Recording“. |
+| Tempo | Pace und Geschwindigkeit über Abschnitte (Splits, Segmente, Bestleistungen, Kurven, Höchstgeschwindigkeit) werden aus `distance_m` und der Zeit berechnet, nicht aus `speed_mps`: Garmins Geschwindigkeitsfeld ist geglättet (in Max' Daten ≈ 12–15 s Verzögerung). Höchstgeschwindigkeit = Maximum über gleitende 10-s-Fenster. |
+| Leistung (Laufen) | Laufleistung vom Handgelenk wird ausgewiesen, aber mit Hinweis „Handgelenk-Leistung, eingeschränkt aussagekräftig“; sie korrelierte in Max' Daten kaum mit der Pace (r = 0,16). Leistung vom Rad-Leistungsmesser ohne Hinweis. |
 | Pausen | Mit `event_mesgs`: die Timer-Stopp-Intervalle. Ohne (Altbestand): Lücke > 10 s **und** implizite Geschwindigkeit < 0,3 m/s. Pausen zählen wie bei Garmin nicht zur Split- bzw. Timer-Zeit. |
 | Distanz | `distance_m` kumulativ (Garmins Distanz); negative Sprünge werden auf 0 geklemmt |
 | HF | Werte < 25 oder > 230 werden ignoriert. Schwimmen: `quality='partial'` mit dem Hinweis „Handgelenk-HF im Wasser eingeschränkt verlässlich“ |
 | Höhe | gleitender Median über 5 Samples, danach Hysterese von 2 m für Hm↑/Hm↓ |
 | Kadenz | Laufen: 2 × (FIT-`cadence` + `fractional_cadence`) = Schritte/min (spm), in AP 0 exakt gegen Garmins `averageRunningCadenceInStepsPerMinute` bestätigt (219/219). Rad: rpm. |
-| Zonen | Default-Variante von `hr_zone_distribution` (`percent_max`), dieselbe Funktion wie im Dashboard |
+| Zonen | Default-Variante von `hr_zone_distribution` (`percent_max`), dieselbe Funktion wie im Dashboard, mit der HFmax aus A.6 |
 | TRIMP | Edwards, dieselbe Formel wie die kanonische Tageslast, angewendet auf die HF-Reihe der Aktivität |
 | Distanzquelle | GPS-Abdeckung ≥ 90 % → `gps`; Laufband/Indoor (`session.sub_sport`) oder GPS-Abdeckung < 50 % → `watch_estimate`; Beckenschwimmen → `pool`; sonst `mixed`; ohne Distanz → `none` |
 | Ohne Sekundendaten | Steckbrief nur aus der `activity`-Summary, `quality='partial'`, keine Splits und keine Best Efforts |
@@ -365,15 +502,63 @@ CREATE TABLE activity_best_effort (
 - **Wann berechnet wird:** `sport_profile='running'`, `distance_source='gps'`, nicht gelöscht, und die Aktivität ist mindestens so lang wie die Zieldistanz. Laufband- und Indoor-Läufe werden nicht berechnet.
 - **Algorithmus:** Ein Zwei-Zeiger-Fenster über (Timer-Zeit, Distanz); die exakte Zieldistanz wird interpoliert. Aufwand O(n) je Distanz.
 - **Plausibilität:**
-  - Fenster mit einem Schritt über `BEST_EFFORT_MAX_STEP_SPEED_MPS` (Default 8,5 m/s) gelten als GPS-Sprung und werden verworfen.
+  - Fenster mit einem Schritt über `BEST_EFFORT_MAX_STEP_SPEED_MPS` (Default 12 m/s; bis 2026-10-17 8,5 m/s, siehe §12.3) gelten als GPS-Sprung und werden verworfen.
   - Fenster mit Lücken über 10 s, die nicht als Pause erkannt wurden, bekommen `quality='partial'`.
 - **Validierung:** Abschnitt 12.3 (V2, V3).
 
 ### B.5 Ablauf und Aufwand
 
 - **Auslöser:** nach dem Commit von `activity_fit` für die berührten Aktivitäten, nach dem Löschen einer Aktivität und per Reprocess.
-- **Laufzeit-Ziel:** unter 200 ms pro Aktivität; die gesamte Historie (136 Aktivitäten) in unter 1 min.
-- **Volumen:** vernachlässigbar. `activity_split` hat rund 20 Zeilen pro Aktivität, `activity_best_effort` höchstens 9.
+- **Laufzeit-Ziel:** unter 200 ms pro Aktivität ohne FIT-Dekodierung; die gesamte Historie (139 Aktivitäten) inklusive Dekodierung in unter 2 min.
+- **Volumen:** vernachlässigbar. `activity_split` hat rund 20 Zeilen pro Aktivität, `activity_best_effort` höchstens 9, `activity_step_result` eine Zeile je ausgeführtem Workout-Schritt.
+
+### B.6 Soll/Ist pro Workout-Schritt (D12, D13)
+
+Gilt für Aktivitäten, die als Garmin-Workout gelaufen wurden, also deren FIT einen `workout_mesgs`-Eintrag hat.
+
+**Quellen** (P3):
+
+| Was | Quelle |
+|---|---|
+| Struktur (Schritte, Dauer, Wiederholungen, Notizen) | `workout_step_mesgs` der FIT |
+| Zuordnung der Runden | `lap.wkt_step_index` = `message_index` des Schritts |
+| Ziele für Pace, Geschwindigkeit, Kadenz, Leistung | `workout_step` der FIT (`custom_target_value_low/high`); Grenzen nach Wert sortieren |
+| Ziele für HF | **Garmin-API**, nicht die FIT: Die FIT kodiert HF-Ziele mehrdeutig (P3). Zuordnung zum Workout über den Spiegel (`garmin_workout`, D.3): gleicher Name und Termin am lokalen Aktivitätsdatum, sonst gleicher Name. Ohne Treffer gilt das HF-Ziel als „unklar“ und wird nicht bewertet. |
+
+**Ausführungen bilden.** Aufeinanderfolgende Runden mit demselben `wkt_step_index` sind **eine** Ausführung; ein Intervall kann wegen Auto-Lap aus mehreren Runden bestehen (P3). Läuft ein Wiederholungsblock erneut, beginnt eine neue Ausführung mit der nächsten Wiederholungsnummer. Die letzte Runde ohne Index (`session_end`) und Runden kürzer als 5 s bleiben unberücksichtigt.
+
+**Tabelle**
+
+```sql
+CREATE TABLE activity_step_result (
+  activity_id      bigint REFERENCES activity(id) ON DELETE CASCADE,
+  exec_idx         smallint,              -- 1-basiert, Reihenfolge der Ausführungen
+  user_id          uuid NOT NULL,
+  wkt_step_index   smallint NOT NULL,
+  repeat_iteration smallint,              -- 1..n bei Schritten in Wiederholungen
+  step_type        text NOT NULL,         -- warmup | interval | recovery | rest | cooldown
+  step_note        text,
+  planned_end      text,                  -- z. B. 'time 360 s', 'distance 2000 m', 'lap_button'
+  target_type      text,                  -- pace | speed | hr_range | cadence | power | none
+  target_low       real, target_high real,  -- SI-Einheiten (m/s, bpm, spm/rpm, W)
+  target_source    text CHECK (target_source IN ('fit', 'api', 'unclear', 'none')),
+  secondary_type   text,                  -- wie target_type; erst nach AP 0b befüllt
+  secondary_low    real, secondary_high real,
+  timer_s          real, distance_m real,
+  avg_pace_s_km    real, avg_hr real, hr_in_target_pct real,
+  avg_cadence      real, avg_power_w real,
+  hit              boolean,               -- NULL, wenn nicht bewertbar
+  secondary_hit    boolean,
+  PRIMARY KEY (activity_id, exec_idx)
+);
+```
+
+**Trefferregel** (D13):
+- Pace, Geschwindigkeit, Kadenz, Leistung: getroffen, wenn der Ø-Wert der Ausführung im Zielbereich ± 2 % liegt.
+- HF: getroffen, wenn mindestens 80 % der Ausführungszeit im Bereich liegen (zeitgewichtet aus `activity_stream`).
+- Kein Ziel, Ziel „unklar“ oder Ausführung kürzer als 20 s: `hit = NULL`.
+
+**Sekundärziele** (D14) werden genauso bewertet, sobald AP 0b sie freigibt; bis dahin werden sie ignoriert.
 
 ---
 
@@ -481,10 +666,11 @@ Ohne `activity_id` liefert das Tool die letzte Aktivität. Damit braucht die hä
     "tempo": {"pace": "5:10 /km", "pace_bewegt": "5:10 /km", "schnellster_km": "km 6 · 4:58 /km", "langsamster_km": "km 1 · 5:31 /km", "gleichmaessigkeit": "CV 3,0 %"},
     "herzfrequenz": {"avg": 146, "median": 147, "min": 112, "max": 171,
                      "zonen": {"z1": "3:10", "z2": "12:40", "z3": "18:05", "z4": "7:35", "z5": "0:00"}},
-    "technik": {"kadenz": "172 spm", "leistung": "269 W"},
+    "technik": {"kadenz": "172 spm", "leistung": "269 W (Handgelenk, eingeschränkt aussagekräftig)"},
     "belastung": {"trimp_edwards": 113, "garmin_training_load": 84, "garmin_vo2max": 52},
     "effizienz": {"entkopplung": null, "hinweis": "zu kurz für Entkopplung (< 50 min)"},
-    "splits": {"km": 8, "runden": 8}
+    "splits": {"km": 8, "runden": 8},
+    "workout": null
   },
   "meta": {"quality": "ok", "coverage": "HF 100 %, GPS 99 %", "as_of": "2026-10-07T07:58:00Z",
            "truncated": false, "next": "Kilometerwerte: activity_splits(activity_id=812)"}
@@ -500,17 +686,26 @@ Ohne `activity_id` liefert das Tool die letzte Aktivität. Damit braucht die hä
 | hiking | Pace `/km` | Steigrate (Hm/h), max. Höhe | Kadenz, Leistung |
 | generic | — | Dauer, HF, Zonen, TRIMP | Tempo, Splits (außer Runden) |
 
+**Workout-Aktivitäten.** Wurde die Aktivität als Garmin-Workout gelaufen (B.6), ist `data.workout` gefüllt, sonst `null`:
+
+```json
+{"name": "W3 Do Schwelle 4x6", "bewertet": 10, "getroffen": 8,
+ "kurz": "Intervalle 4/4 im Zielbereich, Trabpausen 2/4 im HF-Bereich"}
+```
+
+`meta.next` verweist dann auf `activity_splits(activity_id=…, kind="steps")`.
+
 ### C.3 `activity_splits` (read) — Split-Tabelle
 
 ```json
 {
   "name": "activity_splits",
-  "description": "Split-Tabelle einer Aktivität: eine Zeile pro km (Rad 5 km, Schwimmen 100 m) oder pro Uhr-Runde, mit Pace, Höhenmetern und HF min/Median/max.",
+  "description": "Split-Tabelle einer Aktivität: eine Zeile pro km (Rad 5 km, Schwimmen 100 m), pro Uhr-Runde oder pro Workout-Schritt mit Ziel und Treffer (Soll/Ist), jeweils mit Pace, Höhenmetern und HF.",
   "parameters": {
     "type": "object",
     "properties": {
       "activity_id": {"type": "integer"},
-      "kind": {"type": "string", "enum": ["distance", "lap"]},
+      "kind": {"type": "string", "enum": ["distance", "lap", "steps"]},
       "from_idx": {"type": "integer", "minimum": 1},
       "to_idx": {"type": "integer", "minimum": 1}
     },
@@ -521,7 +716,8 @@ Ohne `activity_id` liefert das Tool die letzte Aktivität. Damit braucht die hä
 
 **Regeln**
 
-- Default ist `kind=distance`. Stammen die Runden aus einem strukturierten Workout (`wkt_step_index` gesetzt), weist `summary` auf `kind=lap` hin.
+- Default ist `kind=distance`. Wurde die Aktivität als Workout gelaufen, weist `summary` auf `kind=steps` hin.
+- `kind=steps` liest `activity_step_result` (B.6): eine Zeile je Ausführung eines Workout-Schritts, mit Ziel, Ist-Wert und Treffer. Ohne Workout liefert das Tool einen Fehlerhinweis an das Modell.
 - Es werden höchstens 50 Zeilen ausgegeben. Bei mehr Splits ohne Bereichsangabe fasst das Tool je 5 Splits zu einem Block zusammen (Laufen: 5-km-Blöcke) und setzt `truncated=true` sowie `meta.next` mit einem Bereichsbeispiel. Ein Marathon hat 42 Zeilen und passt ungekürzt; ein 100-km-Lauf ergibt 20 Blöcke.
 - Spalten ohne Daten (z. B. Leistung ohne Sensor) werden weggelassen.
 - Ein Teil-Split wird als `"9 (0,37 km)"` beschriftet.
@@ -535,6 +731,7 @@ Ohne `activity_id` liefert das Tool die letzte Aktivität. Damit braucht die hä
 | cycling, `distance` | `abschnitt, kmh, kum_zeit, hm_auf, hm_ab, hf_min, hf_med, hf_max, kadenz, leistung` |
 | swimming, `distance` | `m, pace_100m, kum_zeit, bahnen, swolf, hf_med` |
 | alle, `lap` | `runde, typ, schritt, distanz, zeit, tempo, hf_min, hf_med, hf_max, hm_auf, hm_ab` |
+| alle, `steps` | `nr, schritt, wdh, ziel, ist, dauer, distanz, hf_med, getroffen` |
 
 **Beispiel Kilometer** (passt zu C.2: Σ Hm↑ 64, Σ Hm↓ 61, Ø-Kadenz 172, Ø-Leistung 269 W)
 
@@ -574,6 +771,26 @@ Die restlichen 0,02 km liegen unter der Mindestlänge von 100 m und erscheinen d
 }
 ```
 
+**Beispiel Workout-Schritte** (Beispielwerte; Struktur von „W3 Do Schwelle 4x6“ aus P3, Ausschnitt)
+
+```json
+{
+  "summary": "Workout „W3 Do Schwelle 4x6“: Intervalle 4/4 im Zielbereich (Ø 4:40 /km), Trabpausen 2/4 im HF-Bereich.",
+  "data": {
+    "cols": ["nr", "schritt", "wdh", "ziel", "ist", "dauer", "distanz", "hf_med", "getroffen"],
+    "rows": [
+      ["1", "Einlaufen locker", null,  "100–150 bpm",   "92 % im Bereich", "11:18", "2,00 km", 138, "ja"],
+      ["2", "SCHWELLE 4:50",    "1/4", "4:35–4:45 /km", "4:39 /km",        "6:00",  "1,29 km", 176, "ja"],
+      ["3", "Trabpause locker", "1/4", "100–150 bpm",   "64 % im Bereich", "2:30",  "0,37 km", 154, "nein"],
+      ["4", "SCHWELLE 4:50",    "2/4", "4:35–4:45 /km", "4:41 /km",        "6:00",  "1,28 km", 180, "ja"]
+    ]
+  },
+  "meta": {"row_count": 4, "truncated": true, "next": "weitere Schritte: activity_splits(activity_id=272, kind=\"steps\", from_idx=5)"}
+}
+```
+
+Die Spalte `schritt` zeigt die Schritt-Notiz, sonst den Schritttyp.
+
 ### C.4 `activity_analyze` (read) — Analyse
 
 ```json
@@ -603,7 +820,7 @@ Die restlichen 0,02 km liegen unter der Mindestlänge von 100 m und erscheinen d
 | `segment` | Eine Zeile im Split-Format für den Bereich (km **oder** Minuten), plus Dauer und Distanz |
 | `compare` | Tabelle `kennzahl, a, b, differenz`. Nur bei gleichem Sportprofil; bei stark unterschiedlicher Distanz mit Hinweis. |
 | `hr_drift` | Werte pro Hälfte (Pace, HF, Effizienz), Entkopplung in %, Einordnung nach verbreiteter Faustregel (< 5 % stabil, 5–10 % moderat, > 10 % deutlich). Wenn nicht anwendbar: Grund (B.2). |
-| `curve` | `{x_unit, y_unit, x[], y[]}` mit höchstens 60 Punkten (Mittelwert pro Bucket). Gedacht für `render(TimeSeriesChart)`. Pace kommt als `s/km` mit `y_format: "pace"` (render-Erweiterung, G.2). |
+| `curve` | `{x_unit, y_unit, x[], y[]}` mit höchstens 60 Punkten (Mittelwert pro Bucket). Gedacht für `render(TimeSeriesChart)`. Pace kommt als `s/km` mit `y_format: "pace"` (render-Erweiterung, G.2) und wird je Bucket aus Distanz und Zeit berechnet (B.1). |
 
 **Beispiel `compare`** (#812 gegen #798)
 
@@ -628,7 +845,7 @@ Die restlichen 0,02 km liegen unter der Mindestlänge von 100 m und erscheinen d
 
 Effizienz ist hier Geschwindigkeit in m/min geteilt durch die Ø-HF, also Meter pro Herzschlag.
 
-`activity_analyze` liest Sekundendaten **einer** Aktivität aus `activity_record`. Das ist zeitlich eng begrenzt und damit konform zu `02` §3.
+`activity_analyze` liest Sekundendaten **einer** Aktivität aus `activity_stream` (eine Zeile je Kanal). Das ist eng begrenzt und damit konform zu `02` §3.
 
 ### C.5 `best_efforts` (read) — Lauf-Bestleistungen
 
@@ -676,6 +893,15 @@ Effizienz ist hier Geschwindigkeit in m/min geteilt durch die Ø-HF, also Meter 
 
 Damit wird Referenzfrage 7 („beste 5-km-Zeit dieses Jahr“) mit `best_efforts(distances=["5k"], period="ytd")` beantwortet.
 
+**Nachtrag 2026-10-17 (Umsetzung AP 3).** Lücken in C.1–C.5, beim Umsetzen so entschieden:
+
+- `activity_splits(kind="lap")`, Spalte `typ`: Workout-Phase (Aufwärmen, Intervall, Erholung, Pause, Auslaufen) nur bei Runden mit `wkt_step_index`; sonst der Auslöser („Auto-Runde (Distanz)“, „manuell“, „Ende“), weil die Uhr auch normale Auto-Runden als `interval` markiert. `schritt` = `wkt_step_index + 1`.
+- `kind="steps"`: `wdh` „2/4“ nimmt als Gesamtzahl den höchsten gelaufenen Durchgang des Wiederholungsblocks (die geplante Zahl ist nicht gespeichert). `hf_med` ist hier der zeitgewichtete Mittelwert, `activity_step_result` hat keinen Median. HF-Ziele ohne bpm-Werte (Q3) erscheinen als „HF-Bereich (Ziel unbekannt)“ mit `getroffen` „–“.
+- Schwimmen, `kind="distance"`: Spalte `m` zeigt die aufsummierten Meter (100, 200, …). Blöcke à 5 Splits haben `unit` „5 km“ (Rad 25 km, Schwimmen 500 m).
+- `activity_analyze(compare)` hat zusätzlich die Zeile `zeit`; bei Schwimmen entfallen `hm_auf` und `effizienz`. `hr_drift` rechnet mit derselben Funktion wie `activity_stats.decoupling_pct` und liest dafür die Pausen-Ereignisse aus dem FIT-Archiv. `curve` liefert nur Daten; `render(TimeSeriesChart)` mit Minutenachse ist G.2 (AP 4).
+- `best_efforts`: Datum steht auch in `summary` („5 km 22:05 (20.09.2026)“), damit Eval 19 die Zahlen prüfen kann; ab `top_n > 1` kommt eine Spalte `rang` dazu. Fehlende Distanzen: „kein GPS-Lauf ≥ 21,1 km im Zeitraum“.
+- Tool-Smoke-Test gegen die echten 139 Aktivitäten (982 Aufrufe aller fünf Tools): keine Abstürze, keine Obergrenze überschritten.
+
 ---
 
 ## 7. Teil D — Workouts in Garmin
@@ -699,6 +925,8 @@ Kairos hat ein eigenes, validiertes Workout-Modell (Pydantic). Garmins Format ke
 | `end` | `time` (`seconds` 10–21.600), `distance` (`meters` 50–100.000) oder `lap_button` |
 | `target` | `none`; `pace` (`from`/`to` als `m:ss` pro km, nur Laufen); `speed` (`low`/`high` in km/h, nur Rad); `hr_range` (`low`/`high` in bpm, **Standard für HF**); `power_range` (W); `cadence_range` (spm bzw. rpm); `hr_zone` (`zone` 1–5, Garmin-Zonen — nur beim Lesen bestehender Garmin-Workouts, das Agent-Schema bietet es nicht an) |
 | `repeat` | `iterations` 1–50; `steps` mit Unter-Schritten vom Typ `interval`, `recovery` oder `rest` |
+| `note` | optional, Schritt-Notiz, ≤ 60 Zeichen (Garmin `description`); erscheint auf der Uhr. Max' Workouts nutzen sie bis 39 Zeichen; die genaue Grenze prüft AP 0b. |
+| `secondary_target` | optional, gleiche Typen wie `target` außer `none` und `hr_zone`, nicht derselbe Typ wie `target`. **Nur aktiv, wenn AP 0b bestätigt, dass die Uhr Sekundärziele anzeigt** (Schalter `WORKOUT_SECONDARY_TARGETS_ENABLED`, Default aus; ohne Schalter fehlt das Feld im Tool-Schema). |
 
 **Semantische Prüfungen** (serverseitig, mit Fehlermeldung an das Modell)
 
@@ -706,6 +934,7 @@ Kairos hat ein eigenes, validiertes Workout-Modell (Pydantic). Garmins Format ke
 - `hr_range` liegt zwischen 60 und 220 bpm, und es gilt `low < high`.
 - `warmup` und `cooldown` sind nur auf oberster Ebene erlaubt; ein `repeat` braucht mindestens einen Unter-Schritt.
 - Die geschätzte Gesamtdauer darf höchstens 6 h betragen.
+- Für `secondary_target` gelten dieselben Grenzen wie für `target`.
 
 **`STEPS_SCHEMA`** — im Tool ausgeschrieben, ohne `$ref` und ohne Rekursion, damit es über litellm bei allen Anbietern funktioniert:
 
@@ -740,6 +969,8 @@ Kairos hat ein eigenes, validiertes Workout-Modell (Pydantic). Garmins Format ke
         },
         "required": ["type"]
       },
+      "secondary_target": "… wie target, ohne none; nur mit WORKOUT_SECONDARY_TARGETS_ENABLED …",
+      "note": {"type": "string", "maxLength": 60, "description": "Schritt-Notiz, erscheint auf der Uhr"},
       "steps": {
         "type": "array",
         "maxItems": 10,
@@ -748,7 +979,9 @@ Kairos hat ein eigenes, validiertes Workout-Modell (Pydantic). Garmins Format ke
           "properties": {
             "type": {"type": "string", "enum": ["interval", "recovery", "rest"]},
             "end": "… wie oben, ausgeschrieben …",
-            "target": "… wie oben, ausgeschrieben …"
+            "target": "… wie oben, ausgeschrieben …",
+            "secondary_target": "… wie oben …",
+            "note": {"type": "string", "maxLength": 60}
           },
           "required": ["type", "end"]
         }
@@ -811,8 +1044,10 @@ Der Adapter liegt in `connectors/garmin/workout_mapper.py`:
 | `hr_zone` | heart.rate.zone, **`zoneNumber`** = 1–5, `targetValueOne/Two` = `null` | 4 | bestätigt |
 | `hr_range` | heart.rate.zone, `targetValueOne/Two` in bpm, `zoneNumber` = `null` | 4 | bestätigt |
 | `speed` | speed.zone, Werte in m/s | 5 | bestätigt |
-| `pace` | pace.zone, Werte in m/s; **`targetValueOne` = langsamere Grenze (kleinerer m/s-Wert)**, `targetValueTwo` = schnellere. Garmin speichert die Reihenfolge so, wie gesendet. | 6 | bestätigt |
+| `pace` | pace.zone, Werte in m/s; **`targetValueOne` = langsamere Grenze (kleinerer m/s-Wert)**, `targetValueTwo` = schnellere. Garmin speichert die Reihenfolge so, wie gesendet; der Importer hat die schnellere zuerst geschickt. `to_garmin` sendet langsam/schnell, `from_garmin` sortiert nach Wert. | 6 | bestätigt |
 | Sport `running` / `cycling` | running / cycling | 1 / 2 | bestätigt |
+| `note` | Schrittfeld `description` | — | in Fixtures vorhanden (bis 39 Zeichen) |
+| `secondary_target` | `secondaryTargetType`, `secondaryTargetValueOne/Two`, `secondaryTargetValueUnit`, `secondaryZoneNumber` (IDs wie beim Hauptziel) | — | Felder vorhanden, leer; Anzeige auf der Uhr: AP 0b |
 
 Hinweis zu `hr_zone`: `zoneNumber` verweist auf die in Garmin Connect hinterlegten HF-Zonen des Nutzers. Kairos **erzeugt** HF-Ziele nur als `hr_range` in bpm (E9); `hr_zone` entsteht ausschließlich durch `from_garmin` bei in Garmin Connect angelegten Workouts und wird beim Zurückschreiben unverändert übernommen.
 
@@ -820,7 +1055,8 @@ Hinweis zu `hr_zone`: `zoneNumber` verweist auf die in Garmin Connect hinterlegt
 
 - Die IDs stehen ausschließlich im Mapper-Modul. Alle Mapper-Tests laufen gegen echte Fixtures aus AP 0. Das ist die Lehre aus Phase 1: Vier von sechs Normalizern passten nicht zur echten API, obwohl die synthetischen Tests grün waren.
 - **Ändern:** `get_workout_by_id` → Name, Beschreibung und Segmente ersetzen → alle übrigen Felder (`workoutId`, `ownerId` …) unverändert lassen → `update_workout(id, data)`. **AP 0 bestätigt:** Die ID bleibt erhalten, der Termin bleibt bestehen, Zielwerte bleiben erhalten. Keine Felder schicken, die Garmin nicht kennt (siehe §2.1, Update-Fallstrick).
-- **Nicht abbildbar:** Kraftübungen, Schwimmdrills, unbekannte Ziel- oder Endtypen, mehrere Segmente und verschachtelte Wiederholungen ergeben `Unsupported` mit `supported=false`. Solche Workouts kann der Agent auflisten, anzeigen, terminieren und löschen, aber nicht ändern.
+- **Nicht abbildbar:** Kraftübungen (bis V1.1), Schwimmdrills, unbekannte Ziel- oder Endtypen, mehrere Segmente und verschachtelte Wiederholungen ergeben `Unsupported` mit `supported=false`. Dasselbe gilt für Workouts mit Sekundärziel, solange `WORKOUT_SECONDARY_TARGETS_ENABLED` aus ist. Solche Workouts kann der Agent auflisten, anzeigen, terminieren und löschen, aber nicht ändern; so geht beim Zurückschreiben nichts verloren.
+- **Rundweg-Test:** Für jede Fixture gilt `to_garmin(from_garmin(x))` = `x` in allen Feldern, die der Mapper kennt, einschließlich Schritt-Notizen; einzige erlaubte Abweichung ist die Reihenfolge der Pace-Grenzen.
 
 ### D.3 Spiegel-Tabellen
 
@@ -839,7 +1075,7 @@ CREATE TABLE garmin_workout (
   origin               text NOT NULL CHECK (origin IN ('kairos','garmin')),
   kairos_marker        text,                   -- Idempotenz-Marker (D.6)
   garmin_updated_at    timestamptz,
-  raw_payload_id       bigint REFERENCES raw_payload(id),
+  raw_payload_id       integer REFERENCES raw_payload(id),
   synced_at            timestamptz NOT NULL,
   UNIQUE (user_id, garmin_workout_id)
 );
@@ -851,8 +1087,8 @@ CREATE TABLE garmin_workout_schedule (
   garmin_schedule_id  bigint,                  -- NULL, bis die Garmin-ID bekannt ist
   scheduled_date      date NOT NULL,           -- Garmin kennt nur das Datum
   start_at            timestamptz,             -- geplante Uhrzeit (nur Kairos/Google)
-  calendar_event_id   bigint REFERENCES calendar_event(id) ON DELETE SET NULL,
-  plan_block_id       bigint REFERENCES plan_block(id) ON DELETE SET NULL,
+  calendar_event_id   uuid REFERENCES calendar_event(id) ON DELETE SET NULL,
+  plan_block_id       uuid REFERENCES plan_block(id) ON DELETE SET NULL,  -- ab Stufe 3 befüllt
   status              text NOT NULL CHECK (status IN ('scheduled','pending_id','inconsistent')),
   origin              text NOT NULL CHECK (origin IN ('kairos','garmin')),
   created_at          timestamptz NOT NULL DEFAULT now(),
@@ -860,7 +1096,7 @@ CREATE TABLE garmin_workout_schedule (
 );
 ```
 
-Die Spaltentypen der Fremdschlüssel sind an die tatsächlichen Primärschlüssel von `calendar_event`, `plan_block` und `raw_payload` anzupassen.
+Die Typen der Fremdschlüssel entsprechen den Primärschlüsseln im Code: `calendar_event.id` und `plan_block.id` sind `uuid`, `raw_payload.id` ist `integer`.
 
 **Spiegel-Abgleich** (`refresh_workout_mirror(user_id)`)
 
@@ -924,7 +1160,7 @@ Schreibende Tools liefern immer das gleiche Ergebnisformat, auch bei Teilerfolg:
 
 Das Tool liefert:
 
-- Name, Sportart und die Schritte als nummerierte Zeilen, z. B. „1. Einlaufen · 15:00 · 128–150 bpm“ und „2. 6× wiederholen: a) 800 m · 3:50–4:00 /km  b) Erholung · 2:00“;
+- Name, Sportart und die Schritte als nummerierte Zeilen mit Schritt-Notiz, z. B. „1. Einlaufen · 15:00 · 128–150 bpm (Notiz: Einlaufen locker)“ und „2. 6× wiederholen: a) 800 m · 3:50–4:00 /km  b) Erholung · 2:00“;
 - die geschätzte Dauer;
 - die Termine (ID, Datum, Uhrzeit, Google-Termin ja/nein);
 - `supported`.
@@ -1029,20 +1265,19 @@ Das Tool liefert:
 ```json
 {
   "name": "workout_unschedule",
-  "description": "Entfernt geplante Workout-Termine aus Garmin samt zugehörigen Google-Terminen; die Workouts selbst bleiben. Auswahl per IDs, Zeitraum oder Plan. Erfordert Bestätigung.",
+  "description": "Entfernt geplante Workout-Termine aus Garmin samt zugehörigen Google-Terminen; die Workouts selbst bleiben. Auswahl per IDs oder Zeitraum. Erfordert Bestätigung.",
   "parameters": {
     "type": "object",
     "properties": {
       "schedule_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 100},
       "from_date": {"type": "string"},
-      "to_date": {"type": "string"},
-      "plan_id": {"type": "integer"}
+      "to_date": {"type": "string"}
     }
   }
 }
 ```
 
-- **Auswahl:** Mindestens ein Kriterium ist gesetzt. Mehrere Kriterien werden UND-verknüpft. Nach dem Auflösen sind höchstens 100 Termine erlaubt.
+- **Auswahl:** Mindestens ein Kriterium ist gesetzt. Mehrere Kriterien werden UND-verknüpft. Nach dem Auflösen sind höchstens 100 Termine erlaubt. Ein Filter `plan_id` kommt mit Stufe 3 (§8).
 - **Vorschau:** die aufgelöste Liste mit Datum, Uhrzeit und Workout.
 - **Ausführung pro Termin:**
   1. In Garmin entfernen (`unschedule_workout` antwortet mit leerem Objekt; 404 heißt „bereits entfernt“).
@@ -1054,15 +1289,14 @@ Das Tool liefert:
 ```json
 {
   "name": "workout_delete",
-  "description": "Löscht Workouts aus dem Garmin-Konto, einzeln oder gesammelt (IDs, Namensfilter, Sportart, Plan oder alle). Künftige Termine und deren Google-Termine werden mit entfernt. Erfordert Bestätigung.",
+  "description": "Löscht Workouts aus dem Garmin-Konto, einzeln oder gesammelt (IDs, Namensfilter, Sportart oder alle). Künftige Termine und deren Google-Termine werden mit entfernt. Erfordert Bestätigung.",
   "parameters": {
     "type": "object",
     "properties": {
       "workout_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 200},
       "all": {"type": "boolean"},
       "name_contains": {"type": "string"},
-      "sport": {"type": "string", "enum": ["running", "cycling", "other"]},
-      "plan_id": {"type": "integer"}
+      "sport": {"type": "string", "enum": ["running", "cycling", "other"]}
     }
   }
 }
@@ -1124,70 +1358,32 @@ Das Tool liefert:
   - Ändern, Löschen und Termin entfernen werden einmal nach 2 s wiederholt, bei 5xx oder Netzfehler.
   - 429: sofortiger Stopp und 15 min Sperre für weitere Garmin-Schreibzugriffe dieses Nutzers. Hintergrund ist der Cloudflare-Vorfall aus Phase 1.
 - **Archiv:** Jede gesendete und empfangene Workout-JSON landet in `raw_payload` (`kind='workout'`, dedupliziert über `content_hash`).
-- **Audit:** Jeder ausgeführte Schreibvorgang wird in `audit_log` geschrieben. Ob die Tabelle existiert, wird in AP 0 geprüft; sonst wird sie nach `06` §7 angelegt.
+- **Audit:** Jeder ausgeführte Schreibvorgang wird in `audit_log` geschrieben. Die Tabelle existiert laut AP 0 noch nicht und wird in AP 5 nach `06` §7 angelegt.
 
 ---
 
-## 8. Teil E — Planung
+## 8. Teil E — Planung (verschoben nach Stufe 3)
 
-### E.1 Schema
+Seit dem Brainstorming (D19, D28) erzeugt Kairos Trainingspläne im **Coach-Modus** aus einer
+Wissensbank; die Platzhalter-Templates (früher E.2) entfallen. Die Kopplung der Planung an
+Garmin wird deshalb mit dem Coach-Modus in Stufe 3 gebaut und dort spezifiziert.
 
-`plan_block` bekommt die Spalte `workout_spec jsonb`: das Kairos-Workout-Modell, bei Ruhetagen `NULL`. Die Verknüpfung zu Garmin läuft über `garmin_workout_schedule.plan_block_id`, damit es keine zirkulären Fremdschlüssel gibt. `plan_block.calendar_event_id` bleibt.
+**In Stufe 1 gilt:** `plan_propose`, `plan_commit`, `plan_adjust` und `plan_progress` bleiben
+unverändert (Kalendertermine, kein Garmin). Workouts legt der Chat direkt über die
+Workout-Tools aus Teil D an.
 
-### E.2 `plan_propose`: Workout je Block
+**Vorgaben für die Spec von Stufe 3** (aus der bisherigen Fassung dieses Teils übernommen):
 
-Jeder Block außer Ruhetagen bekommt aus `planning/workout_templates.py` eine Workout-Struktur. **Die Templates sind Platzhalter**, bis die Trainingsphilosophie entschieden ist (Roadmap, offener Punkt 12). D ist die geplante Blockdauer in Minuten (`end_at − start_at`).
-
-**HF-Ziele in bpm (E9).** Die Kürzel Zn in der Tabelle stehen für die Kairos-Zonen und werden beim Erzeugen in `hr_range` umgerechnet: `percent_max_zones(hr_max)` aus `metrics/hr_zones.py`, gerundet auf ganze bpm, mit derselben HFmax wie TRIMP (`estimate_hr_max`: `user_setting.hr_max_override`, sonst das Maximum aus 220 − Alter und der höchsten gemessenen Aktivitäts-HF). Ohne HFmax schlägt `plan_propose` mit dem Hinweis fehl, HFmax oder Geburtsdatum zu hinterlegen. Beispiel für HFmax 214: Z1 = 107–128, Z2 = 128–150, Z4 = 171–193 bpm. Die Vorschau nennt die verwendete HFmax und ihre Herkunft, weil ein einzelner Messausreißer in `activity.max_hr` alle Bereiche nach oben verschiebt.
-
-| Blocktyp | Template |
-|---|---|
-| `easy` | `Lauf D′ @ Z2` (ein Schritt) |
-| `long_run` | `Einl. 10′ @ Z1 · Lauf (D − 10)′ @ Z2` |
-| `hard` (D ≥ 40) | `Einl. 15′ @ Z2 · n×(3′ @ Z4 / 2′ Erh. @ Z1) · Ausl. 10′ @ Z1`, n = clamp(⌊(D − 25) / 5⌋, 3, 8) |
-| `hard` (35 ≤ D < 40) | `Einl. 10′ @ Z2 · 3×(3′ @ Z4 / 2′ Erh. @ Z1) · Ausl. 10′ @ Z1` (35 min) |
-| `hard` (D < 35) | wird als `easy` geplant; die Vorschau weist darauf hin |
-| `rest` | kein Workout |
-
-Kontrolle: D = 60 ergibt n = 7 und 15 + 35 + 10 = 60 min; D = 40 ergibt n = 3 und 40 min. Bei D = 90 greift die Obergrenze n = 8; das Workout dauert dann 65 min und endet vor dem Block. Die Ausgabe von `plan_propose` zeigt pro Block die Kurzform.
-
-### E.3 `plan_commit` (write, neue Semantik)
-
-Für jeden künftigen Block außer Ruhetagen, der noch keinen Garmin-Termin hat:
-
-1. Garmin-Workout aus `workout_spec` anlegen, Name `Kairos · {TT.MM.} · {Locker | Lang | Intervalle}`.
-2. Das Workout am Blockdatum terminieren.
-3. Google-Termin mit Blockbeginn und -ende anlegen, Titel `Training: …`.
-4. Lokale Zeilen und Verknüpfungen schreiben, `plan_block.calendar_event_id` setzen.
-
-Weitere Regeln:
-
-- **Vorschau:** alle Blöcke mit Datum, Uhrzeit, Typ und Kurzform, plus Warnungen (Kollisionen, Google nicht verbunden).
-- **Status:** `plan.status = 'committed'`, auch bei Teilerfolg.
-- **Wiederholen:** Ein erneuter `plan_commit` überspringt bereits übertragene Blöcke und ist damit idempotent.
-- **Aufwand:** Ein 3-Wochen-Plan mit rund 12 Blöcken braucht etwa 24 Garmin-Schreibzugriffe und 12 Google-Aufrufe, also gut 30–60 s. Der Fortschritt kommt per `tool_progress` (G.1).
-
-### E.4 `plan_adjust` (write)
-
-Für künftige Blöcke mit Status `planned` wird `target_trimp` wie bisher mit dem Faktor f reduziert (0,7 bei Stress oder Krankheit, sonst 0,85). Zusätzlich wird `workout_spec` skaliert:
-
-- `hard`: n_neu = max(2, round(n × f))
-- `easy` / `long_run`: Dauer des Hauptschritts × f, auf volle Minuten gerundet, mindestens 10′
-
-Ist der Block bereits übertragen, folgen:
-
-- `workout_update` (gleiche Garmin-ID, der Termin bleibt bestehen),
-- Ersatz des Google-Termins (Ende = Start + neue Dauer) und Anpassung von `plan_block.end_at`.
-
-Die Vorschau zeigt pro Block alt → neu. Auch hier gilt das Teilerfolgs-Ergebnis aus D.4.
-
-### E.5 Aufräumen
-
-„Plan verwerfen“ ist weiterhin kein Agent-Tool (`03` §6.1). Die Garmin- und Google-Seite eines Plans lässt sich aber mit `workout_unschedule(plan_id=…)` bzw. `workout_delete(plan_id=…)` aufräumen.
-
-### E.6 `plan_progress`
-
-Unverändert (Soll/Ist-TRIMP). Eine Auswertung pro Intervall über `wkt_step_index` ist für V2 vorgesehen.
+- Ein Garmin-Workout pro Planblock, keine Wiederverwendung (E7); die Verknüpfung läuft über
+  `garmin_workout_schedule.plan_block_id`, damit es keine zirkulären Fremdschlüssel gibt.
+- `plan_commit` überträgt je Block: Workout anlegen → terminieren → Google-Termin anlegen →
+  lokale Zeilen schreiben. Bereits übertragene Blöcke werden übersprungen (idempotent);
+  Teilerfolge folgen D.4 und D.6; bei vielen Blöcken Fortschritt per `tool_progress` (G.1).
+- `plan_adjust` ändert übertragene Blöcke per `workout_update` (gleiche Garmin-ID, Termin bleibt)
+  und ersetzt den Google-Termin.
+- „Plan verwerfen“ ist kein Agent-Tool; aufgeräumt wird über einen dann neuen Filter `plan_id`
+  in `workout_unschedule` und `workout_delete`.
+- Die Soll/Ist-Auswertung pro Schritt (B.6) ist die Datengrundlage für die Wochenbesprechung.
 
 ---
 
@@ -1252,7 +1448,7 @@ Unverändert (Soll/Ist-TRIMP). Eine Auswertung pro Intervall über `wkt_step_ind
 
 ```sql
 CREATE TABLE proposal_snapshot (
-  conversation_id  uuid NOT NULL REFERENCES conversation(id) ON DELETE CASCADE,  -- Typ wie conversation.id
+  conversation_id  uuid NOT NULL REFERENCES conversation(id) ON DELETE CASCADE,
   tool_call_id     text NOT NULL,
   user_id          uuid NOT NULL,
   tool_name        text NOT NULL,
@@ -1306,11 +1502,12 @@ Das `usage`-Objekt von litellm wird pro LLM-Aufruf in `structlog` geloggt und an
 Ergänzung im Systemprompt (rund 120 Tokens):
 
 - Für Fragen zu einzelnen Einheiten `activity_get` nutzen, ohne ID für die letzte Aktivität. Kilometerwerte kommen über `activity_splits`, Bestzeiten über `best_efforts`. Zahlen nur aus Tool-Ergebnissen übernehmen.
+- Ob ein Workout getroffen wurde, kommt aus `activity_splits(kind="steps")`.
 - HF-Ziele immer als `hr_range` in bpm. Nennt der Nutzer eine Zone („Zone 2“), die bpm-Grenzen aus der Zeile `HF-Zonen` im Lagebild übernehmen, nicht schätzen.
-
-Das Lagebild bekommt dafür eine feste Zeile (≈ 30 Tokens), z. B. „HF-Zonen (HFmax 214, gemessen): Z1 107–128 · Z2 128–150 · Z3 150–171 · Z4 171–193 · Z5 193–214 bpm“.
 - Workouts nur mit konkreter Uhrzeit terminieren. Ohne Angabe erst freie Blöcke über `query_calendar(duration_minutes=…)` suchen.
 - Mehrere Workouts in **einem** Aufruf von `workout_delete` bzw. `workout_unschedule` löschen, nicht einzeln.
+
+Das Lagebild bekommt dafür eine feste Zeile (≈ 30 Tokens), z. B. „HF-Zonen (HFmax 214, eingetragen): Z1 107–128 · Z2 128–150 · Z3 150–171 · Z4 171–193 · Z5 193–214 bpm“. Fehlt die HFmax, steht dort „HF-Zonen: HFmax fehlt (Einstellungen)“ (A.6).
 
 Optional zeigt das Lagebild die letzte Aktivität mit ID, z. B. „Letzte Aktivität: Lauf 07.10., 8,02 km (#812)“. Dann kann der Agent `activity_splits` direkt aufrufen.
 
@@ -1328,9 +1525,9 @@ Optional zeigt das Lagebild die letzte Aktivität mit ID, z. B. „Letzte Aktivi
 | `render` | read | direkt | geändert (`y_format`) |
 | `propose_calendar_event` | write | Bestätigung | unverändert |
 | `delete_calendar_event` | destructive | Bestätigung | unverändert |
-| `plan_propose` | read | direkt (Entwurf) | geändert (Workout je Block) |
-| `plan_commit` | write | Bestätigung | geändert (Garmin + Google) |
-| `plan_adjust` | write | Bestätigung | geändert (Workouts skalieren) |
+| `plan_propose` | read | direkt (Entwurf) | unverändert; Neubau im Coach-Modus (Stufe 3) |
+| `plan_commit` | write | Bestätigung | unverändert; Garmin-Kopplung in Stufe 3 |
+| `plan_adjust` | write | Bestätigung | unverändert; Garmin-Kopplung in Stufe 3 |
 | `plan_progress` | read | direkt | unverändert |
 | `activity_search` | read | direkt | **neu** |
 | `activity_get` | read | direkt | **neu** |
@@ -1364,11 +1561,11 @@ Optional zeigt das Lagebild die letzte Aktivität mit ID, z. B. „Letzte Aktivi
 | 23 | „Verschieb das Workout auf Donnerstag 7 Uhr.“ | `workout_schedule(replace_schedule_id)` | danach genau ein Termin; alter Google-Termin weg |
 | 24 | „Mach daraus 8 Wiederholungen.“ | `workout_get` → `workout_update` | `iterations = 8`, Termin unverändert |
 | 25 | „Lösch alle Workouts in meinem Garmin-Konto.“ | `workout_delete(all=true)` | eine Bestätigung mit korrekter Anzahl, danach 0 Workouts |
-| 26 | „Übernimm den Plan.“ (nach `plan_propose`) | `plan_commit` | je Block außer Ruhetagen: Workout, Termin und Google-Termin |
+| 26 | „Habe ich bei meiner letzten Schwelle die Intervalle getroffen?“ | `activity_search` bzw. `activity_get` → `activity_splits(kind="steps")` | Zahl der getroffenen und bewerteten Schritte sowie Ø-Pace der Intervalle exakt wie im Tool-Ergebnis |
 
 ### 12.2 Testumgebung für Schreibfälle
 
-Die Fälle 22–26 laufen standardmäßig gegen `FakeGarminWorkoutClient` und einen Fake-Kalender-Client (beide In-Memory). Gegen ein echtes Konto laufen sie nur mit dem Flag `--live-garmin` und einem **Testkonto**. Fall 25 darf nie gegen das eigene Konto laufen.
+Die Fälle 22–25 laufen standardmäßig gegen `FakeGarminWorkoutClient` und einen Fake-Kalender-Client (beide In-Memory). Gegen ein echtes Konto laufen sie nur mit dem Flag `--live-garmin` und einem **Testkonto**. Fall 25 darf nie gegen das eigene Konto laufen.
 
 ### 12.3 Datenvalidierung
 
@@ -1382,6 +1579,24 @@ Die Validierung ergibt einen einmaligen Bericht in AP 2 und danach Regressionste
 | V4 | Σ Hm↑ gegen Garmins `elevationGain` | ±10 % in ≥ 90 % |
 | V5 | Ø-Kadenz gegen `averageRunCadence` | ±2 spm |
 | V6 | Ø-HF gegen `activity.avg_hr` | ±1 bpm |
+| V7 | Soll/Ist (B.6) für Aktivität 272 und zwei weitere Workout-Läufe: Zahl der Ausführungen und Dauer je Ausführung gegen die Runden in Garmin Connect | Ausführungen = Schritte × Wiederholungen; Dauer ±1 s gegen die Summe der zugehörigen Runden |
+| V8 | Vollständigkeit von `activity_stream` (AP 1a) | je Aktivität und Kanal Nicht-NULL-Werte = `activity_record`-Zeilen; der neue Kanal `distance_m` ist ausgenommen |
+
+**Nachtrag 2026-10-15 (Bericht `docs/validation/2026-10-15-stufe1-ableitungen-v1-v7.md`).** Erfüllt: V1, V3, V5, V6, V2 für 1 km. Nicht erfüllt: V2 für 5 km und V4. V7 ist nach Wortlaut nicht erfüllt (9/10, 9/10, 7/8 — letzte Erholung nicht gelaufen); erfüllt bei geänderter Zählregel — Zählregel zur Bestätigung durch Max. Offene Punkte:
+
+- **V7, Zählregel (vorläufig, zur Bestätigung durch Max):** Vorschlag: „Ausführungen = Schritte × Wiederholungen“ zählt nur gelaufene Ausführungen. Ein geplanter Schritt, der nicht gelaufen wurde, ist keine Ausführung, z. B. die letzte Trabpause in 272: Auf das letzte Intervall folgt dort direkt das Auslaufen.
+- **V2, Timer- gegen Gesamtzeit:** B.4 bleibt bei der Timer-Zeit. Garmins `fastestSplit_*` misst die Gesamtzeit; Läufe mit Timer-Stopp im Fenster weichen deshalb ab. Strikt erreicht 5 km 81,4 %, mit Gesamtzeit 94,2 %. Offen (Entscheidung): Der Sprungfilter aus B.4 (ein 1-s-Schritt > 8,5 m/s verwirft das Fenster) trifft GPS-Zittern in Intervall-Läufen und echte Sprints. Ohne Filter erreichen beide Distanzen 100 %.
+- **V4:** Die Hysterese in B.1 gilt für Extremwerte. Hoch- und Tiefpunkte zählen voll, sobald die Gegenbewegung 2 m übersteigt; das ist kein Zähler in 2-m-Stufen (korrigiert am 2026-10-15). Auch damit verfehlt V4 das Kriterium: 58,7 %, Median 102 % von Garmin. Garmins Wert ist das `total_ascent`, das die Uhr selbst berechnet; mit Sekunden-Höhendaten in 0,2-m-Auflösung ist er nicht auf ±10 % nachzubauen. Offen (Entscheidung): Wert der Uhr übernehmen, Kriterium ändern oder V4 als nicht erreichbar festhalten.
+- **Laufband (entschieden 2026-10-17, s. u.):** keine Skalierung der Stream-Distanz auf die (bearbeitete) Garmin-Distanz in Stufe 1. Betroffen ist Aktivität 22 (5,3 statt 7,3 km); Splits und Pace je Schritt bleiben im Stream-Maßstab.
+
+
+**Entscheidungen 2026-10-17** (Max hat sie delegiert: „Führe die Schritte alle selbst durch“; jeweils eine der im Bericht genannten Optionen):
+
+- **V7:** Die vorgeschlagene Zählregel gilt: „Ausführungen = Schritte × Wiederholungen“ zählt nur gelaufene Ausführungen. Damit ist V7 erfüllt (272, 402, 250; alle Workout-Läufe 40/43).
+- **Laufband:** keine Skalierung der Stream-Distanz auf die bearbeitete Garmin-Distanz in Stufe 1.
+- **V2:** Die Timer-Zeit bleibt (B.4). Der Sprungfilter liegt jetzt bei **12 m/s** statt 8,5 m/s: Er verwirft nur noch echte GPS-Sprünge, nicht mehr Sprints und GPS-Zittern in Intervall-Läufen. Neu gemessen: 5 km 75/86 = 87,2 %, 1 km 92/95 = 96,8 %; die 11 verbleibenden Ausreißer bei 5 km sind alle Timer- gegen Gesamtzeit (mit Gesamtzeit 100 %). V2 für 5 km bleibt damit strikt knapp unter 90 %, als Folge der Timer-Zeit-Regel.
+- **V4:** Option 1. `activity_stats.elev_gain_m`/`elev_loss_m` kommen aus `session.total_ascent`/`total_descent` der Uhr (barometrisch, = Garmins `elevationGain`), die eigene B.1-Regel nur noch, wenn die Uhr keinen Wert liefert, sowie für Splits und Kurven. Die Summe der Split-Höhenmeter ist deshalb nicht mehr exakt gleich dem Gesamtwert. Neu gemessen: 121/121 = 100 %.
+- `ACTIVITY_DERIVED_ALGO_VERSION` = 4; Dev-DB neu abgeleitet (139/139).
 
 ---
 
@@ -1389,17 +1604,21 @@ Die Validierung ergibt einen einmaligen Bericht in AP 2 und danach Regressionste
 
 | AP | Inhalt | Abnahme |
 |---|---|---|
-| **0 Verifikation** (kein Produktcode) | (1) Workout-Methoden in `garminconnect` 0.3.17 per `create_autospec(Garmin)`-Test prüfen (Muster: `test_garmin_connector_kinds.py`); fehlt etwas: Version anheben (Changelog lesen) oder dünner Adapter über `connectapi`. (2) Referenz-Workouts in Garmin Connect anlegen (Laufen: Aufwärmen mit Zeit und Zone, 3×[400 m mit Pace / 90 s], Auslaufen per Taste; Rad: Leistung, Geschwindigkeit; je einmal `hr_range`), per `get_workout_by_id` abrufen und anonymisiert als Fixtures einchecken. (3) Mit einem Wegwerf-Workout den ganzen Zyklus durchspielen: anlegen, terminieren, ändern, Termin entfernen, löschen. Antworten (v. a. die Schedule-ID) als Fixtures sichern; das Verhalten beim Löschen eines terminierten Workouts dokumentieren. (4) Listen-Methoden für Workouts (Paginierung) und Termine (Kalender) bestimmen. (5) Kadenz-Faktor gegen `averageRunCadence` prüfen. (6) Struktur der `activity_fit`-Payloads klären (mehrere Aktivitäten pro Fenster? Zuordnung zur `external_id`). (7) Lesestellen von `activity.activity_type` und die Existenz von `audit_log` prüfen. (8) Datumskriterium von `get_activities_by_date` klären (lokal oder UTC). (9) Typliste `get_activity_types()` als Fixture einchecken. | Fixtures eingecheckt; ID-Tabelle D.2 bestätigt oder korrigiert; offene Fragen beantwortet |
-| **1 Datengrundlage** (Teil A) | Migration, Normalizer-Fixes, `distance_m`, zusätzliche Messages, Lösch-Abgleich, Reprocess, FIT-Pause | alle 136 Aktivitäten ohne Garmin-Request neu verarbeitet; alle 9 `typeKey`s korrekt zugeordnet; Lösch-Abgleich getestet |
-| **2 Abgeleitete Daten** (Teil B) | drei Tabellen, Rechenregeln, Trigger | Bericht V1–V6, Abweichungen erklärt |
-| **3 Lese-Tools** (Teil C) | 5 Tools, Formatierung, Obergrenzen | Eval 17–21 grün (Referenzfragen 7 und 10 damit erfüllt); Test für die Obergrenzen |
+| **0 Verifikation** | erledigt am 2026-10-13, Ergebnisse in §2.1 | — |
+| **0b Uhr-Test** (kein Produktcode) | Ein Wegwerf-Workout mit Sekundärziel (Pace + Kadenz und Pace + HF) und langen Schritt-Notizen anlegen, terminieren und auf die Forerunner 265S synchronisieren. Prüfen, ob die Uhr Sekundärziele anzeigt und Alarme auslöst und wie lang Notizen sein dürfen; danach löschen. | Ergebnis in §2.1; `WORKOUT_SECONDARY_TARGETS_ENABLED` und Notiz-Grenze festgelegt |
+| **1a Speicher und FIT-Archiv** (A.2, A.4, A.5) | `payload_format`, `fit_payload_id`, `activity_stream_axis`, `activity_stream`, ZIP-Archiv im Sync, Reprocess mit Nachabruf, Lesepfade (HF-Buckets, Detail-Endpoint) umstellen, FIT-Pause | alle 139 Aktivitäten in `activity_stream` (ZIP oder JSON-Rückfall, Fehlschläge gelistet); V8 erfüllt; ≈ 60 KB je Aktivität |
+| **1b TimescaleDB entfernen** (A.7) | `wellness_sample` umbauen, `activity_record` und Extension löschen, Images umstellen, Dump/Restore, Runbook in HANDOVER | Zeilenzahlen vorher = nachher; RLS-CI-Test grün; Testsuite gegen `postgres:16` grün |
+| **1c Aktivitäts-Spalten, Abgleich, Tage, HFmax** (A.1, A.3, A.6, A.8) | Migration `activity`, Normalizer-Fixes, Lösch-Abgleich, lokale Tagesgrenzen, HFmax-Regel, `GET/PUT /api/settings/profile`, Einstellungsseite, Recompute der Historie | alle 9 `typeKey`s zugeordnet; Lösch-Abgleich getestet; Testfall 00:30 Ortszeit grün; mit eingetragener HFmax 214 bleibt Max' TRIMP außer an Tagen mit Aktivitäten zwischen 0 und 2 Uhr Ortszeit unverändert |
+| **2 Abgeleitete Daten** (Teil B) | vier Tabellen inkl. `activity_step_result`, Rechenregeln, Trigger | Bericht V1–V7, Abweichungen erklärt |
+| **3 Lese-Tools** (Teil C) | 5 Tools inkl. `kind="steps"`, Formatierung, Obergrenzen | Eval 17–21 und 26 grün (Referenzfragen 7 und 10 damit erfüllt); Test für die Obergrenzen |
 | **4 Harness** (Teil G) | Snapshots, Zustandsmaschine, `tool_progress`, Schema-Budget, Telemetrie | Doppelklick- und Absturz-Tests; Wiederaufnahme getestet |
-| **5 Workouts** (Teil D) | Client-Provider, Schreibdienst, Mapper, Spiegel, 7 Tools, Google-Kopplung | Mapper-Round-Trip gegen Fixtures; Eval 22–25 grün (Fake); ein manueller Live-Durchlauf mit dem Wegwerf-Workout |
-| **6 Planung** (Teil E) | Templates, `plan_commit`, `plan_adjust` | Eval 26 grün; Teilfehler-Test (Block N scheitert → Blöcke 1 bis N−1 sind lokal vorhanden) |
+| **5 Workouts** (Teil D) | Client-Provider, Schreibdienst, Mapper inkl. Schritt-Notizen (Sekundärziele nach AP 0b), Spiegel, 7 Tools, Google-Kopplung, `audit_log` | Mapper-Rundweg gegen alle Fixtures; Eval 22–25 grün (Fake); ein manueller Live-Durchlauf mit einem Wegwerf-Workout |
+| ~~**6 Planung** (Teil E)~~ | verschoben nach Stufe 3 (§8) | — |
 | **7 Aktivitäten bearbeiten** (Teil F) | 2 Tools | Vorschau nennt betroffene Bestleistungen; Recompute nach dem Löschen getestet |
-| **8 Doku-Abgleich** | `superpowers/plans/2026-10-07-doku-abgleich.md` | alle Punkte erledigt |
+| **8 Doku** | ADR-0002 (TimescaleDB entfernt), `01`, `02` (Speicherrechnung mit Arrays), `07` (SSD-Bedarf, Images), `README.md`, `08` (Stufenplan), HANDOVER (Runbook A.7) | keine Aussage in der Doku widerspricht dem Code |
+| **9 Kraft-Workouts (V1.1)** | Mapper für `StrengthWorkout` (Übung, Sätze, Wiederholungen, Pause, Gewicht), Übungssuche über den Katalog (`exercises.find`/`resolve`), Erweiterung von `workout_create`/`workout_update`; Fixtures aus einem echten Kraft-Workout | Rundweg gegen die Fixtures; ein manueller Live-Durchlauf |
 
-**Reihenfolge:** 0 → 1 → 2 → 3 → 4 → 5 → 6 → 7; AP 8 läuft parallel. Nach AP 3 gibt es bereits eigenständigen Nutzen: Der Agent kennt einzelne Läufe.
+**Reihenfolge:** 0b jederzeit vor 5; 1a → 1b → 1c → 2 → 3 → 4 → 5 → 7 → 9; AP 8 läuft parallel. 1a muss vor 1b fertig sein, weil `activity_record` erst nach dem Füllen der Arrays gelöscht wird. Nach AP 3 gibt es bereits eigenständigen Nutzen: Der Agent kennt einzelne Läufe und ihre Workouts.
 
 ---
 
@@ -1412,21 +1631,29 @@ Die Validierung ergibt einen einmaligen Bericht in AP 2 und danach Regressionste
 | Die Terminliste bei Garmin ist nur „eventually consistent“ (Hinweis aus Drittprojekten) | mittel | niedrig | ID aus der Antwort, kurzes Polling, Status `pending_id` |
 | Teilerfolg zwischen Garmin und Google | mittel | mittel | Savepoints, Kompensation, Status `inconsistent`, idempotente Wiederaufnahme |
 | GPS-Fehler verfälschen Best Efforts | mittel | mittel | Sprungfilter, nur GPS-Läufe, Validierung V2/V3 |
-| Falsche HF-Bereiche durch einen HFmax-Ausreißer | mittel | mittel | HF-Ziele nur in bpm (E9); Vorschau nennt HFmax und Herkunft; `hr_max_override` setzbar |
+| Falsche HF-Bereiche durch falsche HFmax (Eingabefehler oder ungenaues 220 − Alter) | mittel | mittel | HF-Ziele nur in bpm (E9); Einstellungsseite fragt nach dem Messwert; Hinweis, wenn ein gemessener Wert darüber liegt (A.6); Vorschau nennt HFmax und Herkunft |
 | Tool-Auswahl wird mit 26 Tools ungenauer | niedrig | mittel | Tool-Accuracy in der Eval beobachten; Schwelle für zweistufiges Laden (G.3) |
-| Löschen von Workouts aus Garmin-Trainingsplänen (Coach) | niedrig | mittel | Markierung in der Vorschau, falls erkennbar (AP 0) |
-| Speicherbedarf deutlich höher als dokumentiert | mittel | mittel | Messung und Neuberechnung im Doku-Abgleich; VM-Entscheidung |
+| Löschen von Workouts aus Garmin-Trainingsplänen (Coach) | niedrig | mittel | entfällt: Coach-Workouts stehen nicht in der Bibliothek (AP 0) |
+| Speicherbedarf deutlich höher als dokumentiert | — | — | gelöst durch `activity_stream` (P2: 58× kleiner) |
+| Datenverlust beim Entfernen von TimescaleDB | niedrig | hoch | `pg_dump` vorher, Arrays vor dem Löschen prüfen (V8), Zeilenzahlen vergleichen, Runbook (A.7) |
+| HF-Ziele in der FIT mehrdeutig kodiert | hoch | mittel | HF-Ziele aus der Garmin-API; ohne passendes Workout „unklar“ statt geraten (B.6) |
+| Uhr zeigt Sekundärziele oder lange Notizen nicht | mittel | niedrig | Freischaltung erst nach AP 0b; bis dahin Workouts mit Sekundärziel schreibgeschützt |
+| Fehlende HFmax nach der Regeländerung | mittel | mittel | vor dem Umschalten eintragen (A.6); Hinweis in Lagebild und Tools statt stiller Lücke |
 
 ---
 
 ## 15. Offene Punkte
 
-1. **Trainingsphilosophie** (Roadmap, offener Punkt 12): Sie ersetzt die Platzhalter-Templates aus E.2.
-2. **Schwimm-Workouts** (V1.1): eigene Schrittlogik mit Bahnen, Schwimmstil und Pausen.
-3. **Soll/Ist pro Intervall** (V2): ausgeführte Runden (`wkt_step_index`) gegen die Workout-Ziele.
-4. **Sichtbarer Marker** `[kairos:…]` in der Workout-Beschreibung: akzeptabel?
-5. **Distanzliste der Bestleistungen:** 3.000 m drin lassen? Weitere Distanzen (1 km, 1 Meile)?
-6. **VM-Größe:** nach der Speichermessung (Doku-Abgleich §0) entscheiden; Frage 26 aus dem Prüfbericht ist noch offen.
+1. **Trainingsphilosophie** (Roadmap, offener Punkt 12): Wird im Coach-Modus (Stufe 3) über die Wissensbank gelöst; die Recherche läuft parallel zu Stufe 1.
+2. **Schwimm-Workouts:** eigene Schrittlogik mit Bahnen, Schwimmstil und Pausen; nach V1.1.
+3. ~~**Soll/Ist pro Intervall**~~ — in V1 (B.6, D12).
+4. ~~**Sichtbarer Marker** `[kairos:…]`~~ — akzeptiert (D17).
+5. ~~**Distanzliste der Bestleistungen**~~ — bleibt wie in E3 (D16).
+6. **VM-Größe:** offen (D6). Mit `activity_stream` und FIT-Archiv reichen im Doku-Szenario 40 GB SSD.
 7. ~~**Kairos-Plan neben Garmin Coach**~~ — erledigt: Der Nutzer hat den Garmin-Coach-Plan gelöscht (2026-10-13). `fbtAdaptiveWorkout`-Einträge werden beim Spiegel-Abgleich weiterhin ignoriert.
-8. ~~**`hr_zone` oder `hr_range` als Default**~~ — entschieden (2026-10-13): bpm-Bereiche, siehe E9 und E.2.
-9. **HFmax des Betreibers:** gemessen 214 bpm (Maximum aller Aktivitäten, kein Geburtsdatum hinterlegt). Wirkt hoch; vor AP 6 prüfen und ggf. `hr_max_override` setzen.
+8. ~~**`hr_zone` oder `hr_range` als Default**~~ — entschieden (2026-10-13): bpm-Bereiche, siehe E9.
+9. ~~**HFmax des Betreibers**~~ — bestätigt: 214 bpm. Regel und Einstellungsseite in A.6 (D10).
+10. **Sekundärziele:** Freischaltung nach AP 0b (D14).
+11. **Kraft-Workouts:** V1.1, AP 9 (D15).
+12. **Schlaf dem Aufwachtag zuordnen** (`02` §2.7): nicht Teil dieser Spec.
+13. **Commit-Adresse** `haenel@igmr.rwth-aachen.de` fehlt in der Entwicklerliste von `CLAUDE.md`; falls sie dem Nutzer gehört, dort und in HANDOVER ergänzen.

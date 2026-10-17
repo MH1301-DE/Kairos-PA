@@ -48,8 +48,9 @@ def harness() -> Iterator[SimpleNamespace]:
         patch.object(metrics_recompute, "recompute_wellness_daily_stats", recompute.wellness),
         patch.object(metrics_recompute, "recompute_hr_bucket_seconds_daily", recompute.hr),
         patch.object(metrics_recompute, "recompute_metric_daily_values", recompute.metrics),
+        patch.object(garmin_sync, "derive_pending", AsyncMock(return_value=[])) as derive,
     ):
-        yield SimpleNamespace(session=session, recompute=recompute, service=service)
+        yield SimpleNamespace(session=session, recompute=recompute, service=service, derive=derive)
 
 
 async def _run(harness: SimpleNamespace, results: list[BackfillResult | Exception]) -> Any:
@@ -110,3 +111,57 @@ async def test_recompute_failure_keeps_jobs_done(harness: SimpleNamespace) -> No
     assert jobs[0].error is None
     harness.session.rollback.assert_awaited()
     harness.recompute.metrics.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reconciled_days_extend_recompute_start(harness: SimpleNamespace) -> None:
+    async def _backfill(**_: Any) -> BackfillResult:
+        hook = garmin_sync.SyncService.call_args.kwargs["post_window"]
+        envelope = SimpleNamespace(window=None, payload=[], files=())
+        await hook("activity_list", envelope, 1, {})
+        return BackfillResult(1, True, None, fetched_from=datetime(2026, 8, 5, tzinfo=UTC))
+
+    marked = [(7, datetime(2026, 8, 1, 23, 0, tzinfo=UTC))]
+    registry = SyncJobRegistry()
+    user_id = uuid4()
+    jobs = registry.create_jobs(
+        user_id=user_id, connector="garmin", kinds=["activity_list"],
+        from_date="2026-08-01", to_date="2026-08-10",
+    )
+    harness.service.run_backfill = AsyncMock(side_effect=_backfill)
+    with (
+        patch.object(garmin_sync, "reconcile_deleted_activities", AsyncMock(return_value=marked)),
+        patch.object(
+            garmin_sync, "local_days_of_activities", AsyncMock(return_value={date(2026, 8, 2)})
+        ),
+    ):
+        await sync_module._run_backfill_task(
+            user_id=user_id, from_dt=_FROM, to_dt=_TO, jobs=jobs, registry=registry
+        )
+
+    harness.recompute.hr.assert_awaited_once_with(
+        harness.session, user_id=user_id, start=date(2026, 8, 2), end=date.today()
+    )
+
+
+@pytest.mark.asyncio
+async def test_every_garmin_sync_ends_with_derive_pending(harness: SimpleNamespace) -> None:
+    jobs, user_id = await _run(harness, [BackfillResult(0, True, None)])
+
+    harness.derive.assert_awaited_once_with(harness.session, user_id=user_id)
+    assert jobs[0].status == "done"
+
+
+@pytest.mark.asyncio
+async def test_derive_failure_keeps_jobs_done_and_still_recomputes(
+    harness: SimpleNamespace,
+) -> None:
+    harness.derive.side_effect = RuntimeError("db down")
+    results: list[BackfillResult | Exception] = [
+        BackfillResult(1, True, None, fetched_from=datetime(2026, 8, 5, tzinfo=UTC)),
+    ]
+    jobs, _ = await _run(harness, results)
+
+    assert jobs[0].status == "done"
+    harness.session.rollback.assert_awaited()
+    harness.recompute.metrics.assert_awaited_once()

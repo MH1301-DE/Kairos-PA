@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from kairos.connectors.garmin.sport_profile import sport_profile_for
 from kairos.connectors.types import CanonicalRecord, JSONValue
 
 
@@ -24,8 +25,6 @@ def normalize_payload(*, kind: str, payload: JSONValue) -> list[CanonicalRecord]
         return _normalize_daily_summary(payload)
     if kind == "activity_list":
         return _normalize_activity_list(payload)
-    if kind == "activity_fit":
-        return _normalize_activity_fit(payload)
     return []
 
 
@@ -275,10 +274,12 @@ def _normalize_activity_list(payload: JSONValue) -> list[CanonicalRecord]:
         occurred_at = _parse_datetime_utc(str(start_raw)) if isinstance(start_raw, str) else None
 
         activity_type_obj = act.get("activityType")
-        sport = (
-            activity_type_obj.get("typeKey")
-            if isinstance(activity_type_obj, dict)
-            else act.get("activityType")
+        type_obj = activity_type_obj if isinstance(activity_type_obj, dict) else {}
+        sport = type_obj.get("typeKey") if type_obj else act.get("activityType")
+        type_id = type_obj.get("typeId")
+        parent_type_id = type_obj.get("parentTypeId")
+        start_local, utc_offset_min = _local_start_and_offset(
+            act.get("startTimeLocal"), act.get("startTimeGMT")
         )
 
         end_at = None
@@ -295,11 +296,22 @@ def _normalize_activity_list(payload: JSONValue) -> list[CanonicalRecord]:
             data={
                 "name": act.get("activityName"),
                 "sport": sport,
-                "activity_type": (
-                    act.get("activityType")
-                    if isinstance(act.get("activityType"), str)
-                    else None
+                "sport_profile": sport_profile_for(
+                    sport if isinstance(sport, str) else None,
+                    parent_type_id if isinstance(parent_type_id, int) else None,
                 ),
+                "garmin_type_id": type_id if isinstance(type_id, int) else None,
+                "garmin_parent_type_id": (
+                    parent_type_id if isinstance(parent_type_id, int) else None
+                ),
+                "description": act.get("description"),
+                "start_local": start_local.isoformat() if start_local else None,
+                "utc_offset_min": utc_offset_min,
+                "moving_duration_s": act.get("movingDuration"),
+                "avg_speed_mps": act.get("averageSpeed"),
+                "lap_count": act.get("lapCount"),
+                "garmin_training_load": act.get("activityTrainingLoad"),
+                "garmin_vo2max": act.get("vO2MaxValue"),
                 "end_at": end_at.isoformat() if end_at else None,
                 "distance_m": act.get("distance"),
                 "duration_s": act.get("duration") or act.get("elapsedDuration"),
@@ -312,87 +324,25 @@ def _normalize_activity_list(payload: JSONValue) -> list[CanonicalRecord]:
     return records
 
 
-# FIT field name → (metric_code, apply_semicircle_conversion)
-_FIT_FIELDS: dict[str, tuple[str, bool]] = {
-    "heart_rate":         ("hr",          False),
-    "cadence":            ("cadence",     False),
-    "enhanced_speed":     ("speed_mps",   False),
-    "speed":              ("speed_mps",   False),
-    "power":              ("power_w",     False),
-    "enhanced_altitude":  ("altitude_m",  False),
-    "altitude":           ("altitude_m",  False),
-    "position_lat":       ("lat_deg",     True),
-    "position_long":      ("lng_deg",     True),
-    "temperature":        ("temp_c",      False),
-}
-# Skip basic field if the enhanced version is present in the same record
-_ENHANCED_SUPERSEDES = {"speed", "altitude"}
-
-
-def _normalize_activity_fit(payload: JSONValue) -> list[CanonicalRecord]:
-    # connector._fetch_activity_fits →
-    #   {"activities": [{"activity_id": "...", "records": [...], ...}]}
-    if not isinstance(payload, dict):
-        return []
-    activities = payload.get("activities")
-    if not isinstance(activities, list):
-        return []
-
-    canonical: list[CanonicalRecord] = []
-    for act in activities:
-        if not isinstance(act, dict) or "error" in act:
-            continue
-        activity_id = act.get("activity_id")
-        if not isinstance(activity_id, str):
-            continue
-        records = act.get("records") or []
-        if not isinstance(records, list):
-            continue
-
-        for rec in records:
-            if not isinstance(rec, dict):
-                continue
-            ts_raw = rec.get("timestamp")
-            occurred_at = _parse_datetime_utc(str(ts_raw)) if isinstance(ts_raw, str) else None
-            if occurred_at is None:
-                continue
-
-            has_enhanced_speed = isinstance(rec.get("enhanced_speed"), int | float)
-            has_enhanced_alt = isinstance(rec.get("enhanced_altitude"), int | float)
-
-            for field, (metric_code, is_semicircle) in _FIT_FIELDS.items():
-                if field == "speed" and has_enhanced_speed:
-                    continue
-                if field == "altitude" and has_enhanced_alt:
-                    continue
-                raw_val = rec.get(field)
-                if not isinstance(raw_val, int | float):
-                    continue
-                value = _semicircle_to_deg(raw_val) if is_semicircle else float(raw_val)
-                canonical.append(CanonicalRecord(
-                    record_type="activity_record",
-                    external_id=f"{activity_id}:{metric_code}:{occurred_at.isoformat()}",
-                    occurred_at=occurred_at,
-                    data={
-                        "activity_external_id": activity_id,
-                        "metric": metric_code,
-                        "value": value,
-                    },
-                ))
-    return canonical
+def _local_start_and_offset(
+    local_raw: object, gmt_raw: object
+) -> tuple[datetime | None, int | None]:
+    if not isinstance(local_raw, str):
+        return None, None
+    try:
+        local = datetime.fromisoformat(local_raw.replace(" ", "T"))
+    except ValueError:
+        return None, None
+    if not isinstance(gmt_raw, str):
+        return local, None
+    try:
+        gmt = datetime.fromisoformat(gmt_raw.replace(" ", "T"))
+    except ValueError:
+        return local, None
+    return local, round((local - gmt).total_seconds() / 60)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
-_SEMICIRCLE_FACTOR = 180.0 / 2_147_483_648
-
-
-def _semicircle_to_deg(val: int | float) -> float:
-    # garmin-fit-sdk returns raw semicircle integers for GPS fields
-    if abs(val) > 360:
-        return val * _SEMICIRCLE_FACTOR
-    return float(val)
-
 
 def _normalize_sleep(payload: JSONValue) -> list[CanonicalRecord]:
     # get_sleep_data -> no top-level "sleepId"; the unique id is

@@ -1,9 +1,54 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import io
+import zipfile
+from datetime import UTC, datetime, timedelta
 
-from kairos.connectors.garmin.fit_decoder import records_to_json
+import pytest
+from garmin_fit_sdk import Encoder, Profile
+
+from kairos.connectors.garmin.fit_decoder import decode_fit_zip, records_to_json
 from kairos.ingestion.hash import payload_sha256
+
+
+def mini_fit_zip(start: datetime, heart_rates: list[int]) -> bytes:
+    enc = Encoder()
+    enc.write_mesg({
+        "mesg_num": Profile["mesg_num"]["FILE_ID"],
+        "type": "activity",
+        "manufacturer": "garmin",
+        "product": 1,
+        "time_created": start,
+        "serial_number": 1,
+    })
+    for i, hr in enumerate(heart_rates):
+        enc.write_mesg({
+            "mesg_num": Profile["mesg_num"]["RECORD"],
+            "timestamp": start + timedelta(seconds=i),
+            "heart_rate": hr,
+            "distance": 2.5 * i,
+        })
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("activity.fit", enc.close())
+    return buf.getvalue()
+
+
+def test_mini_fit_zip_decodes_records() -> None:
+    start = datetime(2026, 8, 4, 9, 0, tzinfo=UTC)
+
+    messages = decode_fit_zip(mini_fit_zip(start, [140, 141]))
+
+    assert [r["heart_rate"] for r in messages["record_mesgs"]] == [140, 141]
+    assert messages["record_mesgs"][0]["timestamp"] == start
+
+
+def test_strict_decode_raises_on_sdk_errors_lenient_does_not() -> None:
+    garbage = b"definitely not a fit file"
+
+    assert decode_fit_zip(garbage) == {}
+    with pytest.raises(ValueError, match="FIT decode failed"):
+        decode_fit_zip(garbage, strict=True)
 
 
 def test_records_to_json_stringifies_undecoded_numeric_field_ids() -> None:

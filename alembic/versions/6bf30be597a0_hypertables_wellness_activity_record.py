@@ -8,6 +8,8 @@ Create Date: 2026-08-10 00:00:00.000000
 
 from collections.abc import Sequence
 
+import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "6bf30be597a0"
@@ -25,6 +27,12 @@ _CHUNK_INTERVAL = "7 days"
 
 
 def upgrade() -> None:
+    # no-op on plain Postgres: the follow-up drop_timescaledb migration undoes this anyway
+    available = op.get_bind().execute(
+        sa.text("SELECT 1 FROM pg_available_extensions WHERE name = 'timescaledb'")
+    ).first()
+    if available is None:
+        return
     op.execute("CREATE EXTENSION IF NOT EXISTS timescaledb")
 
     # Timescale requires the partitioning column in every unique/primary-key

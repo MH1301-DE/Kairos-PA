@@ -5,7 +5,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: timescale/timescaledb-ha:pg16
+        image: postgres:16
         env:
           POSTGRES_DB: kairos_test
           POSTGRES_USER: kairos

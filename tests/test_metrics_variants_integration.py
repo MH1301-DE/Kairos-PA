@@ -10,9 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from kairos.metrics.bootstrap import build_default_registry
 from kairos.repositories.metrics_data import sleep_hours_range
 from kairos.repositories.metrics_recompute import recompute_hr_bucket_seconds_daily
+from tests.stream_seed import seed_hr_stream
 
 
-async def _insert_user(session: AsyncSession, user_id) -> None:
+async def _insert_user(
+    session: AsyncSession, user_id, hr_max_override: int | None = 185
+) -> None:
     await session.execute(
         text(
             """
@@ -22,6 +25,11 @@ async def _insert_user(session: AsyncSession, user_id) -> None:
         ),
         {"id": str(user_id), "email": f"{user_id}@test.com", "sub": f"sub-{user_id}"},
     )
+    if hr_max_override is not None:
+        await session.execute(
+            text("INSERT INTO user_setting (user_id, hr_max_override) VALUES (:id, :hr)"),
+            {"id": str(user_id), "hr": hr_max_override},
+        )
 
 
 async def _insert_workout(session: AsyncSession, user_id, day: date) -> None:
@@ -37,17 +45,10 @@ async def _insert_workout(session: AsyncSession, user_id, day: date) -> None:
             },
         )
     ).scalar_one()
-    for i in range(600):  # 10 minutes at 150 bpm
-        ts = datetime(day.year, day.month, day.day, 9, 0, i % 60, tzinfo=UTC) + timedelta(
-            minutes=i // 60
-        )
-        await session.execute(
-            text(
-                "INSERT INTO activity_record (user_id, activity_id, recorded_at, metric, value) "
-                "VALUES (:uid, :aid, :ts, 'hr', 150.0)"
-            ),
-            {"uid": str(user_id), "aid": activity_id, "ts": ts},
-        )
+    await seed_hr_stream(
+        session, user_id=user_id, activity_id=activity_id,
+        start_at=datetime(day.year, day.month, day.day, 9, tzinfo=UTC), values=[150.0] * 600,
+    )
     await session.commit()
     await recompute_hr_bucket_seconds_daily(session, user_id=user_id, start=day, end=day)
     await session.commit()
@@ -68,7 +69,7 @@ async def test_edwards_trimp_variant_computes_from_real_data(session: AsyncSessi
     assert result.value > 0
 
 
-async def _insert_activity_records(
+async def _insert_stream_workout(
     session: AsyncSession, user_id, day: date, *, minutes: int = 10, bpm: float = 150.0
 ) -> None:
     activity_id = (
@@ -84,24 +85,17 @@ async def _insert_activity_records(
             },
         )
     ).scalar_one()
-    base_ts = datetime(day.year, day.month, day.day, 9, 0, 0, tzinfo=UTC)
-    rows = [
-        {"uid": str(user_id), "aid": activity_id, "ts": base_ts + timedelta(seconds=i), "bpm": bpm}
-        for i in range(minutes * 60)
-    ]
-    await session.execute(
-        text(
-            "INSERT INTO activity_record (user_id, activity_id, recorded_at, metric, value) "
-            "VALUES (:uid, :aid, :ts, 'hr', :bpm)"
-        ),
-        rows,
+    await seed_hr_stream(
+        session, user_id=user_id, activity_id=activity_id,
+        start_at=datetime(day.year, day.month, day.day, 9, tzinfo=UTC),
+        values=[bpm] * (minutes * 60),
     )
 
 
 async def _insert_sparse_training(session: AsyncSession, user_id, days: list[date]) -> None:
     """Bulk-insert several training days, then recompute the daily-bucket table once."""
     for day in days:
-        await _insert_activity_records(session, user_id, day)
+        await _insert_stream_workout(session, user_id, day)
     await session.commit()
     await recompute_hr_bucket_seconds_daily(
         session, user_id=user_id, start=min(days), end=max(days)
@@ -161,7 +155,7 @@ async def test_training_load_variant_reflects_rest_day_decay(session: AsyncSessi
 async def test_training_load_variant_insufficient_data_for_zero_training_user(
     session: AsyncSession,
 ) -> None:
-    """hr_max resolves (via activity.max_hr) but there is no activity_record data, ever.
+    """hr_max resolves (via activity.max_hr) but there is no hr stream data, ever.
 
     Guards the composition bug the dense-series fix could introduce: edwards_daily_load_series()
     always returns a dense, zero-filled series once hr_max resolves, so the old
@@ -279,3 +273,86 @@ async def test_sleep_debt_variant_buckets_by_utc_day_not_session_timezone(
     )
     assert result.coverage_days == 1
     assert result.value is not None
+
+
+@pytest.mark.asyncio
+async def test_hr_variants_without_hr_max_report_note_even_with_measured_max(
+    session: AsyncSession,
+) -> None:
+    user_id = uuid4()
+    today = date(2026, 8, 1)
+    await _insert_user(session, user_id, hr_max_override=None)
+    await _insert_workout(session, user_id, today)
+
+    registry = build_default_registry()
+    for metric_id, variant_id in (
+        ("trimp", "edwards"),
+        ("trimp", "banister"),
+        ("hr_zone_distribution", "percent_max"),
+        ("hr_zone_distribution", "karvonen"),
+    ):
+        result = await registry.get(metric_id, variant_id).compute(
+            session, user_id=user_id, as_of=today
+        )
+        assert result.value is None
+        assert result.confidence == "insufficient_data"
+        assert result.note == "HFmax fehlt – bitte in den Einstellungen eintragen"
+
+
+@pytest.mark.asyncio
+async def test_edwards_trimp_uses_override_not_measured_max(session: AsyncSession) -> None:
+    user_id = uuid4()
+    today = date(2026, 8, 1)
+    await _insert_user(session, user_id, hr_max_override=200)
+    await _insert_workout(session, user_id, today)  # measured max 185
+
+    registry = build_default_registry()
+    result = await registry.get("trimp", "edwards").compute(session, user_id=user_id, as_of=today)
+
+    # 150 bpm = 75 % of 200 -> zone 3 (x3), 10 min
+    assert result.value == pytest.approx(30.0)
+    assert result.note is None
+
+
+@pytest.mark.asyncio
+async def test_higher_measured_max_does_not_override_entered_hr_max(
+    session: AsyncSession,
+) -> None:
+    user_id = uuid4()
+    today = date(2026, 8, 1)
+    await _insert_user(session, user_id, hr_max_override=214)
+    await _insert_workout(session, user_id, today)
+    await session.execute(
+        text("UPDATE activity SET max_hr = 219 WHERE user_id = :u"), {"u": str(user_id)}
+    )
+    await session.commit()
+
+    registry = build_default_registry()
+    result = await registry.get("trimp", "edwards").compute(session, user_id=user_id, as_of=today)
+
+    # 150/214 = 70.1 % -> zone 3 (30); with 219 it would be zone 2 (20)
+    assert result.value == pytest.approx(30.0)
+
+
+@pytest.mark.asyncio
+async def test_higher_measured_max_does_not_override_age_based_hr_max(
+    session: AsyncSession,
+) -> None:
+    user_id = uuid4()
+    today = date(2026, 8, 1)
+    await _insert_user(session, user_id, hr_max_override=None)
+    await session.execute(
+        text("INSERT INTO user_setting (user_id, birth_date) VALUES (:u, '1990-01-01')"),
+        {"u": str(user_id)},
+    )
+    await _insert_workout(session, user_id, today)
+    await session.execute(
+        text("UPDATE activity SET max_hr = 219 WHERE user_id = :u"), {"u": str(user_id)}
+    )
+    await session.commit()
+
+    registry = build_default_registry()
+    result = await registry.get("trimp", "edwards").compute(session, user_id=user_id, as_of=today)
+
+    # 220 - 36 = 184: 150/184 = 81.5 % -> zone 4 (40); with 219 it would be zone 2 (20)
+    assert result.value == pytest.approx(40.0)

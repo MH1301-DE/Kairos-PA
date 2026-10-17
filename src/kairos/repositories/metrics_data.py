@@ -90,21 +90,12 @@ async def sleep_hours_range(
 ) -> dict[date, float]:
     result = await session.execute(
         text(
-            "SELECT (start_at AT TIME ZONE 'UTC')::date AS day, duration_seconds "
-            "FROM sleep_session WHERE user_id = :uid "
-            "AND (start_at AT TIME ZONE 'UTC')::date >= :start "
-            "AND (start_at AT TIME ZONE 'UTC')::date <= :end "
-            "AND duration_seconds IS NOT NULL"
+            "SELECT (s.start_at AT TIME ZONE u.home_timezone)::date AS day, s.duration_seconds "
+            "FROM sleep_session s JOIN app_user u ON u.id = s.user_id WHERE s.user_id = :uid "
+            "AND (s.start_at AT TIME ZONE u.home_timezone)::date >= :start "
+            "AND (s.start_at AT TIME ZONE u.home_timezone)::date <= :end "
+            "AND s.duration_seconds IS NOT NULL"
         ),
         {"uid": str(user_id), "start": start, "end": end},
     )
     return {day: seconds / 3600.0 for day, seconds in result.all()}
-
-
-async def observed_max_hr_ever(session: AsyncSession, *, user_id: UUID) -> int | None:
-    result = await session.execute(
-        text("SELECT max(max_hr) FROM activity WHERE user_id = :uid"),
-        {"uid": str(user_id)},
-    )
-    value = result.scalar_one_or_none()
-    return int(value) if value is not None else None

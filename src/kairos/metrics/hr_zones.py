@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+from typing import Literal
 
 _ZONE_FRACTIONS: tuple[tuple[float, float, int], ...] = (
     (0.50, 0.60, 1),
@@ -35,20 +36,42 @@ def karvonen_zones(hr_max: float, resting_hr: float) -> list[HrZoneBounds]:
     ]
 
 
-def estimate_hr_max(
+def zone_seconds(buckets: dict[int, float], zones: list[HrZoneBounds]) -> dict[str, float]:
+    out = {zone.name: 0.0 for zone in zones}
+    for bpm_bucket, seconds in buckets.items():
+        for zone in zones:
+            if zone.low_bpm <= bpm_bucket < zone.high_bpm or (
+                zone is zones[-1] and bpm_bucket >= zone.high_bpm
+            ):
+                out[zone.name] += seconds
+                break
+    return out
+
+
+HrMaxSource = Literal["eingetragen", "aus Alter"]
+
+
+def resolve_hr_max(
     birth_date: date | None,
     hr_max_override: int | None,
-    observed_max_hr: int | None,
     *,
     as_of: date,
-) -> int | None:
+) -> tuple[int | None, HrMaxSource | None]:
     if hr_max_override is not None:
-        return hr_max_override
-    age_estimate: int | None = None
-    if birth_date is not None:
-        age = as_of.year - birth_date.year - (
-            (as_of.month, as_of.day) < (birth_date.month, birth_date.day)
-        )
-        age_estimate = 220 - age
-    candidates = [v for v in (age_estimate, observed_max_hr) if v is not None]
-    return max(candidates) if candidates else None
+        return hr_max_override, "eingetragen"
+    if birth_date is None:
+        return None, None
+    age = (
+        as_of.year
+        - birth_date.year
+        - ((as_of.month, as_of.day) < (birth_date.month, birth_date.day))
+    )
+    return 220 - age, "aus Alter"
+
+
+def hr_max_warning(
+    used: int | None, source: HrMaxSource | None, measured: int | None
+) -> str | None:
+    if used is not None and measured is not None and measured > used:
+        return f"gemessen {measured} bpm, {source} {used} – prüfen"
+    return None

@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from datetime import date
 
-from kairos.metrics.hr_zones import estimate_hr_max, karvonen_zones, percent_max_zones
+from kairos.metrics.hr_zones import (
+    hr_max_warning,
+    karvonen_zones,
+    percent_max_zones,
+    resolve_hr_max,
+)
 
 
 def test_percent_max_zones_covers_50_to_100_percent() -> None:
@@ -21,32 +26,20 @@ def test_karvonen_zones_use_heart_rate_reserve() -> None:
     assert zones[4].high_bpm == 190.0
 
 
-def test_estimate_hr_max_prefers_override() -> None:
-    result = estimate_hr_max(
-        birth_date=date(1990, 1, 1), hr_max_override=200, observed_max_hr=180,
-        as_of=date(2026, 8, 10),
-    )
-    assert result == 200
+def test_hr_max_override_wins_over_measured_and_age() -> None:
+    assert resolve_hr_max(date(1990, 1, 1), 214, as_of=date(2026, 8, 10)) == (214, "eingetragen")
 
 
-def test_estimate_hr_max_uses_age_formula_when_no_override() -> None:
-    result = estimate_hr_max(
-        birth_date=date(1990, 8, 10), hr_max_override=None, observed_max_hr=None,
-        as_of=date(2026, 8, 10),
-    )
-    assert result == 184  # 220 - 36
+def test_hr_max_from_birth_date_only() -> None:
+    assert resolve_hr_max(date(1990, 8, 10), None, as_of=date(2026, 8, 10)) == (184, "aus Alter")
 
 
-def test_estimate_hr_max_raises_estimate_to_observed_max_if_higher() -> None:
-    result = estimate_hr_max(
-        birth_date=date(1990, 8, 10), hr_max_override=None, observed_max_hr=195,
-        as_of=date(2026, 8, 10),
-    )
-    assert result == 195  # observed effort exceeded the age-based estimate
+def test_hr_max_without_inputs_is_none() -> None:
+    assert resolve_hr_max(None, None, as_of=date(2026, 8, 10)) == (None, None)
 
 
-def test_estimate_hr_max_returns_none_without_any_input() -> None:
-    result = estimate_hr_max(
-        birth_date=None, hr_max_override=None, observed_max_hr=None, as_of=date(2026, 8, 10)
-    )
-    assert result is None
+def test_hr_max_warning_when_measured_exceeds_used() -> None:
+    assert hr_max_warning(214, "eingetragen", 219) == "gemessen 219 bpm, eingetragen 214 – prüfen"
+    assert hr_max_warning(214, "eingetragen", 214) is None
+    assert hr_max_warning(None, None, 219) is None
+    assert hr_max_warning(214, "eingetragen", None) is None

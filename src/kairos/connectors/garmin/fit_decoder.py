@@ -9,10 +9,10 @@ from datetime import datetime
 from typing import Any
 
 
-def decode_fit_zip(zip_bytes: bytes) -> dict[str, Any]:
+def decode_fit_zip(zip_bytes: bytes, *, strict: bool = False) -> dict[str, Any]:
     """Extract the first .fit from a ZIP archive and decode it."""
     fit_bytes = _extract_fit(zip_bytes)
-    return _decode_fit_bytes(fit_bytes)
+    return _decode_fit_bytes(fit_bytes, strict=strict)
 
 
 def records_to_json(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -44,9 +44,12 @@ def _extract_fit(data: bytes) -> bytes:
         return zf.read(names[0])
 
 
-def _decode_fit_bytes(fit_bytes: bytes) -> dict[str, Any]:
+def _decode_fit_bytes(fit_bytes: bytes, *, strict: bool) -> dict[str, Any]:
     sdk = importlib.import_module("garmin_fit_sdk")
     stream = sdk.Stream.from_byte_array(fit_bytes)
     decoder = sdk.Decoder(stream)
-    messages, _ = decoder.read()
+    messages, errors = decoder.read()
+    # the SDK reports garbage/truncated input as errors, not exceptions
+    if strict and errors:
+        raise ValueError(f"FIT decode failed: {errors[0]}")
     return messages  # type: ignore[no-any-return]

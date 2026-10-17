@@ -19,7 +19,7 @@ _TABLES = {"scheduled_job", "scheduled_job_run"}
 
 def test_single_alembic_head() -> None:
     heads = ScriptDirectory.from_config(Config("alembic.ini")).get_heads()
-    assert heads == ["5c8e1d2f7a90"]
+    assert heads == ["5d2f8a6c1e47"]
 
 
 def _touches_scheduler(diff: Any) -> bool:
@@ -46,18 +46,19 @@ async def test_orm_matches_migration_and_downgrade_round_trips(
 
     cfg = Config("alembic.ini")
     cfg.set_main_option("sqlalchemy.url", db_url)
-    # alembic env.py runs its own event loop
-    await asyncio.to_thread(command.downgrade, cfg, "7a1c2e9d4b30")
+    # alembic env.py runs its own event loop; fed6d2d1311b (stufe 1, above the scheduler
+    # migration) has no downgrade, so the round trip stops there
+    await asyncio.to_thread(command.downgrade, cfg, "fed6d2d1311b")
     async with engine.connect() as conn:
-        gone = await conn.execute(text("SELECT to_regclass('scheduled_job')"))
+        gone = await conn.execute(text("SELECT to_regclass('activity_stats')"))
         assert gone.scalar_one() is None
     await asyncio.to_thread(command.upgrade, cfg, "head")
     async with engine.begin() as conn:
         # the session-wide grant in conftest predates the recreated tables
         await conn.execute(
             text(
-                "GRANT SELECT, INSERT, UPDATE, DELETE "
-                "ON scheduled_job, scheduled_job_run TO kairos_app"
+                "GRANT SELECT, INSERT, UPDATE, DELETE ON activity_stats, activity_split, "
+                "activity_best_effort, activity_step_result TO kairos_app"
             )
         )
         forced = await conn.execute(

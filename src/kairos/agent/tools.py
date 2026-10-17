@@ -9,7 +9,22 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from kairos.agent.activity_tools import (
+    ANALYZE_OPERATIONS,
+    BEST_EFFORT_KEYS,
+    BEST_EFFORT_PERIODS,
+    CURVE_METRICS,
+    SEARCH_SORTS,
+    SPLIT_KINDS,
+    SPORT_PROFILES,
+    activity_analyze_handler,
+    activity_get_handler,
+    activity_search_handler,
+    activity_splits_handler,
+    best_efforts_handler,
+)
 from kairos.agent.expiry import _parse_expiry
+from kairos.agent.format import cap_envelope, drop_last_row
 from kairos.agent.render_schemas import RENDER_COMPONENTS, validate_render_config
 from kairos.calendar.free_time import BusyBlock, CalendarPrefs, FreeBlock, compute_free_blocks
 from kairos.db.models import MetricDailyValue
@@ -49,18 +64,36 @@ class ToolSpec:
 
 
 def _envelope(
-    summary: str, data: Any, *, coverage: str | None = None, truncated: bool = False
+    summary: str,
+    data: Any,
+    *,
+    coverage: str | None = None,
+    truncated: bool = False,
+    next_hint: str | None = None,
+    quality: str | None = None,
+    max_tokens: int | None = None,
+    shrink: Callable[[dict[str, Any]], dict[str, Any] | None] = drop_last_row,
 ) -> dict[str, Any]:
-    return {
-        "summary": summary,
-        "data": data,
-        "meta": {
-            "row_count": len(data) if isinstance(data, list) else None,
-            "truncated": truncated,
-            "coverage": coverage,
-            "as_of": datetime.now(UTC).isoformat(),
-        },
+    if isinstance(data, list):
+        row_count: int | None = len(data)
+    elif isinstance(data, dict) and isinstance(data.get("rows"), list):
+        row_count = len(data["rows"])
+    else:
+        row_count = None
+    meta: dict[str, Any] = {
+        "row_count": row_count,
+        "truncated": truncated,
+        "coverage": coverage,
+        "as_of": datetime.now(UTC).isoformat(),
     }
+    if quality is not None:
+        meta["quality"] = quality
+    if next_hint is not None:
+        meta["next"] = next_hint
+    env = {"summary": summary, "data": data, "meta": meta}
+    if max_tokens is not None:
+        env = cap_envelope(env, max_tokens=max_tokens, shrink=shrink)
+    return env
 
 
 async def query_health_handler(
@@ -88,7 +121,7 @@ async def query_health_handler(
         f"[{result.confidence}]",
         {
             "metric_id": metric_id, "variant": chosen, "value": result.value,
-            "unit": result.unit, "confidence": result.confidence,
+            "unit": result.unit, "confidence": result.confidence, "note": result.note,
         },
         coverage=f"{result.coverage_days}/{result.coverage_required_days} Tage",
     )
@@ -662,6 +695,116 @@ CORE_TOOLS: tuple[ToolSpec, ...] = (
             },
         },
         handler=plan_progress_handler,
+    ),
+    ToolSpec(
+        name="activity_search",
+        description=(
+            "Sucht eigene Aktivitäten (Laufen, Rad, Schwimmen, Wandern …) und liefert eine "
+            "kompakte Liste mit IDs. Details danach mit activity_get."
+        ),
+        risk_class="read", requires_confirmation=False,
+        json_schema={
+            "type": "object",
+            "properties": {
+                "from_date": {
+                    "type": "string", "description": "YYYY-MM-DD, Default: heute − 30 Tage",
+                },
+                "to_date": {"type": "string", "description": "YYYY-MM-DD, Default: heute"},
+                "sport_profile": {"type": "string", "enum": list(SPORT_PROFILES)},
+                "name_contains": {"type": "string"},
+                "min_distance_km": {"type": "number"},
+                "max_distance_km": {"type": "number"},
+                "sort": {"type": "string", "enum": list(SEARCH_SORTS)},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+            },
+        },
+        handler=activity_search_handler,
+    ),
+    ToolSpec(
+        name="activity_get",
+        description=(
+            "Steckbrief einer Aktivität: Umfang, Pace/Tempo, Herzfrequenz, Zonen, Belastung, "
+            "schnellster und langsamster km. Ohne activity_id: die letzte Aktivität (optional "
+            "gefiltert nach sport_profile)."
+        ),
+        risk_class="read", requires_confirmation=False,
+        json_schema={
+            "type": "object",
+            "properties": {
+                "activity_id": {"type": "integer"},
+                "sport_profile": {"type": "string", "enum": list(SPORT_PROFILES)},
+            },
+        },
+        handler=activity_get_handler,
+    ),
+    ToolSpec(
+        name="activity_splits",
+        description=(
+            "Split-Tabelle einer Aktivität: eine Zeile pro km (Rad 5 km, Schwimmen 100 m), pro "
+            "Uhr-Runde oder pro Workout-Schritt mit Ziel und Treffer (Soll/Ist), jeweils mit "
+            "Pace, Höhenmetern und HF."
+        ),
+        risk_class="read", requires_confirmation=False,
+        json_schema={
+            "type": "object",
+            "properties": {
+                "activity_id": {"type": "integer"},
+                "kind": {"type": "string", "enum": list(SPLIT_KINDS)},
+                "from_idx": {"type": "integer", "minimum": 1},
+                "to_idx": {"type": "integer", "minimum": 1},
+            },
+            "required": ["activity_id"],
+        },
+        handler=activity_splits_handler,
+    ),
+    ToolSpec(
+        name="activity_analyze",
+        description=(
+            "Serverseitige Auswertung einer Aktivität: segment (Abschnitt nach km oder "
+            "Minuten), compare (Vergleich mit zweiter Aktivität), hr_drift (aerobe "
+            "Entkopplung), curve (Verlauf mit höchstens 60 Punkten für render)."
+        ),
+        risk_class="read", requires_confirmation=False,
+        json_schema={
+            "type": "object",
+            "properties": {
+                "activity_id": {"type": "integer"},
+                "operation": {"type": "string", "enum": list(ANALYZE_OPERATIONS)},
+                "other_activity_id": {"type": "integer", "description": "nur compare"},
+                "from_km": {"type": "number"},
+                "to_km": {"type": "number"},
+                "from_min": {"type": "number"},
+                "to_min": {"type": "number"},
+                "metric": {
+                    "type": "string", "enum": list(CURVE_METRICS), "description": "nur curve",
+                },
+                "points": {"type": "integer", "minimum": 10, "maximum": 60},
+            },
+            "required": ["activity_id", "operation"],
+        },
+        handler=activity_analyze_handler,
+    ),
+    ToolSpec(
+        name="best_efforts",
+        description=(
+            "Lauf-Bestleistungen: schnellste Abschnitte über 800 m bis 100 km aus allen "
+            "GPS-Läufen, auch innerhalb längerer Läufe."
+        ),
+        risk_class="read", requires_confirmation=False,
+        json_schema={
+            "type": "object",
+            "properties": {
+                "distances": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": list(BEST_EFFORT_KEYS)},
+                },
+                "period": {"type": "string", "enum": list(BEST_EFFORT_PERIODS)},
+                "from_date": {"type": "string"},
+                "to_date": {"type": "string"},
+                "top_n": {"type": "integer", "minimum": 1, "maximum": 5},
+            },
+        },
+        handler=best_efforts_handler,
     ),
 )
 

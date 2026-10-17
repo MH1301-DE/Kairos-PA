@@ -24,17 +24,20 @@ async def recompute_hr_bucket_seconds_daily(
         text(
             """
             INSERT INTO hr_bucket_seconds_daily (user_id, day, bpm_bucket, seconds)
-            SELECT
-                user_id,
-                (recorded_at AT TIME ZONE 'UTC')::date AS day,
-                (floor(value / 5) * 5)::smallint AS bpm_bucket,
-                count(*) AS seconds
-            FROM activity_record
-            WHERE metric = 'hr' AND user_id = :uid
-              AND (recorded_at AT TIME ZONE 'UTC')::date >= :start
-              AND (recorded_at AT TIME ZONE 'UTC')::date <= :end
-            GROUP BY user_id, (recorded_at AT TIME ZONE 'UTC')::date,
-                     (floor(value / 5) * 5)::smallint
+            SELECT user_id, day, (floor(v / 5) * 5)::smallint AS bpm_bucket, count(*) AS seconds
+            FROM (
+                SELECT s.user_id,
+                       COALESCE(a.start_local::date,
+                                (a.start_at AT TIME ZONE u.home_timezone)::date) AS day,
+                       h.v
+                FROM activity_stream s
+                JOIN activity a ON a.id = s.activity_id AND a.deleted_at IS NULL
+                JOIN app_user u ON u.id = a.user_id
+                CROSS JOIN LATERAL unnest(s.v4) WITH ORDINALITY AS h(v, ord)
+                WHERE s.channel = 'hr' AND s.user_id = :uid AND h.v IS NOT NULL
+            ) samples
+            WHERE day >= :start AND day <= :end
+            GROUP BY user_id, day, (floor(v / 5) * 5)::smallint
             """
         ),
         {"uid": str(user_id), "start": start, "end": end},
@@ -58,15 +61,16 @@ async def recompute_wellness_daily_stats(
             INSERT INTO wellness_daily_stats
                 (user_id, metric_id, day, avg_value, min_value, max_value, sample_count)
             SELECT
-                user_id,
-                metric_id,
-                (observed_at AT TIME ZONE 'UTC')::date AS day,
-                avg(value), min(value), max(value), count(*)
-            FROM wellness_sample
-            WHERE user_id = :uid
-              AND (observed_at AT TIME ZONE 'UTC')::date >= :start
-              AND (observed_at AT TIME ZONE 'UTC')::date <= :end
-            GROUP BY user_id, metric_id, (observed_at AT TIME ZONE 'UTC')::date
+                w.user_id,
+                w.metric_id,
+                (w.observed_at AT TIME ZONE u.home_timezone)::date AS day,
+                avg(w.value), min(w.value), max(w.value), count(*)
+            FROM wellness_sample w
+            JOIN app_user u ON u.id = w.user_id
+            WHERE w.user_id = :uid
+              AND (w.observed_at AT TIME ZONE u.home_timezone)::date >= :start
+              AND (w.observed_at AT TIME ZONE u.home_timezone)::date <= :end
+            GROUP BY w.user_id, w.metric_id, (w.observed_at AT TIME ZONE u.home_timezone)::date
             """
         ),
         {"uid": str(user_id), "start": start, "end": end},

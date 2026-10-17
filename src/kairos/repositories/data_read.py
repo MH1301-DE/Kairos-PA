@@ -9,7 +9,8 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from kairos.db.models import Activity, ActivityRecord, MetricDef, SleepSession, WellnessSample
+from kairos.activities.stream_repository import load_stream
+from kairos.db.models import Activity, MetricDef, SleepSession, WellnessSample
 
 
 class InvalidCursorError(ValueError):
@@ -25,7 +26,8 @@ class Page[T]:
 @dataclass(frozen=True)
 class ActivityDetail:
     activity: Activity
-    records: list[ActivityRecord]
+    series: dict[str, list[float | None]]
+    t_offset_s: list[int]
 
 
 class SqlDataReadRepository:
@@ -58,7 +60,7 @@ class SqlDataReadRepository:
     async def list_activities(
         self, *, user_id: UUID, limit: int = 50, cursor: str | None = None
     ) -> Page[Activity]:
-        stmt = select(Activity).where(Activity.user_id == user_id)
+        stmt = select(Activity).where(Activity.user_id == user_id, Activity.deleted_at.is_(None))
         if cursor is not None:
             cursor_start_at, cursor_id = _decode_cursor(cursor)
             if cursor_start_at is None:
@@ -85,24 +87,23 @@ class SqlDataReadRepository:
         return Page(items=items, next_cursor=next_cursor)
 
     async def get_activity_detail(
-        self, *, user_id: UUID, external_id: str, limit: int = 5000
+        self, *, user_id: UUID, external_id: str, max_points: int = 2000
     ) -> ActivityDetail | None:
         activity_row = await self._session.execute(
             select(Activity).where(
-                Activity.user_id == user_id, Activity.external_id == external_id
+                Activity.user_id == user_id,
+                Activity.external_id == external_id,
+                Activity.deleted_at.is_(None),
             )
         )
         activity = activity_row.scalar_one_or_none()
         if activity is None:
             return None
-        records_row = await self._session.execute(
-            select(ActivityRecord)
-            .where(ActivityRecord.user_id == user_id, ActivityRecord.activity_id == activity.id)
-            .order_by(ActivityRecord.recorded_at)
-            # a multi-hour FIT activity holds tens of thousands of 1 Hz rows — cap in SQL
-            .limit(limit)
-        )
-        return ActivityDetail(activity=activity, records=list(records_row.scalars().all()))
+        loaded = await load_stream(self._session, activity_id=activity.id)
+        if loaded is None:
+            return ActivityDetail(activity=activity, series={}, t_offset_s=[])
+        t_offset_s, series = _downsample_mean(loaded.t_offset_s, loaded.channels, max_points)
+        return ActivityDetail(activity=activity, series=series, t_offset_s=t_offset_s)
 
     async def list_sleep_sessions(
         self, *, user_id: UUID, from_date: datetime, to_date: datetime
@@ -118,6 +119,26 @@ class SqlDataReadRepository:
             .order_by(SleepSession.start_at)
         )
         return list(result.scalars().all())
+
+
+def _downsample_mean(
+    t_offset_s: list[int], channels: dict[str, list[float | None]], max_points: int
+) -> tuple[list[int], dict[str, list[float | None]]]:
+    n = len(t_offset_s)
+    if n <= max_points:
+        return t_offset_s, channels
+    # max_points consecutive buckets of near-equal size
+    bounds = [i * n // max_points for i in range(max_points + 1)]
+    spans = list(zip(bounds[:-1], bounds[1:], strict=True))
+    offsets = [t_offset_s[lo] for lo, _ in spans]
+    out: dict[str, list[float | None]] = {}
+    for code, values in channels.items():
+        means: list[float | None] = []
+        for lo, hi in spans:
+            present = [v for v in values[lo:hi] if v is not None]
+            means.append(sum(present) / len(present) if present else None)
+        out[code] = means
+    return offsets, out
 
 
 def _encode_cursor(dt: datetime | None, activity_id: int) -> str:

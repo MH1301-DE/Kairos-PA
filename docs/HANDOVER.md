@@ -14,6 +14,7 @@ Agent-Änderungen geprüft werden:
 |---|---|
 | Maximilian Haenel | mhaenel@deloitte.de |
 | Maximilian Haenel | max.haenel@t-online.de |
+| Maximilian Haenel (`haenel`) | haenel@igmr.rwth-aachen.de |
 
 Commits von anderen Autoren sind Agent-Commits. Lies deren Diffs, bevor du weitermachst.
 
@@ -35,7 +36,7 @@ Der Agent soll Trainingslast erkennen, Erholung bewerten und Termine vorschlagen
 | Schicht | Technologie |
 |---|---|
 | Backend | Python ≥ 3.12 (`pyproject.toml`; CI 3.12; lokal 3.13 unter Windows bzw. 3.14.6 auf dem Mac), FastAPI, SQLAlchemy[asyncio], asyncpg, Alembic |
-| DB | PostgreSQL + TimescaleDB + pgvector |
+| DB | PostgreSQL 16 (Image `postgres:16`, ohne Extensions; TimescaleDB seit Stufe 1 entfernt, `pgvector` Zielbild) |
 | Cache/Sessions | Redis |
 | Auth | Google OIDC (kein eigenes Passwort-Management) |
 | Garmin-API | garminconnect 0.3.17, curl_cffi 0.16.0 (TLS-Fingerprint-Impersonation), Login nur über `widget+cffi` (siehe "Garmin-Login auf Widget-Flow umgestellt") |
@@ -97,20 +98,22 @@ token_refreshed_at  → für proaktive Reauth-Warnung
 reauth_since    → seit wann im reauth_required-Status
 ```
 
-### Aktivitäts-Speicher (3 Schichten)
+### Aktivitäts-Speicher (seit Stufe 1)
 
 ```
-Download (ZIP, ~125 KB)
+Download (ZIP, ⌀ 86 KB)
   │
-  ├─ raw_payload          gzip-JSON der decoded FIT-Messages (Archiv)
-  ├─ activity (1 Zeile)   Name, Sport, Distanz, Dauer, ⌀HR, max HR, Höhenmeter, Kalorien
-  └─ activity_record      Hypertable: 1 Zeile/Sekunde/Metrik
-       recorded_at | metric     | value
-       08:07:21    | hr         | 142.0
-       08:07:21    | speed_mps  | 3.1
+  ├─ raw_payload (payload_format='fit_zip')   Original-ZIP, über activity.fit_payload_id verknüpft
+  ├─ activity (1 Zeile)                        Summary, sport_profile, start_local, deleted_at …
+  ├─ activity_stream_axis (1 Zeile)            start_at + t_offset_s int[]
+  ├─ activity_stream (1 Zeile je Kanal)        v4 real[] bzw. v8 double precision[] (lat/lng)
+  └─ abgeleitet (src/kairos/activities/derive/)
+       activity_stats · activity_split · activity_best_effort · activity_step_result
 ```
 
-**Wichtig:** `activity_list` muss vor `activity_fit` laufen — `activity_record` braucht FK auf `activity.id`.
+**Wichtig:** `activity_list` muss vor `activity_fit` laufen — Streams brauchen `activity.id`.
+`activity_record` (narrow Hypertable) gibt es nicht mehr. Streams und Ableitungen sind
+jederzeit aus dem ZIP-Archiv neu baubar (`POST /api/activities/reprocess`).
 
 ### FIT-Datei-Handling
 
@@ -222,28 +225,33 @@ Throttle: 2 s Delay zwischen Fenstern beim Backfill
 
 ## Alembic-Migrationskette
 
+Linear, ältere zuerst (`alembic history` ist maßgeblich):
+
 ```
-2d0beb5f2474  initial_schema
-  └─ dd1f10a99d35  force_rls_on_tenant_tables
-       └─ a7f9f3d1c2b4  phase1_garmin_tables
-            └─ b3c1e2f4a5d6  connection_token_refresh_tracking
-                 └─ c4d2e3f5a6b7  activity_fields_metric_seeds
-                      └─ 6bf30be597a0  hypertables_wellness_activity_record
-                           └─ f67b0560a2ad  user_setting
-                                └─ 339358b313ef  metrics_raw_tables
-                                     └─ a3580dcb7b4a  calendar_event_and_calendar_prefs
-                                          └─ ad8779b9f2f5  wellness_quality_flag
-                                               └─ … (Phase 4/5, Harness v2) 7a1c2e9d4b30  memory_expiry_and_compaction
-                                                    └─ 5c8e1d2f7a90  scheduler_tables  ← HEAD (Branch feat/scheduler)
+2d0beb5f2474 initial_schema → dd1f10a99d35 force_rls → a7f9f3d1c2b4 phase1_garmin_tables
+→ b3c1e2f4a5d6 connection_token_refresh_tracking → c4d2e3f5a6b7 activity_fields_and_metric_def_seeds
+→ 6bf30be597a0 hypertables_wellness_activity_record (ohne verfügbare Extension no-op)
+→ f67b0560a2ad user_setting → 339358b313ef metrics_raw_tables
+→ a3580dcb7b4a calendar_event_and_calendar_prefs → ad8779b9f2f5 wellness_quality_flag
+→ 22f63d4a9f9b sync_state_backfill_complete_from → 7c1b2e4f9a3d goal_table
+→ 9f3d6a1b2c48 agent_memory_table → 7e73ec094ad8 metric_daily_value
+→ b1025127c2e0 custom_metric_definition → 3c4cc4b9401f conversation_tables
+→ d01f4413837f llm_model_setting → 1d9489995959 conversation_message_tool_call_id
+→ c409728c466e user_dashboard_tile → 27d8fcfada03 plan_tables
+→ 7a1c2e9d4b30 memory_expiry_and_compaction
+→ 5c8e1d2f7a90 scheduler_tables                                  ← HEAD auf main (Scheduler)
+→ 8c6af9fb1361 activity_stream_and_fit_archive                    (Stufe 1, AP 1a)
+→ fed6d2d1311b drop_timescaledb                                   (AP 1b, kein downgrade)
+→ 3b9e5c7a1d24 activity_profile_and_soft_delete                   (AP 1c)
+→ 5d2f8a6c1e47 activity_derived_tables                            ← HEAD auf stufe1-datenbasis
 ```
 
-**Wichtig:** `6bf30be597a0` enthält **keine** Compression Policy mehr — TimescaleDB kann
-Columnstore-Compression nicht auf Tabellen mit Row-Level-Security aktivieren (permanente
-Timescale-Einschränkung, siehe timescale/timescaledb#6827). Aus demselben Grund sind
-`hr_bucket_seconds_daily`/`wellness_daily_stats` (Migration `339358b313ef`) **normale**
-Postgres-Tabellen, keine Timescale Continuous Aggregates (timescale/timescaledb#5787) —
-gepflegt durch `src/kairos/repositories/metrics_recompute.py`, nicht durch eine
-Timescale-Refresh-Policy.
+**Kein TimescaleDB mehr** (seit `fed6d2d1311b`): `wellness_sample` ist eine normale
+Tabelle, `activity_record` und die Extension sind gelöscht. Hintergrund: Kompression und
+Continuous Aggregates sind mit RLS nicht nutzbar (timescale/timescaledb#6827, #5787),
+siehe ADR-0002 (Nachtrag). Umzug bestehender DBs: Runbook A.7 am Ende dieses Dokuments.
+Neue Migrationen anderer Branches (z. B. Scheduler) brauchen nach dem Rebase auf
+Stufe 1 `down_revision = "5d2f8a6c1e47"`.
 
 ---
 
@@ -253,13 +261,9 @@ Timescale-Refresh-Policy.
 # Alle Tests — Windows-venv: .venv/Scripts/python (nicht .venv/bin/)
 .venv/Scripts/python -m pytest -q
 
-# main-Branch-Baseline (Stand nach Metrics-Backend-Merge, 2026-08-11): 98 passed, 0 skipped
-# mit laufendem Docker durchgehend. Ohne Docker sind die Docker-gated Tests skipped (siehe
-# tests/test_metrics_recompute_integration.py, tests/test_metrics_repositories_integration.py,
-# tests/test_metrics_variants_integration.py, tests/test_garmin_repositories_integration.py)
-# Skipped = testcontainers-Tests ohne laufenden Docker (POSTGRES_IMAGE ist jetzt
-# timescale/timescaledb:latest-pg16, nicht mehr reines postgres:16 — nötig seit den
-# TimescaleDB-Migrationen)
+# Stand stufe1-datenbasis (2026-10-17): alle grün, 0 skipped (Zahl in CLAUDE.md).
+# 0 skipped nur mit laufendem Docker; ohne Docker werden die testcontainers-Tests
+# übersprungen. POSTGRES_IMAGE in tests/conftest.py ist postgres:16 (seit Stufe 1).
 
 # Wichtige Test-Dateien
 tests/test_garminconnect_backend.py   # GarminConnectBackend (15 Tests)
@@ -967,23 +971,16 @@ anstoßen, dann `/calendar` gegen die echten Termine der nächsten zwei Wochen p
 - **FIT-Download = ZIP**: `ActivityDownloadFormat.ORIGINAL` liefert ein ZIP-Archiv, keine rohe .fit-Datei
 - **Semicircle-GPS**: position_lat/position_long aus FIT-Decoder in Semicircles → Umrechnung: `° = val * 180 / 2_147_483_648`
 - **metric_def-Seeds**: Müssen existieren bevor `wellness_sample`-Rows geschrieben werden (Migration c4d2e3f5a6b7)
-- **activity_list vor activity_fit**: activity_record braucht FK auf activity.id
+- **activity_list vor activity_fit**: `activity_stream` braucht FK auf activity.id
 - **RLS + Background Tasks**: `install_rls_listener(session, user_id)` auf jeder Session aufrufen, die in RLS-geschützte Tabellen schreibt
 - **Python 3.14**: Einzige verfügbare Version auf diesem Mac; `pyproject.toml` sagt `>=3.12`
 - **hatchling**: Wird für `pip install -e ".[dev]"` benötigt — bei venv-Rebuild zuerst `pip install hatchling`
 - **Windows-venv**: Unter Windows liegt der Interpreter unter `.venv/Scripts/python`, nicht
   `.venv/bin/python` (macOS-Konvention aus diesem Dokument). Auf einer Windows-Session mit
   Python 3.13 statt 3.14 getestet — funktioniert, da `pyproject.toml` nur `>=3.12` verlangt.
-- **TimescaleDB + RLS sind für zwei Features inkompatibel**: (1) Columnstore-Compression
-  kann nicht auf Tabellen mit RLS aktiviert werden (timescale/timescaledb#6827); (2)
-  Continuous Aggregates können nicht auf RLS-Hypertables erstellt werden
-  (timescale/timescaledb#5787). Beides sind dauerhafte Timescale-Einschränkungen, kein
-  Versionsbug. Da RLS laut dieser Datei nicht verhandelbar ist: Compression einfach weglassen
-  (Datenvolumen ist ohnehin trivial, siehe 02-datenmodell-und-volumen.md), Continuous
-  Aggregates durch plain Tabellen + expliziten Python-Recompute ersetzen.
-- **Testcontainer-Image**: `tests/conftest.py`s `POSTGRES_IMAGE` muss
-  `timescale/timescaledb:latest-pg16` sein (nicht reines `postgres:16`), sonst schlägt
-  `CREATE EXTENSION timescaledb` in den Migrationstests fehl.
+- **Kein TimescaleDB mehr** (seit Stufe 1, `fed6d2d1311b`): Image `postgres:16` für Dev,
+  Compose, CI und Testcontainer. Wer auf einem alten Volume mit Timescale startet,
+  folgt Runbook A.7 am Ende dieses Dokuments.
 
 ---
 
@@ -991,7 +988,7 @@ anstoßen, dann `/calendar` gegen die echten Termine der nächsten zwei Wochen p
 
 ```bash
 # Lokale Dev-Umgebung starten
-docker compose up -d        # Postgres+Timescale, Redis
+docker compose -f deploy/docker-compose.dev.yml up -d   # Postgres 16, Redis
 
 # Alembic-Migrationen anwenden
 .venv/bin/alembic upgrade head
@@ -1381,6 +1378,103 @@ auf den Ist-Stand bringt (ein Commit pro Datei, 2026-10-08).
   dokumentierten 7–9 GB → VM mit ≥ 80 GB SSD empfohlen; welche VM gebucht wird, ist offen.
 - Das leere Verzeichnis `deploy/Caddyfile;C` wurde entfernt.
 
+## Runbook A.7 — TimescaleDB entfernen (Dev-DB umgezogen 2026-10-14)
+
+Ausgeführt auf der Dev-DB am 2026-10-14 (Branch `stufe1-datenbasis`, Migration `fed6d2d1311b_drop_timescaledb`). Für weitere Instanzen (z. B. Produktion) gleich vorgehen.
+
+Voraussetzungen: V8 bestanden (`scripts/verify_activity_streams.py --user-id <uuid>` → `RESULT: OK`, jede Aktivität mit `activity_record`-Zeilen hat Streams; sonst bricht die Migration ab). Kein Backend, Worker oder Beat aktiv. Die Migration muss als Superuser (oder BYPASSRLS-Rolle) laufen — sie verweigert sonst, weil FORCE RLS beim Kopieren alle Zeilen verstecken würde.
+
+1. Sicherung mit Timescale (Rückweg): `docker exec deploy-postgres-1 pg_dump -U kairos -d kairos -Fc -f /tmp/pre-1b.dump` und `docker cp deploy-postgres-1:/tmp/pre-1b.dump ../kairos-backups/2026-10-14-pre-1b.dump` (77,4 MB). Exakte Zeilenzahlen aller Tabellen daneben ablegen (`2026-10-14-pre-1b-counts.txt`). In Git Bash `MSYS_NO_PATHCONV=1` setzen.
+2. Probelauf (empfohlen): Dump in einen Wegwerf-Container `timescale/timescaledb-ha:pg16` (Port 5433) einspielen (`CREATE EXTENSION timescaledb; SELECT timescaledb_pre_restore();` → `pg_restore --no-owner` → `SELECT timescaledb_post_restore();`), dann `DATABASE_URL=postgresql+asyncpg://kairos:<pw>@localhost:5433/kairos alembic upgrade head`. Vergleich je `metric_id`: `count(*)`, `sum(value)`, `md5(string_agg(ws::text, ',' ORDER BY id))` vor/nach — muss identisch sein.
+3. Echte DB, noch im Timescale-Image: `alembic upgrade head` (Dauer wenige Sekunden bei 265k Wellness-Zeilen). Prüfen: `pg_extension` nur `plpgsql`, `activity_record` weg, Checksummen wie in Schritt 2.
+4. Zweiter Dump ohne Extension: `pg_dump -Fc` → `../kairos-backups/2026-10-14-post-1b-plain.dump` (55,7 MB) plus Zeilenzahlen.
+5. Image wechseln: `POSTGRES_PASSWORD=<bisheriges Passwort> docker compose -f deploy/docker-compose.dev.yml up -d postgres` → Container `postgres:16`, neues Volume `deploy_pgdata_dev16` unter `/var/lib/postgresql/data`. Dann `docker cp` + `pg_restore -U kairos -d kairos /tmp/post.dump`.
+6. Kontrolle: Zeilenzahlen und Checksummen identisch zu Schritt 4, FORCE RLS auf allen 25 Mandantentabellen, `alembic current` = `fed6d2d1311b (head)`, Backend starten und `/api/dashboard/layout`, `/api/metrics/*`, `/api/data/wellness/hr`, `/api/data/activities`, `/api/data/activities/{id}?max_points=200` abrufen (alle 200).
+
+Ergebnis 2026-10-14: alle Zeilenzahlen und Checksummen identisch (wellness_sample 265.063, activity 139, activity_stream 969, raw_payload 7.688); `activity_record` (2.226.357 Zeilen) entfernt.
+
+Rückweg: Das alte Volume `deploy_pgdata_dev` (Timescale, Stand vor der Migration) ist **nicht** gelöscht. Zurück: in `deploy/docker-compose.dev.yml` Image `timescale/timescaledb-ha:pg16` und `pgdata_dev:/home/postgres/pgdata` eintragen, `up -d postgres`, Code auf einen Stand vor `fed6d2d1311b` bringen. Alternativ `2026-10-14-pre-1b.dump` in ein frisches Timescale-Image einspielen (mit `timescaledb_pre_restore`/`post_restore`). `downgrade()` der Migration ist absichtlich nicht implementiert. Volume erst löschen, wenn Stufe 1 abgenommen ist: `docker volume rm deploy_pgdata_dev`.
+
+Hinweise: Tabellenrechte (GRANTs) auf `wellness_sample` werden nicht übernommen — die App verbindet sich als Eigentümer `kairos`. Der Timescale-Index `wellness_sample_observed_at_idx` entfällt; alle Abfragen filtern zuerst nach `user_id` (Unique-Key deckt das ab).
+
+---
+
+## Stufe 1 — Datenbasis und Lese-Tools (AP 1a–3, 2026-10-14 bis 2026-10-17)
+
+Branch `stufe1-datenbasis`, gepusht am 2026-10-17, Merge nach `main` per PR. Zweigt vom
+damaligen lokalen `main` (`0b86196`) ab und enthält `origin/main` bis `3910b46` (Scheduler). Plan `docs/superpowers/plans/2026-10-13-stufe1-datenbasis-und-lese-tools.md`
+(Tasks 1–28), Spec `docs/superpowers/specs/2026-10-07-aktivitaeten-und-workouts-design.md`.
+
+**Umgesetzt**
+
+- **AP 1a:** FIT-ZIP-Archiv in `raw_payload`, Sekundendaten als Arrays
+  (`activity_stream_axis`, `activity_stream`), Reprocess-Job mit gedrosseltem
+  Nachabruf (`GARMIN_FIT_DOWNLOAD_PAUSE_S`), V8-Prüfskript.
+- **AP 1b:** TimescaleDB entfernt (Runbook A.7 unten, Dev-DB umgezogen am 2026-10-14).
+- **AP 1c:** `activity` vollständig (Sportprofil, lokale Startzeit, Summary-Felder,
+  Soft-Delete und Lösch-Abgleich mit Garmin), Tage nach Ortszeit, HFmax nur aus
+  Nutzereingabe oder Alter, Einstellungsseite `/settings` (API `GET/PUT /api/settings/profile`).
+- **AP 2:** vier abgeleitete Tabellen, Rechenregeln in `src/kairos/activities/derive/`,
+  Validierungsbericht `docs/validation/2026-10-15-stufe1-ableitungen-v1-v7.md`.
+- **AP 3:** Agent-Tools `activity_search`, `activity_get`, `activity_splits`,
+  `activity_analyze`, `best_efforts` (`src/kairos/agent/activity_tools.py`), Formatierung
+  in `src/kairos/agent/format.py`, Obergrenzen 600/700/1.200/800/500 Tokens, zwei
+  Systemprompt-Zeilen, Eval-Fälle 17–21 und 26 in `scripts/agent_eval_suite.py`
+  (`--cases`, `--user-id`, Prüfung `numbers_match`). Entscheidungen zu Lücken der Spec:
+  Nachtrag 2026-10-17 unter Spec C.5.
+
+**Abschluss-Review (2026-10-17, frischer Reviewer, ganzer Branch `0b86196..d35154f`).**
+Verdict „with fixes“: 1 Critical + 3 Important, alle an Nahtstellen zwischen Tasks
+(zum sechsten Mal in Folge fand erst das Gesamt-Review solche Fehler). Alle behoben,
+je mit Regressionstest:
+
+- **Critical:** Kadenz-Ziele beim Laufen sind in FIT pro Bein, der Kadenz-Kanal ist
+  spm, also wurde jeder Kadenz-Schritt als verfehlt bewertet (Dev-DB: 0/17). Fix
+  `43ba1ea`, `ACTIVITY_DERIVED_ALGO_VERSION` = 3; Dev-DB neu abgeleitet, jetzt 17/17.
+- Reprocess hat in Garmin gelöschte Aktivitäten aus alten `activity_list`-Archiven
+  wiederbelebt (`4bcbdbb`, `SqlCanonicalRepository(revive_deleted=False)`).
+- Zonen und TRIMP je Aktivität wurden nach einer HFmax-Änderung nie neu gerechnet
+  (`83759a5`: PUT `/api/settings/profile` stößt bei geänderter HFmax bzw. Geburtsdatum
+  einen Hintergrundjob an, der alle Aktivitäten und `metric_daily_value` neu rechnet).
+- JSON-Rückfall: ISO-Zeitstempel in Runden/Events wurden ignoriert, Runden-Splits und
+  Soll/Ist fehlten (`56e6766`, gemeinsamer Helfer `message_offset`).
+
+Bewusst offen (Minor aus dem Review): Reprocess filtert `from_date`/`to_date` nach
+UTC-Tag statt `start_local`; Tools zeigen Uhrzeiten in `home_timezone` statt der
+Ortszeit der Aktivität (auf Reisen abweichend); `hf_med` in der Schritt-Tabelle ist ein
+Mittelwert; der HF-Bucket-Recompute entpackt bei jedem Sync die ganze HF-Historie (bei
+≈ 140 Aktivitäten unkritisch); `ingest_fit_files` lässt alte Streams stehen, wenn ein
+FIT keine gültigen Zeitstempel hat (praktisch ausgeschlossen).
+
+**Offen, braucht Max**
+
+1. **Live-Eval 17–21/26 blockiert:** Der `LLM_API_KEY` in `.env` ist an keinen
+   Anthropic-Workspace gebunden; die API verlangt dann den Header
+   `anthropic-workspace-id`. Mit einem Workspace-Key:
+   `.venv/Scripts/python scripts/agent_eval_suite.py --cases 17,18,19,20,21,26 --user-id 7af1776a-f222-45de-ab89-13d02a170afe`
+   (Schreib-Tools sind in diesem Modus gesperrt, Eval-Konversationen werden gelöscht).
+   Fälle 1–16 gegen den Seed ebenfalls neu laufen lassen (Regression).
+   Ersatzweise geprüft: 982 direkte Tool-Aufrufe gegen die echten 139 Aktivitäten,
+   keine Abstürze, keine Obergrenze überschritten.
+2. ~~Entscheidungen aus dem Bericht V1–V7~~ — am 2026-10-17 getroffen (Spec §12.3,
+   „Entscheidungen 2026-10-17“): V7-Zählregel wie vorgeschlagen, Laufband nicht skalieren,
+   Sprungfilter 12 m/s, Höhenmeter-Summe von der Uhr. `ACTIVITY_DERIVED_ALGO_VERSION` = 4.
+3. ~~Push und Merge nach `main`~~ — Branch gepusht, Merge per PR `stufe1-datenbasis → main`.
+
+**Hinweise**
+
+- Merge mit dem Scheduler (2026-10-17): `8c6af9fb1361` hängt jetzt an `5c8e1d2f7a90`, ein
+  Head `5d2f8a6c1e47`. Die Stufe-1-Hooks (FIT-Ingest, Lösch-Abgleich, `derive_pending`,
+  Recompute ab abgeglichenen Tagen) liegen in `ingestion/garmin_sync.sync_garmin` und
+  laufen damit auch bei Scheduler-Syncs (`run_incremental`). Der Rundweg-Test der
+  Scheduler-Migration geht nur noch bis `fed6d2d1311b` zurück (kein downgrade).
+- **DB, die Stufe 1 schon vor diesem Merge migriert hatte** (Dev-DB, Stand
+  `5d2f8a6c1e47`): Alembic hält `5c8e1d2f7a90` für angewendet, weil es jetzt darunter
+  liegt. Dev-DB am 2026-10-17 so nachgezogen:
+  `alembic upgrade 7a1c2e9d4b30:5c8e1d2f7a90 --sql`, die Zeile `UPDATE alembic_version`
+  entfernen, Rest per `psql -v ON_ERROR_STOP=1` einspielen. Frische DBs brauchen das nicht.
+- Testcontainer, CI und Dev laufen auf `postgres:16`.
+
 ---
 
 ## Scheduler (2026-10-17, Branch `feat/scheduler`)
@@ -1399,8 +1493,7 @@ Garmin ≥ 60 min, ≤ 12 Agent-Läufe/Tag, ≤ 10 Jobs; Scheduler **vor** CalDA
   zwischen Button und Scheduler. Feste Fehlertexte statt `str(exc)` in `SyncJob.error`.
 - **Tabellen** `scheduled_job`, `scheduled_job_run` (RLS + FORCE), `SECURITY DEFINER`-Funktionen
   `scheduler_due_jobs` / `scheduler_mark_interrupted` (nur IDs). Migration `5c8e1d2f7a90` auf
-  `7a1c2e9d4b30`. **Achtung beim Rebase auf `stufe1-datenbasis`:** dort ist der Head
-  `5d2f8a6c1e47`; `down_revision` dann umhängen, es darf nur ein Head bleiben.
+  `7a1c2e9d4b30`; Stufe 1 hängt seit dem Merge daran (Head `5d2f8a6c1e47`).
 - **Loop** im FastAPI-`lifespan` (`SCHEDULER_ENABLED`, Tick 30 s, 2 parallele Läufe, 1 Lauf je
   Nutzer). Beim Start werden laufende Läufe `interrupted`; überfällige Jobs laufen einmal als
   `catch_up`. Warnung bei `WEB_CONCURRENCY > 1`. Lokal mit `--reload`: `SCHEDULER_ENABLED=false`.

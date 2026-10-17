@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from kairos.db.rls import install_rls_listener
 from kairos.repositories.data_read import SqlDataReadRepository
+from tests.stream_seed import seed_hr_stream
 
 
 async def _insert_user(session: AsyncSession, user_id: uuid.UUID, email: str, sub: str) -> None:
@@ -168,21 +169,10 @@ async def seeded_activity_with_records(db_session: AsyncSession) -> tuple[uuid.U
             },
         )
     ).scalar_one()
-    for i in range(3):
-        await db_session.execute(
-            text(
-                """
-                INSERT INTO activity_record (user_id, activity_id, recorded_at, metric, value)
-                VALUES (:uid, :aid, :ts, 'hr', :val)
-                """
-            ),
-            {
-                "uid": str(user_id),
-                "aid": activity_id,
-                "ts": datetime(2026, 8, 1, 8, 0, i, tzinfo=UTC),
-                "val": 140.0 + i,
-            },
-        )
+    await seed_hr_stream(
+        db_session, user_id=user_id, activity_id=activity_id,
+        start_at=datetime(2026, 8, 1, 8, 0, tzinfo=UTC), values=[140.0, 141.0, 142.0],
+    )
     await db_session.commit()
     return user_id, external_id
 
@@ -222,27 +212,53 @@ async def test_list_activities_paginates_with_cursor(db_session, seeded_activiti
 
 
 @pytest.mark.asyncio
-async def test_get_activity_detail_includes_records(db_session, seeded_activity_with_records):
+async def test_get_activity_detail_returns_stream_series(db_session, seeded_activity_with_records):
     user_id, external_id = seeded_activity_with_records
     repo = SqlDataReadRepository(session=db_session)
     detail = await repo.get_activity_detail(user_id=user_id, external_id=external_id)
     assert detail is not None
-    assert len(detail.records) > 0
+    assert detail.t_offset_s == [0, 1, 2]
+    assert detail.series == {"hr": [140.0, 141.0, 142.0]}
 
 
 @pytest.mark.asyncio
-async def test_get_activity_detail_caps_records_at_limit(
-    db_session, seeded_activity_with_records
-):
-    """A real multi-hour FIT activity has tens of thousands of records — the limit must be
-    applied in SQL, not after loading everything into memory."""
-    user_id, external_id = seeded_activity_with_records
+async def test_get_activity_detail_mean_downsamples_to_max_points(db_session):
+    user_id = uuid.uuid4()
+    await db_session.execute(
+        text(
+            "INSERT INTO app_user (id, email, display_name, google_sub, home_timezone, role) "
+            "VALUES (:id, :email, 'T', :sub, 'UTC', 'user')"
+        ),
+        {"id": str(user_id), "email": f"{user_id}@test.com", "sub": f"sub-{user_id}"},
+    )
+    start_at = datetime(2026, 8, 1, 8, 0, tzinfo=UTC)
+    activity_id = (
+        await db_session.execute(
+            text(
+                "INSERT INTO activity (user_id, external_id, start_at) "
+                "VALUES (:uid, 'long', :s) RETURNING id"
+            ),
+            {"uid": str(user_id), "s": start_at},
+        )
+    ).scalar_one()
+    values: list[float | None] = [float(i) for i in range(5000)]
+    values[0:50] = [None] * 50  # first bucket (50 samples) is all None
+    await seed_hr_stream(
+        db_session, user_id=user_id, activity_id=activity_id, start_at=start_at, values=values
+    )
+    await db_session.commit()
+
     repo = SqlDataReadRepository(session=db_session)
-    detail = await repo.get_activity_detail(user_id=user_id, external_id=external_id, limit=2)
+    detail = await repo.get_activity_detail(user_id=user_id, external_id="long", max_points=100)
+
     assert detail is not None
-    assert len(detail.records) == 2
-    # limit applies to the earliest records (ordered by recorded_at)
-    assert detail.records[0].recorded_at < detail.records[1].recorded_at
+    assert len(detail.t_offset_s) == 100
+    assert detail.t_offset_s[:3] == [0, 50, 100]
+    hr = detail.series["hr"]
+    assert len(hr) == 100
+    assert hr[0] is None
+    assert hr[1] == pytest.approx(74.5)  # mean of 50..99
+    assert hr[99] == pytest.approx(4974.5)
 
 
 @pytest.mark.asyncio

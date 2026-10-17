@@ -4,7 +4,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kairos.auth.deps import current_user
@@ -79,17 +79,15 @@ async def list_activities(
 @router.get("/activities/{external_id}")
 async def activity_detail(
     external_id: str,
-    limit: int = 5000,
+    max_points: int = Query(2000, ge=1, le=10000),
     user: dict[str, Any] = Depends(current_user),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    if limit < 1 or limit > 20000:
-        raise HTTPException(status_code=422, detail="limit must be between 1 and 20000")
     user_id = UUID(user["user_id"])
     install_rls_listener(session, user_id)
     repo = SqlDataReadRepository(session=session)
     detail = await repo.get_activity_detail(
-        user_id=user_id, external_id=external_id, limit=limit
+        user_id=user_id, external_id=external_id, max_points=max_points
     )
     if detail is None:
         raise HTTPException(status_code=404, detail="activity not found")
@@ -98,10 +96,8 @@ async def activity_detail(
         "name": detail.activity.name,
         "sport": detail.activity.sport,
         "start_at": detail.activity.start_at.isoformat() if detail.activity.start_at else None,
-        "records": [
-            {"recorded_at": r.recorded_at.isoformat(), "metric": r.metric, "value": r.value}
-            for r in detail.records
-        ],
+        "t_offset_s": detail.t_offset_s,
+        "series": detail.series,
     }
 
 

@@ -67,6 +67,16 @@ export interface Goal {
 	updated_at: string;
 }
 
+export interface ProfileSettings {
+	birth_date: string | null;
+	hr_max_override: number | null;
+	resting_hr_override: number | null;
+	hr_max_used: number | null;
+	hr_max_source: 'eingetragen' | 'aus Alter' | null;
+	hr_max_measured_12m: number | null;
+	hr_max_warning: string | null;
+}
+
 export interface MemoryEntry {
 	id: string;
 	content: string;

@@ -25,7 +25,7 @@ konfigurierbaren Modulen**.
 | [07 – Deployment & Betrieb](docs/07-deployment-und-betrieb.md) | VM-Sizing, Compose, Backup, Monitoring, Kosten |
 | [08 – Roadmap](docs/08-roadmap.md) | Phasen, Meilensteine, Risiken, offene Punkte |
 | [ADRs](docs/adr/) | ADR-0001 Monolith · ADR-0002 Eine DB · ADR-0003 Connector-Architektur · ADR-0004 Garmin · ADR-0005 ECharts · ADR-0006 Google OIDC |
-| [db/schema.sql](db/schema.sql) | Ausführbarer Schema-Entwurf (Postgres + TimescaleDB) |
+| [db/schema.sql](db/schema.sql) | Früher Schema-Entwurf (vor Phase 1, mit TimescaleDB); maßgeblich ist die Alembic-Kette |
 | [deploy/docker-compose.yml](deploy/docker-compose.yml) | Deployment-Skizze |
 
 ---
@@ -37,10 +37,11 @@ konfigurierbaren Modulen**.
 
 **Ja — vollständig speicherbar, ohne Nachdenken.**
 Größenordnung: ca. **3.000 Messpunkte pro Nutzer und Tag** (≈ 1,1 Mio./Jahr).
-Für 5 Nutzer über 5 Jahre ergibt das nach Timescale-Kompression **< 5 GB** für die
-Zeitreihen, plus ca. 1–2 GB für FIT-Rohdateien pro Jahr.
+Für 5 Nutzer über 5 Jahre sind das gemessen **≈ 4–5,5 GB** inklusive
+Sekundendaten aller Aktivitäten (als Arrays in `activity_stream`) und der
+Original-FIT-Dateien (Stand Stufe 1, 2026-10-17).
 
-Das ist irrelevant gegenüber der 160-GB-SSD einer Standard-VM. Die Empfehlung ist
+Eine VM mit 40 GB SSD reicht dafür. Die Empfehlung ist
 daher: **alles roh archivieren und zusätzlich normalisiert ablegen.** Details und
 Rechenweg in [02 – Datenmodell & Volumen](docs/02-datenmodell-und-volumen.md).
 
@@ -49,8 +50,8 @@ Rechenweg in [02 – Datenmodell & Volumen](docs/02-datenmodell-und-volumen.md).
 ## Architektur in drei Sätzen
 
 Ein **modularer Monolith in Python (FastAPI)** hält API, Domänenlogik und
-Metrikberechnung; **Postgres mit TimescaleDB** ist die einzige Datenbank
-(Zeitreihen, Relationen, Vektoren via `pgvector`); **Integrationen sind als
+Metrikberechnung; **Postgres 16** ist die einzige Datenbank
+(Zeitreihen und Relationen, ohne Extensions; Vektoren via `pgvector` sind Zielbild); **Integrationen sind als
 in-process Module** (`kairos/connectors/`) hinter einem gemeinsamen Protocol
 implementiert — saubere Grenze ohne Prozess-Overhead.
 

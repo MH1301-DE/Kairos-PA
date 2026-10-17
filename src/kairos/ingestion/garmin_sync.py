@@ -14,14 +14,23 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from kairos.activities.derive.service import derive_pending
+from kairos.activities.fit_archive import ingest_fit_files
+from kairos.activities.reconcile import local_days_of_activities, reconcile_deleted_activities
 from kairos.auth.crypto import decrypt, kek_from_settings, unwrap_dek
 from kairos.config import settings
 from kairos.connectors.garmin.connector import GarminConnector
-from kairos.db.models import AppUser, Connection
+from kairos.connectors.types import RawPayloadEnvelope
+from kairos.db.models import Activity, AppUser, Connection
 from kairos.ingestion.connection_status import mark_connection_healthy, mark_reauth_required
 from kairos.ingestion.hash import payload_sha256
 from kairos.ingestion.job_registry import SyncJob, SyncJobRegistry
-from kairos.ingestion.service import BackfillResult, SyncService, SyncStateRepository
+from kairos.ingestion.service import (
+    BackfillResult,
+    PostWindowHook,
+    SyncService,
+    SyncStateRepository,
+)
 from kairos.repositories.canonical import SqlCanonicalRepository
 from kairos.repositories.metrics_recompute import recompute_daily_tables
 from kairos.repositories.raw_payload import SqlRawPayloadRepository
@@ -121,12 +130,14 @@ async def sync_garmin(
             result["kinds"][job.kind] = _kind_result(plan, job, "failed", 0, code)
         return result
 
-    connector = GarminConnector(garmin)
+    connector = GarminConnector(garmin, fit_download_pause_s=settings.garmin_fit_download_pause_s)
+    reconciled_days: set[date] = set()
     service = SyncService(
         raw_repo=SqlRawPayloadRepository(session=session),
         canonical_repo=SqlCanonicalRepository(session=session),
         sync_state_repo=SqlSyncStateRepository(session=session),
         hash_payload=payload_sha256,
+        post_window=_make_fit_ingest_hook(session, user_id, reconciled_days),
     )
 
     fetched_froms: list[datetime] = []
@@ -177,11 +188,59 @@ async def sync_garmin(
             finally:
                 job.finished_at = datetime.now(UTC).isoformat()
 
-    if fetched_froms:
-        start = min(fetched_froms).date()
+    await _derive_after_sync(session, user_id)
+
+    if fetched_froms or reconciled_days:
+        start = min([f.date() for f in fetched_froms] + list(reconciled_days))
         if await recompute_after_sync(session, user_id, start=start, end=date.today()):
             result["recomputed_from"] = start
     return result
+
+
+def _make_fit_ingest_hook(
+    session: AsyncSession, user_id: UUID, reconciled_days: set[date]
+) -> PostWindowHook:
+    async def _hook(
+        kind: str, envelope: RawPayloadEnvelope, raw_payload_id: int, file_ids: dict[str, int]
+    ) -> None:
+        del raw_payload_id
+        if kind == "activity_fit" and envelope.files:
+            failed = await ingest_fit_files(
+                session, user_id=user_id, file_ids_by_key=file_ids, files=envelope.files
+            )
+            await _derive_ingested(session, user_id, [k for k in file_ids if k not in failed])
+        if kind == "activity_list":
+            marked = await reconcile_deleted_activities(
+                session, user_id=user_id, window=envelope.window, payload=envelope.payload
+            )
+            # same local-day rule as the HR bucket recompute (start_local::date)
+            if marked:
+                reconciled_days.update(
+                    await local_days_of_activities(session, [i for i, _ in marked])
+                )
+
+    return _hook
+
+
+async def _derive_ingested(session: AsyncSession, user_id: UUID, keys: list[str]) -> None:
+    if not keys:
+        return
+    ids = (
+        await session.execute(
+            select(Activity.id).where(Activity.user_id == user_id, Activity.external_id.in_(keys))
+        )
+    ).scalars()
+    await derive_pending(session, user_id=user_id, activity_ids=list(ids))
+
+
+async def _derive_after_sync(session: AsyncSession, user_id: UUID) -> None:
+    # catches a raised ACTIVITY_DERIVED_ALGO_VERSION and activities never derived
+    try:
+        await derive_pending(session, user_id=user_id)
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        logger.exception("Activity derivation after sync failed for user %s", user_id)
 
 
 async def recompute_after_sync(

@@ -15,8 +15,16 @@ Version -- das wäre ein eigenes kleines NLP-Extraktions-Subsystem und hätte
 den Umfang dieses Tasks gesprengt; Tool-Selection-Accuracy ist eine der drei
 in §8 genannten Metriken und für sich allein schon aussagekräftig.
 
+Fälle 17-21 und 26 (Aktivitäts-Lese-Tools, Spec 2026-10-07 §12.1) brauchen echte
+Aktivitäten mit Splits, Schwimmen und Workout-Schritten und laufen deshalb gegen einen
+bestehenden Nutzer (--user-id), ohne Seed. Schreibende Tools sind in diesem Modus
+gesperrt, die Eval-Konversationen werden am Ende gelöscht. Zusätzlich prüft
+numbers_match, ob die Kennzahlen aus der summary des erwarteten Tools wörtlich in der
+Antwort stehen.
+
 Verwendung:
     .venv/Scripts/python scripts/agent_eval_suite.py
+    .venv/Scripts/python scripts/agent_eval_suite.py --cases 17,18,19,20,21,26 --user-id <uuid>
 
 Voraussetzung: LLM_API_KEY in .env gesetzt (ein Key pro Deployment, siehe
 Settings.llm_api_key) -- ohne den bricht der Lauf mit
@@ -25,14 +33,16 @@ NoLlmCredentialConfigured ab.
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
+import re
 import statistics
 import sys
 import time
 import uuid
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -40,6 +50,8 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from kairos.activities.stream_repository import STREAM_ALGO_VERSION, replace_streams
+from kairos.activities.streams import StreamSet
 from kairos.agent import tools as tools_module
 from kairos.agent.dispatcher import Proposal, ToolCall, dispatch
 from kairos.agent.events import AgentEvent
@@ -57,10 +69,20 @@ from kairos.repositories.metrics_recompute import (
 
 
 @dataclass(frozen=True)
+class NumberCheck:
+    tool: str
+    # each pattern has one group, matched against that tool's summary
+    patterns: tuple[str, ...]
+    # one of these words must appear in the reply
+    note_any: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class EvalCase:
     number: int
     question: str
     expected_tools: tuple[str, ...]
+    numbers: NumberCheck | None = None
 
 
 @dataclass
@@ -72,10 +94,42 @@ class EvalResult:
     error: str | None = None
     seconds: float = 0.0
     ttft: float | None = None
+    tool_summaries: dict[str, list[str]] = field(default_factory=dict)
 
     @property
     def tool_selection_ok(self) -> bool:
         return any(t in self.tools_called for t in self.case.expected_tools)
+
+    def numbers_match(self) -> tuple[bool, list[str]]:
+        check = self.case.numbers
+        if check is None:
+            return True, []
+        problems: list[str] = []
+        summaries = self.tool_summaries.get(check.tool, [])
+        reply = self.reply or ""
+        for pattern in check.patterns:
+            token = next(
+                (m.group(1) for text in reversed(summaries) if (m := re.search(pattern, text))),
+                None,
+            )
+            if token is None:
+                problems.append(f"Muster {pattern!r} nicht in {check.tool}-summary")
+            elif not _token_in_reply(token, reply):
+                problems.append(f"{token!r} fehlt in der Antwort")
+        if check.note_any and not any(w.lower() in reply.lower() for w in check.note_any):
+            problems.append(f"kein Hinweis ({' / '.join(check.note_any)})")
+        return not problems, problems
+
+
+def _token_in_reply(token: str, reply: str) -> bool:
+    if token in reply:
+        return True
+    if m := re.fullmatch(r"(\d+)/(\d+)", token):
+        return f"{m[1]} von {m[2]}" in reply
+    if m := re.fullmatch(r"(\d{2})\.(\d{2})\.(\d{4})", token):
+        short = f"{int(m[1])}.{int(m[2])}.{m[3]}"
+        return short in reply or f"{m[1]}.{m[2]}." in reply
+    return False
 
 
 # Referenzfragen aus docs/00-vision-und-scope.md §5, alle 15
@@ -128,6 +182,61 @@ CASES: tuple[EvalCase, ...] = (
     ),
 )
 
+# spec 2026-10-07 §12.1; numbers come from the expected tool's summary (Q4: real data)
+ACTIVITY_CASES: tuple[EvalCase, ...] = (
+    EvalCase(
+        17, "Wie war mein letzter Lauf?", ("activity_get",),
+        NumberCheck(
+            "activity_get",
+            (r"(\d+,\d{2}) km in", r"\(Ø (\d+:\d{2}) /km\)", r"Ø-HF (\d+)"),
+        ),
+    ),
+    EvalCase(
+        18, "Zeig mir die Kilometerzeiten meines letzten Laufs.", ("activity_splits",),
+        NumberCheck(
+            "activity_splits",
+            (
+                r"Schnellster km \d+ \((\d+:\d{2}) /km\)",
+                r"langsamster km \d+ \((\d+:\d{2}) /km\)",
+            ),
+        ),
+    ),
+    EvalCase(
+        19, "Was war meine beste 5-km-Zeit dieses Jahr?", ("best_efforts",),
+        NumberCheck(
+            "best_efforts",
+            (r"5 km (\d+:\d{2}(?::\d{2})?) \(", r"5 km [\d:]+ \((\d{2}\.\d{2}\.\d{4})"),
+        ),
+    ),
+    EvalCase(
+        20, "Vergleich meinen Lauf von gestern mit dem letzten Tempolauf.",
+        ("activity_analyze",),
+        NumberCheck(
+            "activity_analyze",
+            (r"war (\d+:\d{2}) /km (?:schneller|langsamer)", r"bei (\d+) Schlägen"),
+        ),
+    ),
+    EvalCase(
+        21, "Wie lief meine letzte Schwimmeinheit?", ("activity_get",),
+        NumberCheck(
+            "activity_get",
+            (r"\(Ø (\d+:\d{2}) /100 m\)",),
+            note_any=("Handgelenk", "verlässlich", "ungenau", "eingeschränkt"),
+        ),
+    ),
+    EvalCase(
+        26, "Habe ich bei meiner letzten Schwelle die Intervalle getroffen?",
+        ("activity_splits",),
+        NumberCheck(
+            "activity_splits",
+            (
+                r"Intervalle (\d+/\d+) im",
+                r"Intervalle \d+/\d+ im Zielbereich \(Ø (\d+:\d{2}) /km\)",
+            ),
+        ),
+    ),
+)
+
 _CREATE_EVENT_ATTR = "_create_calendar_event"  # patched in tools' namespace
 FOLLOW_UP_QUESTION = "Danke, und wie erholt bin ich?"
 PROPOSAL_CASE = EvalCase(
@@ -161,7 +270,6 @@ async def _seed_history(session: AsyncSession, user_id: UUID, today: date) -> No
         {"id": str(uuid.uuid4()), "uid": uid, "cred": b"eval-dummy"},
     )
     activities: list[dict[str, object]] = []
-    records: list[dict[str, object]] = []
     wellness_hr: list[dict[str, object]] = []
     wellness_hrv: list[dict[str, object]] = []
     sleeps: list[dict[str, object]] = []
@@ -200,20 +308,19 @@ async def _seed_history(session: AsyncSession, user_id: UUID, today: date) -> No
     for item in activities:
         start_at = item["start_at"]
         assert isinstance(start_at, datetime)
-        for i in range(300):  # 5 minutes of HR data -> hr_bucket_seconds_daily / TRIMP
-            records.append(
-                {
-                    "uid": uid, "aid": ids[str(item["ext"])],
-                    "ts": start_at + timedelta(seconds=i),
-                }
-            )
-    await session.execute(
-        text(
-            "INSERT INTO activity_record (user_id, activity_id, recorded_at, metric, value) "
-            "VALUES (:uid, :aid, :ts, 'hr', 140.0)"
-        ),
-        records,
-    )
+        # 5 minutes of HR data -> hr_bucket_seconds_daily / TRIMP
+        await replace_streams(
+            session,
+            user_id=user_id,
+            activity_id=ids[str(item["ext"])],
+            streams=StreamSet(
+                start_at=start_at,
+                t_offset_s=list(range(300)),
+                channels={"hr": [140.0] * 300},
+                source="fit_zip",
+            ),
+            algo_version=STREAM_ALGO_VERSION,
+        )
     for code, rows in (("hr", wellness_hr), ("hrv_5min", wellness_hrv)):
         await session.execute(
             text(
@@ -294,6 +401,10 @@ async def _drain(
         elif event.type == "tool_start":
             result.tools_called.append(event.data["name"])
             parts = []
+        elif event.type == "tool_end":
+            result.tool_summaries.setdefault(event.data["name"], []).append(
+                str(event.data.get("summary") or "")
+            )
         elif event.type == "proposal":
             proposal = event.data
             result.tools_called.append(event.data["tool_name"])
@@ -435,65 +546,133 @@ async def run_proposal_case(
     return result
 
 
+async def _blocked_write(session: AsyncSession, **kwargs: Any) -> dict[str, Any]:
+    del session, kwargs
+    blocked: dict[str, Any] = tool_result("Eval-Modus: schreibende Tools sind gesperrt.")
+    return blocked
+
+
+def _block_write_tools() -> None:
+    # real-user mode must not change data; read tools stay untouched
+    for name, spec in list(tools_module.TOOLS_BY_NAME.items()):
+        if spec.risk_class != "read":
+            tools_module.TOOLS_BY_NAME[name] = replace(spec, handler=_blocked_write)
+
+
+def _status(result: EvalResult) -> str:
+    if result.error:
+        return "FEHLER"
+    if not result.tool_selection_ok:
+        return "TOOL-MISMATCH"
+    return "OK" if result.numbers_match()[0] else "ZAHLEN-MISMATCH"
+
+
+def _print_result(result: EvalResult) -> None:
+    ttft = f"{result.ttft:.1f}s" if result.ttft is not None else "-"
+    print(
+        f"    -> {_status(result)} in {result.seconds:.1f}s, TTFT {ttft} "
+        f"(Tools: {result.tools_called or '-'})"
+    )
+    if result.error:
+        print(f"       Fehler: {result.error[:300]}")
+    elif result.tool_selection_ok:
+        for problem in result.numbers_match()[1]:
+            print(f"       Zahlen: {problem}")
+    if result.proposal:
+        print(f"       Proposal: {result.proposal}")
+    if result.reply:
+        print("       Antwort: " + result.reply.replace("\n", " ")[:400])
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Agent-Eval-Suite mit echten LLM-Calls")
+    parser.add_argument("--cases", help="kommagetrennte Fallnummern, z.B. 17,18,19")
+    parser.add_argument(
+        "--user-id", type=UUID, help="bestehender Nutzer, nur für die Fälle 17-21 und 26"
+    )
+    return parser.parse_args()
+
+
+def _select_cases(args: argparse.Namespace) -> tuple[EvalCase, ...]:
+    pool = ACTIVITY_CASES if args.user_id else (*CASES, PROPOSAL_CASE)
+    if not args.cases:
+        return pool
+    wanted = {int(n) for n in args.cases.split(",")}
+    unknown = wanted - {c.number for c in pool}
+    if unknown:
+        mode = "mit --user-id nur 17-21, 26" if args.user_id else "ohne --user-id nur 1-16"
+        sys.exit(f"Fälle {sorted(unknown)} nicht verfügbar ({mode}).")
+    return tuple(c for c in pool if c.number in wanted)
+
+
 async def main() -> None:
+    args = _parse_args()
     print("Agent-Eval-Suite -- macht echte, kostenpflichtige LLM-Calls.")
     if not settings.llm_api_key:
         sys.exit("LLM_API_KEY ist in .env nicht gesetzt, Abbruch.")
 
-    user_id = uuid.uuid4()
+    real_user: UUID | None = args.user_id
+    user_id = real_user or uuid.uuid4()
+    all_cases = _select_cases(args)
+    if real_user:
+        _block_write_tools()
     results: list[EvalResult] = []
-    all_cases = (*CASES, PROPOSAL_CASE)
+    conversation_ids: list[UUID] = []
     async with async_session_factory() as session:
         try:
-            print("Seede Testdatensatz (60 Tage Trainings-, Schlaf- und Wellnessdaten) ...")
-            await seed_test_data(session, user_id)
+            if real_user:
+                print(f"Nutzer {real_user}: echte Daten, ohne Seed, Schreib-Tools gesperrt.")
+                install_rls_listener(session, real_user)
+            else:
+                print("Seede Testdatensatz (60 Tage Trainings-, Schlaf- und Wellnessdaten) ...")
+                await seed_test_data(session, user_id)
 
             conv_repo = ConversationRepository(session=session)
-            for case in all_cases:
+            for i, case in enumerate(all_cases, start=1):
                 # fresh conversation per case: measures tool selection, not history carry-over
                 conversation = await conv_repo.create(user_id=user_id, title=f"Eval {case.number}")
+                conversation_ids.append(conversation.id)
                 await session.commit()
-                print(f"[{case.number}/{len(all_cases)}] {case.question}")
+                print(f"[{case.number}] ({i}/{len(all_cases)}) {case.question}")
                 runner = run_proposal_case if case is PROPOSAL_CASE else run_eval_case
                 result = await runner(session, user_id, conversation.id, case)
                 results.append(result)
-                if result.error:
-                    status = "FEHLER"
-                elif result.tool_selection_ok:
-                    status = "OK"
-                else:
-                    status = "TOOL-MISMATCH"
-                ttft = f"{result.ttft:.1f}s" if result.ttft is not None else "-"
-                print(
-                    f"    -> {status} in {result.seconds:.1f}s, TTFT {ttft} "
-                    f"(Tools: {result.tools_called or '-'})"
-                )
-                if result.error:
-                    print(f"       Fehler: {result.error[:300]}")
-                if result.proposal:
-                    print(f"       Proposal: {result.proposal}")
-                if result.reply:
-                    print("       Antwort: " + result.reply.replace("\n", " ")[:400])
+                _print_result(result)
         finally:
-            # every user table cascades from app_user, so this removes all seeded eval data
             await session.rollback()
-            await session.execute(
-                text("DELETE FROM app_user WHERE id = :id"), {"id": str(user_id)}
-            )
+            if real_user:
+                await session.execute(
+                    text("DELETE FROM conversation WHERE id = ANY(:ids)"),
+                    {"ids": conversation_ids},
+                )
+                print(f"{len(conversation_ids)} Eval-Konversationen entfernt.")
+            else:
+                # every user table cascades from app_user, so this removes all seeded eval data
+                await session.execute(
+                    text("DELETE FROM app_user WHERE id = :id"), {"id": str(user_id)}
+                )
+                print("Eval-Nutzer und Testdaten entfernt.")
             await session.commit()
-            print("Eval-Nutzer und Testdaten entfernt.")
 
     passed = sum(1 for r in results if r.tool_selection_ok and not r.error)
     print(f"\n{passed}/{len(results)} Fragen fehlerfrei mit erwartetem Tool (Tool-Accuracy).")
+    checked = [r for r in results if r.case.numbers is not None]
+    if checked:
+        exact = sum(1 for r in checked if r.numbers_match()[0])
+        print(f"{exact}/{len(checked)} Antworten mit exakten Zahlen (numbers_match).")
     ttfts = [r.ttft for r in results if r.ttft is not None]
     if ttfts:
         print(f"Median TTFT: {statistics.median(ttfts):.1f}s")
     if results:
         print(f"Median Gesamtzeit: {statistics.median(r.seconds for r in results):.1f}s")
     for r in results:
+        if _status(r) == "OK":
+            continue
         if r.error or not r.tool_selection_ok:
             reason = r.error or f"Tools aufgerufen: {r.tools_called or 'keine'}"
-            print(f"  Frage {r.case.number}: {reason}")
+        else:
+            reason = "; ".join(r.numbers_match()[1])
+        print(f"  Frage {r.case.number}: {reason}")
 
 
 if __name__ == "__main__":

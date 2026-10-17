@@ -8,8 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from kairos.db.models import AppUser, Connection
 from kairos.metrics.bootstrap import build_default_registry
+from kairos.metrics.hr_zones import hr_max_warning, resolve_hr_max
 from kairos.repositories.calendar_event import CalendarEventRepository
 from kairos.repositories.goals import SqlGoalRepository
+from kairos.repositories.user_setting import get_or_default_user_setting, measured_max_hr_12m
 
 _WEEKDAYS_DE = ("Mo", "Di", "Mi", "Do", "Fr", "Sa", "So")
 
@@ -36,6 +38,9 @@ async def build_situation_brief(session: AsyncSession, *, user_id: UUID, now: da
     lines.extend(await _kalender_lines(session, user_id, now))
     lines.append("")
     lines.append(await _ziele_line(session, user_id))
+    hr_max_line = await _hr_max_line(session, user_id, today)
+    if hr_max_line:
+        lines.append(hr_max_line)
     return "\n".join(lines)
 
 
@@ -149,3 +154,13 @@ async def _ziele_line(session: AsyncSession, user_id: UUID) -> str:
         target = f" ({g.target_date.isoformat()})" if g.target_date else ""
         parts.append(f"{g.title}{target}")
     return "Aktive Ziele: " + " · ".join(parts)
+
+
+async def _hr_max_line(session: AsyncSession, user_id: UUID, today: date) -> str | None:
+    setting = await get_or_default_user_setting(session, user_id=user_id)
+    used, source = resolve_hr_max(setting.birth_date, setting.hr_max_override, as_of=today)
+    if used is None:
+        return "HFmax fehlt (Einstellungen)"
+    measured = await measured_max_hr_12m(session, user_id=user_id)
+    warning = hr_max_warning(used, source, measured)
+    return f"HFmax: {warning}" if warning else None

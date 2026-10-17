@@ -10,7 +10,8 @@ Diese fünf Prinzipien entscheiden im Zweifel jede Detailfrage:
 
 1. **Determinismus vor Intelligenz.** Alles, was berechenbar ist, wird berechnet.
    Das LLM interpretiert Ergebnisse, es erzeugt sie nicht.
-2. **Eine Datenbank.** Postgres deckt Relationen und Zeitreihen (TimescaleDB) ab.
+2. **Eine Datenbank.** Postgres 16 deckt Relationen und Zeitreihen ab, ohne
+   Extensions (TimescaleDB seit Stufe 1 entfernt, [ADR-0002](adr/ADR-0002-eine-datenbank.md)).
    Kein zweites Datensystem ohne zwingenden Grund. *Zielbild (nicht umgesetzt):*
    Vektoren über `pgvector` — die Extension ist heute nicht installiert.
 3. **Die Integrationsgrenze ist ein Modul, nicht eine Funktion.** Jede externe
@@ -49,7 +50,7 @@ die als potenzielle Prompt-Injection behandelt werden ([06](06-sicherheit-und-da
 ## 3. Containerdiagramm (C4 Level 2)
 
 **Ist-Stand:** `deploy/docker-compose.yml` enthält Caddy, Web (SvelteKit), API
-(FastAPI), Postgres (TimescaleDB) und Redis. Syncs laufen als FastAPI-
+(FastAPI), Postgres 16 und Redis. Syncs laufen als FastAPI-
 `BackgroundTasks` im API-Prozess; der Scheduler läuft als `asyncio`-Loop im selben
 Prozess (ADR-0007). Mit `*` markierte Teile sind **Zielbild (nicht umgesetzt)**: kein
 Worker-Container (kein `arq`; ersetzt durch ADR-0007), kein Object Store, kein
@@ -86,7 +87,7 @@ CalDAV-Connector, kein Rate-Limit in Caddy, kein `pgvector`.
 │                                            │                        │
 │  ┌──────────────────────┐  ┌───────────────▼─────┐  ┌────────────┐  │
 │  │ Postgres 16          │  │ Redis               │  │ Object     │  │
-│  │ + TimescaleDB        │  │ Sessions,           │  │ Store *    │  │
+│  │ (ohne Extensions)    │  │ Sessions,           │  │ Store *    │  │
 │  │ (+ pgvector *)       │  │ OAuth-State         │  │ (FIT/Raw)  │  │
 │  └──────────────────────┘  └─────────────────────┘  └────────────┘  │
 └─────────────────────────────────────────────────────────────────────┘
@@ -298,7 +299,7 @@ passieren wird).
 |---|---|---|
 | Sprache Backend | Python ≥ 3.12 (CI 3.12) | Ökosystem für Garmin/FIT/Analyse; Kompetenz vorhanden |
 | Web-Framework | FastAPI | Async, Pydantic-Schemas → direkt als Tool-Schemas nutzbar |
-| DB | Postgres 16 + TimescaleDB | Eine Engine für alles. Hypertables ja; Kompression und Continuous Aggregates sind mit Row-Level-Security **nicht nutzbar** (timescale/timescaledb#6827, #5787) und daher nicht im Einsatz. `pgvector`: Zielbild |
+| DB | Postgres 16 (ohne Extensions) | Eine Engine für alles. TimescaleDB ist seit Stufe 1 entfernt: Kompression und Continuous Aggregates sind mit Row-Level-Security nicht nutzbar (timescale/timescaledb#6827, #5787), Sekundendaten liegen als Arrays in `activity_stream`. `pgvector`: Zielbild |
 | Queue | — (nicht eingesetzt) | Syncs laufen als FastAPI-`BackgroundTasks`, geplante Läufe im In-Process-Scheduler (ADR-0007); `arq` war geplant und ist verworfen |
 | Migrationen | Alembic | Standard, plugin-fähig via Branch-Labels |
 | Frontend | SvelteKit | PWA; entschieden am 2026-08-10 (PWA-/Web-Push-Reife) |

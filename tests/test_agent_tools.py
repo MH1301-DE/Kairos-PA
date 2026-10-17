@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, date, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
@@ -50,8 +51,25 @@ def test_core_tools_have_the_expected_risk_classes() -> None:
     assert risk_by_name["plan_commit"] == ("write", True)
     assert risk_by_name["plan_adjust"] == ("write", True)
     assert risk_by_name["plan_progress"] == ("read", False)
-    assert len(CORE_TOOLS) == 12
+    assert risk_by_name["activity_search"] == ("read", False)
+    assert risk_by_name["activity_get"] == ("read", False)
+    assert risk_by_name["activity_splits"] == ("read", False)
+    assert risk_by_name["activity_analyze"] == ("read", False)
+    assert risk_by_name["best_efforts"] == ("read", False)
+    assert len(CORE_TOOLS) == 17
     assert set(TOOLS_BY_NAME) == {t.name for t in CORE_TOOLS}
+
+
+def test_tool_schemas_stay_within_prompt_budget() -> None:
+    # spec G.3: name + description + parameters of all tools, ahead of the workout tools
+    total = sum(
+        len(json.dumps(
+            {"name": t.name, "description": t.description, "parameters": t.json_schema},
+            ensure_ascii=False,
+        ))
+        for t in CORE_TOOLS
+    )
+    assert total < 18_000
 
 
 @pytest.mark.asyncio

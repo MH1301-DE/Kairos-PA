@@ -1,6 +1,6 @@
 # ADR-0002 — Eine Datenbank: Postgres + TimescaleDB + pgvector
 
-**Status:** Akzeptiert  
+**Status:** Akzeptiert, **geändert am 2026-10-14**: TimescaleDB entfernt (siehe Nachtrag am Ende)  
 **Datum:** 2026-08-01  
 **Entscheider:** Betreiber
 
@@ -90,3 +90,32 @@ Ein operatives System bedeutet:
 Redis ist kein persistenter Datenspeicher, sondern flüchtiger Job-Queue-Broker
 und Cache (Session-State, Rate-Limit-Counters, Sync-Locks). Datenverlust beim
 Redis-Neustart ist tolerierbar; alle persistenten Daten leben in Postgres.
+
+---
+
+## Nachtrag 2026-10-14 — TimescaleDB entfernt
+
+**Entscheidung:** Postgres 16 **ohne** TimescaleDB (Image `postgres:16`). Die
+Grundentscheidung „eine Datenbank“ bleibt.
+
+**Warum:** Die beiden Gründe für TimescaleDB sind mit Row-Level-Security nicht
+nutzbar: Kompression (timescale/timescaledb#6827) und Continuous Aggregates
+(timescale/timescaledb#5787). Übrig blieb eine Hypertable `activity_record` mit
+≈ 3,5 MB je Aktivität ohne Kompression. Sekundendaten werden aber nur als ganze
+Aktivität gelesen, nie über viele Aktivitäten hinweg.
+
+**Stattdessen** (Stufe 1, Spec `docs/superpowers/specs/2026-10-07-aktivitaeten-und-workouts-design.md` A.2/A.7):
+
+- Sekundendaten als Arrays: `activity_stream_axis` (Zeitachse) und `activity_stream`
+  (ein Array je Kanal). Gemessen ≈ 0,13 MB je Aktivität.
+- Das Original-FIT-ZIP liegt in `raw_payload` (`payload_format='fit_zip'`), alle
+  Streams sind daraus neu baubar.
+- `wellness_sample` ist eine normale Tabelle mit PK `id`.
+- Tagesaggregate liegen weiter in plain Derived-Tabellen, Aktivitäts-Ableitungen in
+  `activity_stats`, `activity_split`, `activity_best_effort`, `activity_step_result`.
+
+**Folgen:** Die Datenbank der Entwicklungsumgebung schrumpfte von 599 MB auf 123 MB;
+die Hochrechnung für 5 Nutzer × 5 Jahre sinkt von ≈ 14–30 GB auf ≈ 4–5,5 GB. Ein
+Image weniger, Testcontainer und CI laufen auf `postgres:16`. Umzug bestehender
+Instanzen: Runbook A.7 in `docs/HANDOVER.md`. Die Aussagen oben zu Kompression und
+Continuous Aggregates sind damit überholt. `pgvector` bleibt Zielbild.

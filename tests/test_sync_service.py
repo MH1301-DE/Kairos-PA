@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from kairos.connectors.types import CanonicalRecord, RawPayloadEnvelope, Window
+from kairos.connectors.types import CanonicalRecord, RawFile, RawPayloadEnvelope, Window
 from kairos.ingestion.hash import payload_sha256
 from kairos.ingestion.service import SyncService
 
@@ -280,3 +280,107 @@ async def test_sync_service_marks_non_retryable_failures() -> None:
     assert sync_failure_repo.last_call is not None
     assert sync_failure_repo.last_call["error_code"] == "ValueError"
     assert sync_failure_repo.last_call["retryable"] is False
+
+
+def _fit_file(key: str) -> RawFile:
+    return RawFile(
+        kind="activity_fit_file",
+        key=key,
+        window_start=datetime(2026, 8, 3, 9, tzinfo=UTC),
+        content=f"zip-{key}".encode(),
+        payload_format="fit_zip",
+    )
+
+
+class FileConnector(SpyConnector):
+    def fetch(self, user_id: UUID, kind: str, window: Window) -> RawPayloadEnvelope:
+        self.events.append("fetch")
+        return RawPayloadEnvelope(
+            window=window,
+            payload={"activities": [{"activity_id": "a"}, {"activity_id": "b"}]},
+            files=(_fit_file("a"), _fit_file("b")),
+        )
+
+    def normalize(self, kind: str, payload: object) -> list[CanonicalRecord]:
+        self.events.append("normalize")
+        return []
+
+
+class FileRawRepo(SpyRawRepo):
+    def __init__(self, events: list[str]) -> None:
+        super().__init__(events)
+        self.files: list[RawFile] = []
+
+    async def upsert_file(self, *, user_id: UUID, connector_id: str, file: RawFile) -> int:
+        self.events.append("raw_upsert_file")
+        self.files.append(file)
+        return 100 + len(self.files)
+
+
+def _window() -> Window:
+    return Window(start=datetime(2026, 8, 3, tzinfo=UTC), end=datetime(2026, 8, 4, tzinfo=UTC))
+
+
+@pytest.mark.asyncio
+async def test_run_window_archives_files_and_calls_post_window() -> None:
+    events: list[str] = []
+    raw_repo = FileRawRepo(events)
+    calls: list[tuple[str, RawPayloadEnvelope, int, dict[str, int]]] = []
+
+    async def post_window(
+        kind: str, envelope: RawPayloadEnvelope, raw_payload_id: int, ids: dict[str, int]
+    ) -> None:
+        events.append("post_window")
+        calls.append((kind, envelope, raw_payload_id, ids))
+
+    service = SyncService(
+        raw_repo=raw_repo,
+        canonical_repo=SpyCanonicalRepo(events),
+        sync_state_repo=SpySyncStateRepo(events),
+        hash_payload=payload_sha256,
+        post_window=post_window,
+    )
+
+    await service.run_window(
+        connector=FileConnector(events), user_id=uuid4(), kind="activity_fit", window=_window()
+    )
+
+    assert events == [
+        "fetch", "raw_upsert", "raw_upsert_file", "raw_upsert_file",
+        "normalize", "canonical_upsert_many", "post_window", "mark_success",
+    ]
+    assert [f.key for f in raw_repo.files] == ["a", "b"]
+    assert len(calls) == 1
+    kind, envelope, raw_payload_id, ids = calls[0]
+    assert kind == "activity_fit"
+    assert raw_payload_id == 7
+    assert ids == {"a": 101, "b": 102}
+    assert [f.key for f in envelope.files] == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_post_window_failure_fails_the_window() -> None:
+    events: list[str] = []
+
+    async def post_window(
+        kind: str, envelope: RawPayloadEnvelope, raw_payload_id: int, ids: dict[str, int]
+    ) -> None:
+        del kind, envelope, raw_payload_id, ids
+        raise RuntimeError("hook broke")
+
+    service = SyncService(
+        raw_repo=FileRawRepo(events),
+        canonical_repo=SpyCanonicalRepo(events),
+        sync_state_repo=SpySyncStateRepo(events),
+        hash_payload=payload_sha256,
+        sync_failure_repo=SpySyncFailureRepo(events),
+        post_window=post_window,
+    )
+
+    with pytest.raises(RuntimeError, match="hook broke"):
+        await service.run_window(
+            connector=FileConnector(events), user_id=uuid4(), kind="activity_fit", window=_window()
+        )
+
+    assert "mark_success" not in events
+    assert events[-1] == "record_failure"

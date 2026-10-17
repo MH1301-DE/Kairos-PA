@@ -17,6 +17,7 @@ git log --format="%h|%an|%ae|%s" -20
 **Human developers** (skip diff review for these):
 - `Maximilian Haenel` — mhaenel@deloitte.de
 - `Maximilian Haenel` — max.haenel@t-online.de
+- `Maximilian Haenel` — haenel@igmr.rwth-aachen.de
 
 For every commit by a **different author**, read its diff:
 ```bash
@@ -27,7 +28,7 @@ git show <hash>
 
 - **Language:** Python 3.12+ (`pyproject.toml` floor; mypy targets 3.12, this machine's venv is 3.13.7), FastAPI, SQLAlchemy async
 - **Linting:** `ruff` (line-length 100) + `mypy --strict`
-- **Tests:** `.venv/bin/python -m pytest -q` (Windows: `.venv/Scripts/python -m pytest -q`) → must be 530 passed, 0 skipped (0 skipped requires Docker running for the testcontainers tests)
+- **Tests:** `.venv/bin/python -m pytest -q` (Windows: `.venv/Scripts/python -m pytest -q`) → must be all passed, 0 skipped (836 on `stufe1-datenbasis`, 2026-10-17; 0 skipped requires Docker running for the testcontainers tests, image `postgres:16`)
 - **Commits:** conventional commits (`feat(scope):`, `fix:`, `chore:`)
 - **No docstrings** on code you didn't change
 - **Comments:** one short line only — state what the code cannot show, not what it does

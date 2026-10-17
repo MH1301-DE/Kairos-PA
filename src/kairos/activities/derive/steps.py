@@ -1,0 +1,305 @@
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from datetime import datetime
+
+from kairos.activities.derive.common import Prepared, interp, message_offset, weighted_mean
+
+MIN_LAP_S = 5.0
+MIN_RATED_S = 20.0
+STEP_DONE_TOLERANCE_S = 1.0
+STEP_DONE_TOLERANCE_REL = 0.01
+AVG_TOLERANCE = 0.02
+HR_IN_TARGET_MIN_PCT = 80.0
+_STEP_TYPES = frozenset({"warmup", "interval", "recovery", "rest", "cooldown"})
+_POWER_TARGETS = frozenset({"power", "power_3s", "power_10s", "power_30s", "power_lap"})
+_PACE_PROFILES = frozenset({"running", "hiking"})
+# FIT workout_power: values above 1000 are watts + 1000, below are % FTP
+_POWER_WATTS_OFFSET = 1000.0
+
+
+@dataclass(frozen=True, kw_only=True)
+class StepResultRow:
+    exec_idx: int
+    wkt_step_index: int
+    repeat_iteration: int | None
+    step_type: str
+    step_note: str | None
+    planned_end: str | None
+    target_type: str | None
+    target_low: float | None
+    target_high: float | None
+    target_source: str
+    secondary_type: str | None = None
+    secondary_low: float | None = None
+    secondary_high: float | None = None
+    timer_s: float | None
+    distance_m: float | None
+    avg_pace_s_km: float | None
+    avg_hr: float | None
+    hr_in_target_pct: float | None
+    avg_cadence: float | None
+    avg_power_w: float | None
+    hit: bool | None
+    secondary_hit: bool | None = None
+
+
+@dataclass(frozen=True)
+class _Target:
+    kind: str | None
+    low: float | None
+    high: float | None
+    source: str
+
+
+@dataclass
+class _Exec:
+    index: int
+    windows: list[tuple[float, float]] = field(default_factory=list)
+    # watch lap counters, which end the step on the watch
+    timer_s: float = 0.0
+    distance_m: float = 0.0
+
+
+def _completed(ex: _Exec, step: Mapping[str, object]) -> bool:
+    # a single-step repeat puts its passes on consecutive laps with the same index
+    planned = _planned_amount(step)
+    if planned is None:
+        return False
+    kind, value = planned
+    if kind == "time":
+        return ex.timer_s >= value - STEP_DONE_TOLERANCE_S
+    return ex.distance_m >= value * (1 - STEP_DONE_TOLERANCE_REL)
+
+
+def _num(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return float(value)
+
+
+def _text(value: object) -> str | None:
+    # list-decoded FIT strings: only chunk 0 is the string, the rest is decoder garbage
+    if isinstance(value, list):
+        value = value[0] if value else None
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _planned_end(step: Mapping[str, object]) -> str | None:
+    kind = step.get("duration_type")
+    if kind == "open":
+        return "lap_button"
+    planned = _planned_amount(step)
+    if planned is not None:
+        unit, value = planned
+        return f"time {value:g} s" if unit == "time" else f"distance {value:g} m"
+    return None if kind is None else str(kind)
+
+
+def _sorted_pair(low: float | None, high: float | None) -> tuple[float, float] | None:
+    if low is None or high is None or (low == 0 and high == 0):
+        return None
+    return (min(low, high), max(low, high))
+
+
+def _target(
+    step: Mapping[str, object],
+    *,
+    sport_profile: str,
+    hr_targets: Mapping[int, tuple[float, float]] | None,
+    step_index: int,
+) -> _Target:
+    kind = step.get("target_type")
+    raw_low = _num(step.get("custom_target_value_low"))
+    raw_high = _num(step.get("custom_target_value_high"))
+    if kind is None or kind == "open":
+        return _Target("none", None, None, "none")
+    if kind == "heart_rate":
+        api = None if hr_targets is None else hr_targets.get(step_index)
+        if api is None:
+            return _Target("hr_range", None, None, "unclear")
+        lo, hi = sorted(api)
+        return _Target("hr_range", lo, hi, "api")
+    if kind in ("speed", "cadence"):
+        out = "cadence" if kind == "cadence" else "speed"
+        if kind == "speed" and sport_profile in _PACE_PROFILES:
+            out = "pace"
+        low = _num(step.get(f"custom_target_{kind}_low"))
+        high = _num(step.get(f"custom_target_{kind}_high"))
+        if low is None and high is None and raw_low is not None and raw_high is not None:
+            # raw speed is mm/s
+            scale = 1000 if kind == "speed" else 1
+            low, high = raw_low / scale, raw_high / scale
+        pair = _sorted_pair(low, high)
+        if pair is not None and kind == "cadence" and sport_profile == "running":
+            # FIT running cadence is per leg; the measured channel is already doubled to spm
+            pair = (pair[0] * 2, pair[1] * 2)
+        return _Target(out, None, None, "unclear") if pair is None else _Target(out, *pair, "fit")
+    if kind in _POWER_TARGETS:
+        pair = _sorted_pair(raw_low, raw_high)
+        if pair is None or pair[0] <= _POWER_WATTS_OFFSET:
+            return _Target("power", None, None, "unclear")
+        return _Target("power", pair[0] - _POWER_WATTS_OFFSET, pair[1] - _POWER_WATTS_OFFSET, "fit")
+    return _Target(None, None, None, "unclear")
+
+
+def _repeat_blocks(steps: Sequence[Mapping[str, object]]) -> list[tuple[int, int]]:
+    blocks: list[tuple[int, int]] = []
+    for step in steps:
+        end = step.get("message_index")
+        start = step.get("duration_step")
+        if (
+            step.get("duration_type") == "repeat_until_steps_cmplt"
+            and isinstance(end, int)
+            and isinstance(start, int)
+        ):
+            blocks.append((start, end))
+    # narrowest first, so the first match is the innermost block
+    return sorted(blocks, key=lambda b: b[1] - b[0])
+
+
+def _innermost(blocks: Sequence[tuple[int, int]], a: int, b: int) -> tuple[int, int] | None:
+    lo, hi = min(a, b), max(a, b)
+    return next((blk for blk in blocks if blk[0] <= lo and hi < blk[1]), None)
+
+
+def _planned_amount(step: Mapping[str, object]) -> tuple[str, float] | None:
+    kind = step.get("duration_type")
+    # raw duration_value: ms for time, cm for distance
+    scale = {"time": 1000.0, "distance": 100.0}.get(str(kind))
+    if scale is None:
+        return None
+    value = _num(step.get(f"duration_{kind}"))
+    raw = _num(step.get("duration_value"))
+    if value is None and raw is not None:
+        value = raw / scale
+    return None if not value else (str(kind), value)
+
+
+def _step_type(step: Mapping[str, object]) -> str:
+    intensity = step.get("intensity")
+    return intensity if isinstance(intensity, str) and intensity in _STEP_TYPES else "interval"
+
+
+def _within(value: float | None, low: float, high: float) -> bool | None:
+    if value is None:
+        return None
+    return low * (1 - AVG_TOLERANCE) <= value <= high * (1 + AVG_TOLERANCE)
+
+
+def step_results(
+    prep: Prepared,
+    *,
+    sport_profile: str,
+    workout_steps: Sequence[Mapping[str, object]],
+    laps: Sequence[Mapping[str, object]],
+    start_at: datetime,
+    hr_targets: Mapping[int, tuple[float, float]] | None,
+) -> list[StepResultRow]:
+    steps = {mi: s for s in workout_steps if isinstance(mi := s.get("message_index"), int)}
+    if not steps:
+        return []
+    blocks = _repeat_blocks(workout_steps)
+
+    execs: list[_Exec] = []
+    for lap in laps:
+        index = lap.get("wkt_step_index")
+        a = message_offset(lap.get("start_time"), start_at)
+        elapsed = _num(lap.get("total_elapsed_time")) or 0.0
+        if not isinstance(index, int) or index not in steps or a is None or elapsed < MIN_LAP_S:
+            continue
+        lap_timer = _num(lap.get("total_timer_time"))
+        lap_dist = _num(lap.get("total_distance"))
+        last = execs[-1] if execs else None
+        if last is None or last.index != index or _completed(last, steps[index]):
+            last = _Exec(index)
+            execs.append(last)
+        last.windows.append((a, a + elapsed))
+        last.timer_s += lap_timer if lap_timer is not None else elapsed
+        last.distance_m += lap_dist or 0.0
+
+    rows: list[StepResultRow] = []
+    iteration: dict[tuple[int, int], int] = {}
+    prev_index: int | None = None
+    for number, ex in enumerate(execs, start=1):
+        index = ex.index
+        for block in blocks:
+            start, end = block
+            if not start <= index < end:
+                continue
+            if prev_index is None or not start <= prev_index < end:
+                iteration[block] = 1
+            elif index <= prev_index and block == _innermost(blocks, index, prev_index):
+                # stepping back inside this block, not a nested one, starts its next pass
+                iteration[block] += 1
+        inner = _innermost(blocks, index, index)
+        repeat_iteration = None if inner is None else iteration[inner]
+        prev_index = index
+
+        timer_s: float | None = 0.0
+        distance: float | None = 0.0
+        idx: list[int] = []
+        for a, b in ex.windows:
+            ta, tb = interp(prep.t, prep.timer_t, a), interp(prep.t, prep.timer_t, b)
+            timer_s = None if timer_s is None or ta is None or tb is None else timer_s + tb - ta
+            da, db = interp(prep.t, prep.distance, a), interp(prep.t, prep.distance, b)
+            distance = None if distance is None or da is None or db is None else distance + db - da
+            idx.extend(i for i, t in enumerate(prep.t) if a <= t < b)
+        weights = [prep.weights[i] for i in idx]
+        hr = [prep.hr[i] for i in idx]
+        pace = timer_s / distance * 1000 if distance and timer_s else None
+        speed = distance / timer_s if distance and timer_s else None
+        cadence = weighted_mean([prep.cadence_spm_or_rpm[i] for i in idx], weights)
+        power = weighted_mean([prep.power[i] for i in idx], weights)
+
+        step = steps[index]
+        target = _target(step, sport_profile=sport_profile, hr_targets=hr_targets, step_index=index)
+        hr_pct: float | None = None
+        if target.kind == "hr_range" and target.low is not None and target.high is not None:
+            lo, hi = target.low, target.high
+            # denominator: weighted time that has an HR sample
+            rated = [(v, w) for v, w in zip(hr, weights, strict=True) if v is not None and w > 0]
+            total = sum(w for _, w in rated)
+            if total > 0:
+                hr_pct = 100.0 * sum(w for v, w in rated if lo <= v <= hi) / total
+
+        hit: bool | None = None
+        rateable = timer_s is not None and timer_s >= MIN_RATED_S
+        if target.low is not None and target.high is not None and rateable:
+            if target.kind == "hr_range":
+                hit = None if hr_pct is None else hr_pct >= HR_IN_TARGET_MIN_PCT
+            elif target.kind == "pace":
+                hit = _within(pace, 1000 / target.high, 1000 / target.low)
+            elif target.kind == "speed":
+                hit = _within(speed, target.low, target.high)
+            elif target.kind == "cadence":
+                hit = _within(cadence, target.low, target.high)
+            elif target.kind == "power":
+                hit = _within(power, target.low, target.high)
+
+        rows.append(
+            StepResultRow(
+                exec_idx=number,
+                wkt_step_index=index,
+                repeat_iteration=repeat_iteration,
+                step_type=_step_type(step),
+                step_note=_text(step.get("notes")) or _text(step.get("wkt_step_name")),
+                planned_end=_planned_end(step),
+                target_type=target.kind,
+                target_low=target.low,
+                target_high=target.high,
+                target_source=target.source,
+                timer_s=timer_s,
+                distance_m=distance,
+                avg_pace_s_km=pace,
+                avg_hr=weighted_mean(hr, weights),
+                hr_in_target_pct=hr_pct,
+                avg_cadence=cadence,
+                avg_power_w=power,
+                hit=hit,
+            )
+        )
+    return rows

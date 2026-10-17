@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     # dev IP for a few hours after a burst of login attempts during testing,
     # so avoid discovering the data-endpoint limit the same way.
     garmin_backfill_throttle_seconds: float = 1.5
+    # pause between two FIT downloads within one day window (spec A.5)
+    garmin_fit_download_pause_s: float = 2.0
     # one Kairos deployment = one LLM API key, shared by every user of this
     # instance (1-5 people, not a SaaS product) -- not a per-user credential,
     # unlike Garmin/Google Calendar. Each user can still pick their own model
