@@ -23,7 +23,7 @@ from kairos.scheduler.schedule import (
     InvalidSchedule,
     describe,
     min_gap,
-    occurrences,
+    next_occurrence,
     validate,
     zone,
 )
@@ -89,15 +89,15 @@ async def preview(req: PreviewIn, user: dict[str, Any] = Depends(current_user)) 
         validate(req.cron_exprs, req.timezone)
     except InvalidSchedule as exc:
         return {"label": None, "next": [], "errors": [str(exc)]}
-    now = datetime.now(UTC)
-    runs = occurrences(req.cron_exprs, req.timezone, now, now.replace(year=now.year + 1))
+    runs: list[datetime] = []
+    after = datetime.now(UTC)
+    for _ in range(_PREVIEW_COUNT):
+        after = next_occurrence(req.cron_exprs, req.timezone, after)
+        runs.append(after)
     zi = zone(req.timezone)
     return {
         "label": describe(req.cron_exprs, req.timezone),
-        "next": [
-            {"utc": r.isoformat(), "local": r.astimezone(zi).isoformat()}
-            for r in runs[:_PREVIEW_COUNT]
-        ],
+        "next": [{"utc": r.isoformat(), "local": r.astimezone(zi).isoformat()} for r in runs],
         "errors": [],
     }
 
