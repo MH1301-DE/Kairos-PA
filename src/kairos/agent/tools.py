@@ -11,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from kairos.agent.activity_tools import (
     ANALYZE_OPERATIONS,
+    BEST_EFFORT_KEYS,
+    BEST_EFFORT_PERIODS,
     CURVE_METRICS,
     SEARCH_SORTS,
     SPLIT_KINDS,
@@ -19,6 +21,7 @@ from kairos.agent.activity_tools import (
     activity_get_handler,
     activity_search_handler,
     activity_splits_handler,
+    best_efforts_handler,
 )
 from kairos.agent.expiry import _parse_expiry
 from kairos.agent.format import cap_envelope, drop_last_row
@@ -780,6 +783,28 @@ CORE_TOOLS: tuple[ToolSpec, ...] = (
             "required": ["activity_id", "operation"],
         },
         handler=activity_analyze_handler,
+    ),
+    ToolSpec(
+        name="best_efforts",
+        description=(
+            "Lauf-Bestleistungen: schnellste Abschnitte über 800 m bis 100 km aus allen "
+            "GPS-Läufen, auch innerhalb längerer Läufe."
+        ),
+        risk_class="read", requires_confirmation=False,
+        json_schema={
+            "type": "object",
+            "properties": {
+                "distances": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": list(BEST_EFFORT_KEYS)},
+                },
+                "period": {"type": "string", "enum": list(BEST_EFFORT_PERIODS)},
+                "from_date": {"type": "string"},
+                "to_date": {"type": "string"},
+                "top_n": {"type": "integer", "minimum": 1, "maximum": 5},
+            },
+        },
+        handler=best_efforts_handler,
     ),
 )
 

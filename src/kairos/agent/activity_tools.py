@@ -11,6 +11,7 @@ from sqlalchemy import Date, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
+from kairos.activities.derive.best_efforts import BEST_EFFORT_DISTANCES
 from kairos.activities.derive.common import (
     Prepared,
     elevation_gain_loss,
@@ -40,6 +41,7 @@ from kairos.agent.format import (
 )
 from kairos.db.models import (
     Activity,
+    ActivityBestEffort,
     ActivitySplit,
     ActivityStats,
     ActivityStepResult,
@@ -231,10 +233,7 @@ async def activity_search_handler(
     if start > end:
         raise ValueError("from_date liegt nach to_date")
 
-    # spec A.8: the activity's own local start date
-    local_day = cast(
-        func.coalesce(Activity.start_local, func.timezone(tz, Activity.start_at)), Date
-    )
+    local_day = _local_day(tz)
     distance = _distance_expr()
     conds: list[ColumnElement[bool]] = [
         Activity.user_id == user_id,
@@ -1465,3 +1464,130 @@ async def activity_analyze_handler(
         shrink = _no_shrink
     env = _envelope(summary, data, quality=_pick(st, "quality", "partial"))
     return _finish(env, as_of=as_of, max_tokens=ANALYZE_MAX_TOKENS, shrink=shrink)
+
+
+BEST_EFFORTS_MAX_TOKENS = 500
+BEST_EFFORT_KEYS = tuple(BEST_EFFORT_DISTANCES)
+BEST_EFFORT_PERIODS = ("all", "ytd", "12m", "90d", "custom")
+BEST_EFFORT_COLS = ["distanz", "zeit", "pace", "datum", "aktivitaet", "abschnitt", "qualitaet"]
+_EFFORT_LABEL = {
+    "800m": "800 m", "1500m": "1.500 m", "3000m": "3.000 m", "5k": "5 km", "10k": "10 km",
+    "hm": "HM", "m": "M", "50k": "50 km", "100k": "100 km",
+}
+_EFFORT_REACH = {
+    "800m": "800 m", "1500m": "1,5 km", "3000m": "3 km", "5k": "5 km", "10k": "10 km",
+    "hm": "21,1 km", "m": "42,2 km", "50k": "50 km", "100k": "100 km",
+}
+
+
+def _today(tz: str) -> date:
+    return datetime.now(ZoneInfo(tz)).date()
+
+
+def _period_window(
+    period: str, tz: str, from_date: str | None, to_date: str | None
+) -> tuple[date | None, date | None, str]:
+    today = _today(tz)
+    if period == "all":
+        return None, None, "gesamt"
+    if period == "ytd":
+        return date(today.year, 1, 1), today, str(today.year)
+    if period == "12m":
+        return today - timedelta(days=365), today, "letzte 12 Monate"
+    if period == "90d":
+        return today - timedelta(days=90), today, "letzte 90 Tage"
+    if not from_date or not to_date:
+        raise ValueError("period='custom' verlangt from_date und to_date")
+    start, end = date.fromisoformat(from_date), date.fromisoformat(to_date)
+    if start > end:
+        raise ValueError("from_date liegt nach to_date")
+    return start, end, f"{start:%d.%m.%Y}–{end:%d.%m.%Y}"
+
+
+def _local_day(tz: str) -> ColumnElement[Any]:
+    # spec A.8: the activity's own local start date
+    return cast(func.coalesce(Activity.start_local, func.timezone(tz, Activity.start_at)), Date)
+
+
+async def best_efforts_handler(
+    session: AsyncSession,
+    *,
+    user_id: UUID,
+    distances: Sequence[str] | None = None,
+    period: str = "all",
+    from_date: str | None = None,
+    to_date: str | None = None,
+    top_n: int = 1,
+) -> dict[str, Any]:
+    keys = list(dict.fromkeys(distances or BEST_EFFORT_KEYS))
+    unknown = [k for k in keys if k not in BEST_EFFORT_DISTANCES]
+    if unknown:
+        raise ValueError(f"distances unbekannt: {', '.join(unknown)}")
+    if period not in BEST_EFFORT_PERIODS:
+        raise ValueError(f"period muss eines von {', '.join(BEST_EFFORT_PERIODS)} sein")
+    top_n = max(1, min(int(top_n), 5))
+    tz, as_of = await _user_context(session, user_id)
+    start, end, period_label = _period_window(period, tz, from_date, to_date)
+
+    conds: list[ColumnElement[bool]] = [
+        Activity.user_id == user_id,
+        Activity.deleted_at.is_(None),
+        ActivityBestEffort.distance_key.in_(keys),
+    ]
+    if start is not None and end is not None:
+        conds += [_local_day(tz) >= start, _local_day(tz) <= end]
+    found = (
+        await session.execute(
+            select(ActivityBestEffort, Activity)
+            .join(Activity, Activity.id == ActivityBestEffort.activity_id)
+            .where(*conds)
+            .order_by(ActivityBestEffort.duration_s, Activity.start_at)
+        )
+    ).all()
+    by_key: dict[str, list[tuple[ActivityBestEffort, Activity]]] = {k: [] for k in keys}
+    for effort, a in found:
+        if len(by_key[effort.distance_key]) < top_n:
+            by_key[effort.distance_key].append((effort, a))
+
+    rows: list[list[object]] = []
+    best: list[str] = []
+    missing: list[str] = []
+    for key in keys:
+        label = _EFFORT_LABEL[key]
+        if not by_key[key]:
+            reason = f"kein GPS-Lauf ≥ {_EFFORT_REACH[key]} im Zeitraum"
+            rows.append([label, "—", "—", "—", "—", "—", reason])
+            missing.append(label)
+            continue
+        for rank, (effort, a) in enumerate(by_key[key], start=1):
+            day = (
+                "—" if a.start_at is None
+                else fmt_datetime_local(a.start_at, tz).rsplit(" ", 1)[0]
+            )
+            name = _short(a.name, 30)
+            section_end = effort.start_km + effort.distance_m / 1000
+            row: list[object] = [
+                label,
+                fmt_duration(effort.duration_s),
+                fmt_pace_km(effort.duration_s / effort.distance_m * 1000),
+                day,
+                f"#{a.id} {name}" if name else f"#{a.id}",
+                f"km {_dec(effort.start_km, 1)}–{_dec(section_end, 1)}",
+                effort.quality,
+            ]
+            rows.append([rank, *row] if top_n > 1 else row)
+            if rank == 1:
+                flag = ", eingeschränkt" if effort.quality == "partial" else ""
+                best.append(f"{label} {row[1]} ({str(day)[3:]}{flag})")
+    cols = ["rang", *BEST_EFFORT_COLS] if top_n > 1 else BEST_EFFORT_COLS
+    if top_n > 1:
+        # rank column stays empty on placeholder rows
+        rows = [r if len(r) == len(cols) else ["–", *r] for r in rows]
+    summary = f"Bestzeiten {period_label}: " + (" · ".join(best) if best else "keine")
+    summary += "."
+    if missing:
+        summary += f" {', '.join(missing)}: kein GPS-Lauf dieser Länge."
+    env = _envelope(
+        summary, table(cols, rows), next_hint="Abschnitt ansehen: activity_get(activity_id=…)"
+    )
+    return _finish(env, as_of=as_of, max_tokens=BEST_EFFORTS_MAX_TOKENS, shrink=drop_last_row)

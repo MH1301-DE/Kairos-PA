@@ -3,11 +3,11 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kairos.activities.derive import service as service_module
@@ -20,10 +20,11 @@ from kairos.agent.activity_tools import (
     activity_get_handler,
     activity_search_handler,
     activity_splits_handler,
+    best_efforts_handler,
 )
 from kairos.agent.format import CHARS_PER_TOKEN, MINUS, fmt_duration
 from kairos.agent.tools import TOOLS_BY_NAME
-from kairos.db.models import Activity, ActivitySplit, SyncState
+from kairos.db.models import Activity, ActivityBestEffort, ActivitySplit, SyncState
 from kairos.db.rls import install_rls_listener
 from tests.activity_fixtures import (
     AUTO_LAP_RUN,
@@ -619,6 +620,55 @@ async def test_analyze_hr_drift(
     assert _tokens(env) <= 800
 
 
+@pytest.mark.asyncio
+async def test_best_efforts_ytd_and_missing_distance(
+    session: AsyncSession,
+    app_session: AsyncSession,
+    fixtures: dict[str, ActivityFixture],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    s = await _seed(session, app_session, fixtures)
+    monkeypatch.setattr(activity_tools, "_today", lambda tz: date(2026, 10, 15))
+    fastest = (
+        await app_session.execute(
+            select(ActivityBestEffort)
+            .where(ActivityBestEffort.distance_key == "5k")
+            .order_by(ActivityBestEffort.duration_s)
+        )
+    ).scalars().first()
+    assert fastest is not None
+
+    env = await best_efforts_handler(
+        app_session, user_id=s.uid, distances=["5k", "hm"], period="ytd"
+    )
+    assert env["data"]["cols"] == [
+        "distanz", "zeit", "pace", "datum", "aktivitaet", "abschnitt", "qualitaet",
+    ]
+    five, half = env["data"]["rows"]
+    assert five[0] == "5 km" and five[1] == fmt_duration(fastest.duration_s)
+    assert five[2].endswith(" /km") and five[3].endswith(".2026")
+    assert five[4].startswith(f"#{fastest.activity_id} ")
+    assert five[5].startswith("km ") and five[6] == "ok"
+    assert half == ["HM", "—", "—", "—", "—", "—", "kein GPS-Lauf ≥ 21,1 km im Zeitraum"]
+    assert env["summary"].startswith(f"Bestzeiten 2026: 5 km {five[1]} ({five[3][3:]})")
+    assert "HM: kein GPS-Lauf dieser Länge" in env["summary"]
+    assert _tokens(env) <= 500
+
+    autumn = await best_efforts_handler(
+        app_session, user_id=s.uid, distances=["5k"], period="custom",
+        from_date="2026-09-20", to_date="2026-09-30", top_n=3,
+    )
+    assert autumn["data"]["cols"][0] == "rang"
+    assert [r[5] for r in autumn["data"]["rows"]] == [f"#{s.autolap} Abendlauf"]
+
+    full = await best_efforts_handler(app_session, user_id=s.uid, top_n=5)
+    assert _tokens(full) <= 500
+    with pytest.raises(ValueError, match="from_date"):
+        await best_efforts_handler(app_session, user_id=s.uid, period="custom")
+    with pytest.raises(ValueError, match="distances"):
+        await best_efforts_handler(app_session, user_id=s.uid, distances=["7k"])
+
+
 def test_tools_are_registered_with_spec_schemas() -> None:
     search = TOOLS_BY_NAME["activity_search"]
     get = TOOLS_BY_NAME["activity_get"]
@@ -642,4 +692,13 @@ def test_tools_are_registered_with_spec_schemas() -> None:
     assert analyze.json_schema["required"] == ["activity_id", "operation"]
     assert analyze.json_schema["properties"]["points"] == {
         "type": "integer", "minimum": 10, "maximum": 60,
+    }
+    efforts = TOOLS_BY_NAME["best_efforts"]
+    assert efforts.risk_class == "read"
+    assert efforts.description.startswith("Lauf-Bestleistungen")
+    assert efforts.json_schema["properties"]["distances"]["items"]["enum"] == [
+        "800m", "1500m", "3000m", "5k", "10k", "hm", "m", "50k", "100k",
+    ]
+    assert efforts.json_schema["properties"]["top_n"] == {
+        "type": "integer", "minimum": 1, "maximum": 5,
     }

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from kairos.agent.prompt import render_memory_block
+from kairos.agent.prompt import SYSTEM_PROMPT, render_memory_block
 from kairos.db.models import AgentMemory
 
 
@@ -35,3 +35,13 @@ def test_oversized_newer_entry_does_not_hide_older_ones() -> None:
                                 budget_tokens=300)
     assert "- Ziel: Halbmarathon" in block
     assert "x" * 100 not in block
+
+
+def test_system_prompt_names_the_activity_read_tools() -> None:
+    # spec G.5, first two points
+    flat = " ".join(SYSTEM_PROMPT.split())
+    assert (
+        "Für Fragen zu einzelnen Einheiten activity_get nutzen, ohne ID für die letzte "
+        "Aktivität. Kilometerwerte kommen über activity_splits, Bestzeiten über best_efforts."
+    ) in flat
+    assert 'Ob ein Workout getroffen wurde, kommt aus activity_splits(kind="steps").' in flat
