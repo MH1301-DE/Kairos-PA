@@ -238,7 +238,8 @@ Linear, ältere zuerst (`alembic history` ist maßgeblich):
 → b1025127c2e0 custom_metric_definition → 3c4cc4b9401f conversation_tables
 → d01f4413837f llm_model_setting → 1d9489995959 conversation_message_tool_call_id
 → c409728c466e user_dashboard_tile → 27d8fcfada03 plan_tables
-→ 7a1c2e9d4b30 memory_expiry_and_compaction                       ← HEAD auf main
+→ 7a1c2e9d4b30 memory_expiry_and_compaction
+→ 5c8e1d2f7a90 scheduler_tables                                  ← HEAD auf main (Scheduler)
 → 8c6af9fb1361 activity_stream_and_fit_archive                    (Stufe 1, AP 1a)
 → fed6d2d1311b drop_timescaledb                                   (AP 1b, kein downgrade)
 → 3b9e5c7a1d24 activity_profile_and_soft_delete                   (AP 1c)
@@ -960,6 +961,7 @@ anstoßen, dann `/calendar` gegen die echten Termine der nächsten zwei Wochen p
 | ADR-0004 | garminconnect statt garth | garth deprecated März 2026 (Cloudflare-Block) |
 | ADR-0005 | ECharts für Frontend | — |
 | ADR-0006 | Google OIDC | Kein eigenes Passwort-/MFA-Management |
+| ADR-0007 | Scheduler im API-Prozess | Teilt Locks/Cooldowns mit den Sync-Buttons; kein arq, kein cron; genau ein uvicorn-Worker |
 
 ---
 
@@ -1457,11 +1459,68 @@ FIT keine gültigen Zeitstempel hat (praktisch ausgeschlossen).
 2. **Entscheidungen aus dem Bericht V1–V7** (Spec §12.3, Nachtrag 2026-10-15): V7-Zählregel,
    V2 Sprungfilter/Timer- vs. Gesamtzeit, V4 Höhenmeter (Wert der Uhr übernehmen?),
    Laufband-Distanz nicht skalieren.
-3. **Push und Merge** nach `main` (lokales `main` ist 2 vor / 1 hinter `origin/main`).
+3. **Push und Merge** nach `main`. `origin/main` (`3910b46`, inkl. Scheduler #9) ist in
+   `stufe1-datenbasis` gemergt; der Branch ist nicht gepusht.
 
 **Hinweise**
 
-- Eine zweite Claude-Session arbeitet in einem eigenen Klon (`C:\Users\maxha\Projects\kairos-pa`)
-  an Scheduler und CalDAV auf Basis von `main`. Ihre Migration muss nach dem Rebase auf
-  Stufe 1 an `5d2f8a6c1e47` hängen; Überschneidungen möglich in `routers/sync.py`.
+- Merge mit dem Scheduler (2026-10-17): `8c6af9fb1361` hängt jetzt an `5c8e1d2f7a90`, ein
+  Head `5d2f8a6c1e47`. Die Stufe-1-Hooks (FIT-Ingest, Lösch-Abgleich, `derive_pending`,
+  Recompute ab abgeglichenen Tagen) liegen in `ingestion/garmin_sync.sync_garmin` und
+  laufen damit auch bei Scheduler-Syncs (`run_incremental`). Der Rundweg-Test der
+  Scheduler-Migration geht nur noch bis `fed6d2d1311b` zurück (kein downgrade).
 - Testcontainer, CI und Dev laufen auf `postgres:16`.
+
+---
+
+## Scheduler (2026-10-17, Branch `feat/scheduler`)
+
+Spec: `docs/superpowers/specs/2026-10-15-scheduler-design.md`, ADR-0007. Alle APs 1–8 umgesetzt,
+je AP ein Commit. Entscheidungen zu Spec §14 (Max, 2026-10-17): Kontext-Reset vor jedem Lauf mit
+Zitat; verpasste Läufe genau einmal nachholen, ohne Zeitgrenze; Fehlerpunkt am Nav-Eintrag;
+Garmin ≥ 60 min, ≤ 12 Agent-Läufe/Tag, ≤ 10 Jobs; Scheduler **vor** CalDAV (Google-Übergang).
+
+**Was jetzt gilt:**
+- **Service-Kerne:** `ingestion/garmin_sync.sync_garmin` (Button: `run_backfill`, Scheduler:
+  neues `SyncService.run_incremental` ab `backfill_complete_to − 1 Tag` bis morgen 00:00 UTC),
+  `calendar/sync.sync_google_calendar` (Signatur/`SyncResult` wie das spätere `sync_calendar`,
+  ohne `provider_id`, ohne Lösch-Abgleich), `metrics_recompute.recompute_daily_tables`.
+  Router sind dünne Hüllen. `SyncJobRegistry.prune` (24 h), `acquire_trigger` teilt den Cooldown
+  zwischen Button und Scheduler. Feste Fehlertexte statt `str(exc)` in `SyncJob.error`.
+- **Tabellen** `scheduled_job`, `scheduled_job_run` (RLS + FORCE), `SECURITY DEFINER`-Funktionen
+  `scheduler_due_jobs` / `scheduler_mark_interrupted` (nur IDs). Migration `5c8e1d2f7a90` auf
+  `7a1c2e9d4b30`; Stufe 1 hängt seit dem Merge daran (Head `5d2f8a6c1e47`).
+- **Loop** im FastAPI-`lifespan` (`SCHEDULER_ENABLED`, Tick 30 s, 2 parallele Läufe, 1 Lauf je
+  Nutzer). Beim Start werden laufende Läufe `interrupted`; überfällige Jobs laufen einmal als
+  `catch_up`. Warnung bei `WEB_CONCURRENCY > 1`. Lokal mit `--reload`: `SCHEDULER_ENABLED=false`.
+- **Agent-Schritt:** feste Konversation je Job, Prompt-Kopf mit Ortszeit und Schrittzahlen,
+  `reset_context` (schließt offene Proposals, extrahiert nur echte Nutzerzeilen, kein LLM-Call
+  ohne sie), `close_open_proposals` liegt jetzt in `agent/history.py`; der Orchestrator führt
+  aktive Konversationen (`is_conversation_active`).
+- **API** `/api/scheduler/*` (actions inkl. `default_timezone`, preview, jobs, run, runs, status);
+  `GET …/messages` liefert `seq` + `compacted_through_seq`, die Konversationsliste
+  `scheduled_job_id`.
+- **Frontend** `/scheduler`, `/scheduler/new`, `/scheduler/[id]`; Nav-Eintrag mit Dreieck bei
+  fehlgeschlagenem letzten Lauf; Chat-Trennlinie „Ab hier neuer Kontext“ und Badge.
+- **Abhängigkeiten:** `tzdata` neu (zoneinfo unter Windows/slim). `garminconnect` auf
+  `>=0.3.17,<0.3.18` gepinnt: `uv.lock` ist unvollständig (55 Pakete), CI löst bei jedem Lauf neu
+  auf und hätte 0.3.19 gezogen (bricht `test_garmin_workout_methods`). Lockfile neu erzeugen ist
+  ein offener Punkt.
+
+**Tests:** 530 passed, 0 skipped (Docker); Vitest 116 passed; `npm run check` 0/0.
+Lokal gegen Wegwerf-Postgres/Redis geprüft: Job anlegen → Loop-Lauf, Neustart → `interrupted` und
+genau ein `catch_up`, Seiten per SSR und auf iPhone-13-Viewport (Playwright).
+
+**Offen / manuell:** Real-Data-Lauf (eine Woche „Morgen-Briefing“ + „Garmin alle 2 h, 08–20 Uhr“),
+Test auf dem iPhone, Neustart-Test aus AP 5 gegen die echte Instanz. `ruff format --check` über das
+ganze Repo ist schon auf `main` rot (78 Dateien); neue Dateien sind formatiert.
+
+## CalDAV AP 0 (2026-10-17, Branch `feat/caldav-ap0`)
+
+`scripts/caldav_verify.py` prüft die 13 Punkte aus CalDAV-Spec §12 gegen iCloud (Aufruf im
+Skriptkopf; Zugangsdaten nur aus `ICLOUD_USERNAME`/`ICLOUD_APP_PASSWORD`). Gegen einen lokalen
+Radicale-Server durchgetestet (eigener und vorhandener Testkalender, fremder Termin bleibt
+byte-gleich, Fixtures ohne Fremddaten). Befunde in Spec §2/§12, `04` §4 und das Pinnen der
+Bibliotheksversion folgen, sobald Max die Ausgabe des echten Laufs liefert. Hinweis aus dem
+Testlauf: `caldav` 3.5 zieht `urllib3-future` nach, das den Importnamen `urllib3` überdeckt.
+

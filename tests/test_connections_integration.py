@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from kairos.auth.crypto import encrypt, generate_dek, kek_from_settings, wrap_dek
 from kairos.config import settings
 from kairos.db.models import Connection
-from kairos.routers import sync as sync_module
+from kairos.ingestion import garmin_sync as sync_module
 from kairos.routers.connections import _store_connection
 
 

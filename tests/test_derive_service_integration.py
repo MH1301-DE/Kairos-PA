@@ -25,8 +25,8 @@ from kairos.db.models import (
     ActivityStepResult,
 )
 from kairos.db.rls import install_rls_listener
+from kairos.ingestion import garmin_sync
 from kairos.repositories.raw_payload import SqlRawPayloadRepository
-from kairos.routers import sync as sync_module
 from tests.activity_fixtures import WORKOUT_RUN, ActivityFixture, load_activity_fixture
 from tests.test_fit_decoder import mini_fit_zip
 
@@ -427,7 +427,7 @@ async def test_fit_ingest_hook_derives_touched_activities(
     )
     await session.commit()
     install_rls_listener(app_session, uid)
-    hook = sync_module._make_fit_ingest_hook(app_session, uid, set())
+    hook = garmin_sync._make_fit_ingest_hook(app_session, uid, set())
     envelope = RawPayloadEnvelope(
         window=Window(start=start, end=start + timedelta(days=1)), payload={}, files=(file,)
     )

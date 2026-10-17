@@ -248,6 +248,60 @@ class SyncService:
             fetched_from=cursor if windows_processed else None,
         )
 
+    async def run_incremental(
+        self,
+        *,
+        connector: Connector,
+        user_id: UUID,
+        kind: str,
+        from_date: datetime,
+        to_date: datetime,
+        step: timedelta = timedelta(days=1),
+        throttle_seconds: float = 0.0,
+        on_progress: Callable[[int], None] | None = None,
+        on_windows_total: Callable[[int], None] | None = None,
+    ) -> BackfillResult:
+        # no coverage short-circuit, no trimming, no stored cursor: callers start at
+        # backfill_complete_to - 1 day, so the LEAST/GREATEST merge never hides a gap
+        if from_date >= to_date:
+            if on_windows_total is not None:
+                on_windows_total(0)
+            return BackfillResult(windows_processed=0, completed=True, next_cursor=None)
+
+        if on_windows_total is not None:
+            on_windows_total(math.ceil((to_date - from_date) / step))
+
+        cursor = to_date
+        windows_processed = 0
+        while cursor > from_date:
+            window_start = max(from_date, cursor - step)
+            if throttle_seconds > 0:
+                await asyncio.sleep(throttle_seconds)
+            await self.run_window(
+                connector=connector,
+                user_id=user_id,
+                kind=kind,
+                window=Window(start=window_start, end=cursor),
+            )
+            cursor = window_start
+            windows_processed += 1
+            if on_progress is not None:
+                on_progress(windows_processed)
+
+        await self._sync_state_repo.mark_backfill_complete(
+            user_id=user_id,
+            connector_id=connector.connector_id,
+            kind=kind,
+            complete_from=from_date,
+            complete_to=to_date,
+        )
+        return BackfillResult(
+            windows_processed=windows_processed,
+            completed=True,
+            next_cursor=None,
+            fetched_from=from_date,
+        )
+
     async def run_window(
         self,
         *,

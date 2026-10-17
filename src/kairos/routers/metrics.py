@@ -12,11 +12,7 @@ from kairos.db.rls import install_rls_listener
 from kairos.db.session import get_session
 from kairos.metrics.bootstrap import build_default_registry
 from kairos.metrics.registry import MetricRegistry
-from kairos.repositories.metrics_recompute import (
-    recompute_hr_bucket_seconds_daily,
-    recompute_metric_daily_values,
-    recompute_wellness_daily_stats,
-)
+from kairos.repositories.metrics_recompute import recompute_daily_tables
 
 router = APIRouter(prefix="/api/metrics", tags=["metrics"])
 
@@ -40,10 +36,7 @@ async def recompute_metrics(
     install_rls_listener(session, user_id)
     end = to_date or date.today()
     start = from_date or (end - timedelta(days=_RECOMPUTE_DEFAULT_DAYS))
-    await recompute_wellness_daily_stats(session, user_id=user_id, start=start, end=end)
-    await recompute_hr_bucket_seconds_daily(session, user_id=user_id, start=start, end=end)
-    await recompute_metric_daily_values(session, user_id=user_id, start=start, end=end)
-    await session.commit()
+    await recompute_daily_tables(session, user_id, start, end)
     return {"status": "ok", "from_date": start.isoformat(), "to_date": end.isoformat()}
 
 

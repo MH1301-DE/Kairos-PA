@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from uuid import UUID
 
 from kairos.db.models import ConversationMessage
+from kairos.repositories.conversation import ConversationRepository
 
 HISTORY_BUDGET_TOKENS = 12_000
 
@@ -82,3 +84,27 @@ def window_turns(
             break
         start = i
     return turns[start:], turns[:start]
+
+
+async def close_open_proposals(
+    conv_repo: ConversationRepository,
+    *,
+    user_id: UUID,
+    conversation_id: UUID,
+    history: list[ConversationMessage],
+) -> bool:
+    # an unanswered proposal leaves tool calls without results; close them in the DB
+    # (the closing row lands at the end; repair_history moves it next to its call)
+    answered = {m.tool_call_id for m in history if m.role == "tool"}
+    closed_any = False
+    for m in history:
+        for open_call in (m.tool_calls or []) if m.role == "assistant" else []:
+            if open_call["id"] not in answered:
+                answered.add(open_call["id"])
+                closed_any = True
+                await conv_repo.append_message(
+                    conversation_id=conversation_id, user_id=user_id, role="tool",
+                    content=tool_result_json(NOT_CONFIRMED),
+                    tool_call_id=open_call["id"],
+                )
+    return closed_any

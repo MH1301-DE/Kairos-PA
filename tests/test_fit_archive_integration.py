@@ -16,8 +16,8 @@ from kairos.activities.stream_repository import load_stream
 from kairos.connectors.types import RawFile, RawPayloadEnvelope, Window
 from kairos.db.models import Activity, RawPayload
 from kairos.db.rls import install_rls_listener
+from kairos.ingestion import garmin_sync
 from kairos.repositories.raw_payload import SqlRawPayloadRepository
-from kairos.routers import sync as sync_module
 from tests.test_fit_decoder import mini_fit_zip
 
 START = datetime(2026, 8, 4, 9, 0, tzinfo=UTC)
@@ -232,11 +232,11 @@ async def test_sync_hook_ingests_only_activity_fit_windows() -> None:
         payload={"activities": []},
         files=(_file("1", b"zip"),),
     )
-    hook = sync_module._make_fit_ingest_hook(session, uid, set())
+    hook = garmin_sync._make_fit_ingest_hook(session, uid, set())
 
     with (
-        patch.object(sync_module, "ingest_fit_files", AsyncMock(return_value=[])) as ingest,
-        patch.object(sync_module, "_derive_ingested", AsyncMock()) as derive,
+        patch.object(garmin_sync, "ingest_fit_files", AsyncMock(return_value=[])) as ingest,
+        patch.object(garmin_sync, "_derive_ingested", AsyncMock()) as derive,
     ):
         await hook("activity_list", envelope, 1, {"1": 5})
         await hook("activity_fit", envelope, 1, {"1": 5})

@@ -1,7 +1,7 @@
 """activity_stream_and_fit_archive
 
 Revision ID: 8c6af9fb1361
-Revises: 7a1c2e9d4b30
+Revises: 5c8e1d2f7a90
 Create Date: 2026-10-14 09:00:00.000000
 
 """
@@ -14,7 +14,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision: str = "8c6af9fb1361"
-down_revision: str | None = "7a1c2e9d4b30"
+down_revision: str | None = "5c8e1d2f7a90"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

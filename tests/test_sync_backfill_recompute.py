@@ -9,8 +9,10 @@ from uuid import uuid4
 
 import pytest
 
+from kairos.ingestion import garmin_sync
 from kairos.ingestion.job_registry import SyncJobRegistry
 from kairos.ingestion.service import BackfillResult
+from kairos.repositories import metrics_recompute
 from kairos.routers import sync as sync_module
 
 _FROM = datetime(2026, 8, 1, tzinfo=UTC)
@@ -40,13 +42,13 @@ def harness() -> Iterator[SimpleNamespace]:
     with (
         patch.object(sync_module, "async_session_factory", lambda: _FakeSessionCtx(session)),
         patch.object(sync_module, "install_rls_listener"),
-        patch.object(sync_module, "_build_garmin_client", AsyncMock(return_value=(object(), None))),
-        patch.object(sync_module, "GarminConnector"),
-        patch.object(sync_module, "SyncService", return_value=service),
-        patch.object(sync_module, "recompute_wellness_daily_stats", recompute.wellness),
-        patch.object(sync_module, "recompute_hr_bucket_seconds_daily", recompute.hr),
-        patch.object(sync_module, "recompute_metric_daily_values", recompute.metrics),
-        patch.object(sync_module, "derive_pending", AsyncMock(return_value=[])) as derive,
+        patch.object(garmin_sync, "_build_garmin_client", AsyncMock(return_value=(object(), None))),
+        patch.object(garmin_sync, "GarminConnector"),
+        patch.object(garmin_sync, "SyncService", return_value=service),
+        patch.object(metrics_recompute, "recompute_wellness_daily_stats", recompute.wellness),
+        patch.object(metrics_recompute, "recompute_hr_bucket_seconds_daily", recompute.hr),
+        patch.object(metrics_recompute, "recompute_metric_daily_values", recompute.metrics),
+        patch.object(garmin_sync, "derive_pending", AsyncMock(return_value=[])) as derive,
     ):
         yield SimpleNamespace(session=session, recompute=recompute, service=service, derive=derive)
 
@@ -114,7 +116,7 @@ async def test_recompute_failure_keeps_jobs_done(harness: SimpleNamespace) -> No
 @pytest.mark.asyncio
 async def test_reconciled_days_extend_recompute_start(harness: SimpleNamespace) -> None:
     async def _backfill(**_: Any) -> BackfillResult:
-        hook = sync_module.SyncService.call_args.kwargs["post_window"]
+        hook = garmin_sync.SyncService.call_args.kwargs["post_window"]
         envelope = SimpleNamespace(window=None, payload=[], files=())
         await hook("activity_list", envelope, 1, {})
         return BackfillResult(1, True, None, fetched_from=datetime(2026, 8, 5, tzinfo=UTC))
@@ -128,9 +130,9 @@ async def test_reconciled_days_extend_recompute_start(harness: SimpleNamespace) 
     )
     harness.service.run_backfill = AsyncMock(side_effect=_backfill)
     with (
-        patch.object(sync_module, "reconcile_deleted_activities", AsyncMock(return_value=marked)),
+        patch.object(garmin_sync, "reconcile_deleted_activities", AsyncMock(return_value=marked)),
         patch.object(
-            sync_module, "local_days_of_activities", AsyncMock(return_value={date(2026, 8, 2)})
+            garmin_sync, "local_days_of_activities", AsyncMock(return_value={date(2026, 8, 2)})
         ),
     ):
         await sync_module._run_backfill_task(

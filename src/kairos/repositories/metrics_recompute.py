@@ -117,3 +117,13 @@ async def recompute_metric_daily_values(
                     },
                 )
         day += timedelta(days=1)
+
+
+async def recompute_daily_tables(
+    session: AsyncSession, user_id: UUID, start: date, end: date
+) -> None:
+    # needs install_rls_listener(session, user_id); commits
+    await recompute_wellness_daily_stats(session, user_id=user_id, start=start, end=end)
+    await recompute_hr_bucket_seconds_daily(session, user_id=user_id, start=start, end=end)
+    await recompute_metric_daily_values(session, user_id=user_id, start=start, end=end)
+    await session.commit()

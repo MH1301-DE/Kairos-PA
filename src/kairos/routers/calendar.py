@@ -12,12 +12,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from kairos.auth.deps import current_user
 from kairos.calendar.free_time import BusyBlock, CalendarPrefs, FreeBlock, compute_free_blocks
+from kairos.calendar.sync import build_google_calendar_client as _build_google_calendar_client
 from kairos.connectors.google_calendar.connector import GoogleCalendarConnector
 from kairos.db.models import CalendarEvent, UserSetting
 from kairos.db.rls import install_rls_listener
 from kairos.db.session import get_session
 from kairos.repositories.calendar_event import CalendarEventRepository
-from kairos.routers.sync import _build_google_calendar_client
 
 router = APIRouter(prefix="/api/calendar", tags=["calendar"])
 

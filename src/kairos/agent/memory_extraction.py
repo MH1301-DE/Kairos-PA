@@ -10,7 +10,12 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kairos.agent.expiry import _parse_expiry
-from kairos.agent.history import HISTORY_BUDGET_TOKENS, split_turns, window_turns
+from kairos.agent.history import (
+    HISTORY_BUDGET_TOKENS,
+    close_open_proposals,
+    split_turns,
+    window_turns,
+)
 from kairos.agent.llm_client import get_completion
 from kairos.db.models import AgentMemory
 from kairos.repositories.conversation import ConversationRepository
@@ -69,41 +74,110 @@ async def compact_conversation(
     if not evicted:
         return []
 
-    memory_repo = SqlMemoryRepository(session=session)
     transcript = "\n".join(
         f"{m.role}: {m.content}"
         for turn in evicted for m in turn
         if m.role in ("user", "assistant") and m.content
-    )[-TRANSCRIPT_MAX_CHARS:]
-    active = await memory_repo.list_active(user_id=user_id, now=now)
-    stored = "\n".join(f"- {m.content}" for m in active) or "(nichts)"
+    )
     try:
-        response = await get_completion(
-            session, user_id=user_id,
-            messages=[
-                {"role": "system", "content": _EXTRACTION_PROMPT},
-                {
-                    "role": "user",
-                    "content": f"BEREITS GESPEICHERT:\n{stored}\n\nGESPRÄCH:\n{transcript}",
-                },
-            ],
-            tools=None,
-        )
-        items = _parse_items(response.choices[0].message.content)
+        items = await _extract(session, user_id=user_id, transcript=transcript, now=now)
     except Exception:
         logger.warning(
             "Memory extraction failed for conversation %s", conversation_id, exc_info=True
         )
         return []
 
-    created = [
-        await memory_repo.create(
-            user_id=user_id, content=content, source="agent", expires_at=expires_at
-        )
-        for content, expires_at in items
-    ]
+    created = await _store(session, user_id=user_id, items=items)
     await conv_repo.set_compacted_through(
         conversation_id=conversation_id, user_id=user_id, seq=evicted[-1][-1].seq
     )
     await session.commit()
     return created
+
+
+async def reset_context(
+    session: AsyncSession,
+    *,
+    user_id: UUID,
+    conversation_id: UUID,
+    exclude_seqs: set[int],
+    now: datetime,
+) -> bool:
+    """Moves compacted_through_seq to the end of the conversation (scheduler spec 8.3).
+
+    Open proposals are closed first. User lines whose seq is in exclude_seqs (the
+    scheduler's own prompts) are not extracted; without any other user line no LLM request
+    is made. If the extraction fails nothing is reset and False is returned.
+    """
+    conv_repo = ConversationRepository(session=session)
+    conversation = await conv_repo.get(user_id=user_id, conversation_id=conversation_id)
+    if conversation is None:
+        return False
+    after = conversation.compacted_through_seq
+    messages = await conv_repo.list_messages_after(
+        conversation_id=conversation_id, user_id=user_id, after_seq=after
+    )
+    if await close_open_proposals(
+        conv_repo, user_id=user_id, conversation_id=conversation_id, history=messages
+    ):
+        messages = await conv_repo.list_messages_after(
+            conversation_id=conversation_id, user_id=user_id, after_seq=after
+        )
+    if not messages:
+        return True
+    lines = [
+        f"{m.role}: {m.content}"
+        for m in messages
+        if m.content
+        and (m.role == "assistant" or (m.role == "user" and m.seq not in exclude_seqs))
+    ]
+    if any(line.startswith("user: ") for line in lines):
+        try:
+            items = await _extract(
+                session, user_id=user_id, transcript="\n".join(lines), now=now
+            )
+        except Exception:
+            await session.rollback()
+            logger.warning(
+                "Memory extraction before reset failed for conversation %s",
+                conversation_id, exc_info=True,
+            )
+            return False
+        await _store(session, user_id=user_id, items=items)
+    await conv_repo.set_compacted_through(
+        conversation_id=conversation_id, user_id=user_id, seq=messages[-1].seq
+    )
+    await session.commit()
+    return True
+
+
+async def _extract(
+    session: AsyncSession, *, user_id: UUID, transcript: str, now: datetime
+) -> list[tuple[str, datetime | None]]:
+    active = await SqlMemoryRepository(session=session).list_active(user_id=user_id, now=now)
+    stored = "\n".join(f"- {m.content}" for m in active) or "(nichts)"
+    response = await get_completion(
+        session, user_id=user_id,
+        messages=[
+            {"role": "system", "content": _EXTRACTION_PROMPT},
+            {
+                "role": "user",
+                "content": f"BEREITS GESPEICHERT:\n{stored}\n\n"
+                f"GESPRÄCH:\n{transcript[-TRANSCRIPT_MAX_CHARS:]}",
+            },
+        ],
+        tools=None,
+    )
+    return _parse_items(response.choices[0].message.content)
+
+
+async def _store(
+    session: AsyncSession, *, user_id: UUID, items: list[tuple[str, datetime | None]]
+) -> list[AgentMemory]:
+    memory_repo = SqlMemoryRepository(session=session)
+    return [
+        await memory_repo.create(
+            user_id=user_id, content=content, source="agent", expires_at=expires_at
+        )
+        for content, expires_at in items
+    ]

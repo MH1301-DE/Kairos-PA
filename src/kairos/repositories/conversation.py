@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kairos.db.models import Conversation, ConversationMessage
@@ -136,3 +136,39 @@ class ConversationRepository:
             )
         )
         return result.first() is not None
+
+    async def latest_seq(self, *, conversation_id: UUID, user_id: UUID) -> int | None:
+        result = await self._session.execute(
+            select(func.max(ConversationMessage.seq)).where(
+                ConversationMessage.conversation_id == conversation_id,
+                ConversationMessage.user_id == user_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def first_user_seq_after(
+        self, *, conversation_id: UUID, user_id: UUID, after_seq: int | None
+    ) -> int | None:
+        stmt = select(func.min(ConversationMessage.seq)).where(
+            ConversationMessage.conversation_id == conversation_id,
+            ConversationMessage.user_id == user_id,
+            ConversationMessage.role == "user",
+        )
+        if after_seq is not None:
+            stmt = stmt.where(ConversationMessage.seq > after_seq)
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
+    async def last_assistant_reply(self, *, conversation_id: UUID, user_id: UUID) -> str | None:
+        result = await self._session.execute(
+            select(ConversationMessage)
+            .where(
+                ConversationMessage.conversation_id == conversation_id,
+                ConversationMessage.user_id == user_id,
+                ConversationMessage.role == "assistant",
+                ConversationMessage.content.is_not(None),
+            )
+            .order_by(ConversationMessage.seq.desc())
+            .limit(20)
+        )
+        # tool_calls may be JSON null rather than SQL NULL, so filter here
+        return next((m.content for m in result.scalars() if not m.tool_calls), None)

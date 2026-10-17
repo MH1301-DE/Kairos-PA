@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from kairos.activities.reconcile import reconcile_deleted_activities
 from kairos.connectors.types import Window
+from kairos.ingestion import garmin_sync
 from kairos.repositories.data_read import SqlDataReadRepository
 from kairos.repositories.metrics_recompute import recompute_hr_bucket_seconds_daily
 from tests.stream_seed import seed_hr_stream
@@ -174,14 +175,13 @@ async def test_deleted_activity_vanishes_from_hr_buckets_readers_and_max_hr(
 @pytest.mark.asyncio
 async def test_activity_list_hook_reconciles_and_collects_days(session: AsyncSession) -> None:
     from kairos.connectors.types import RawPayloadEnvelope
-    from kairos.routers import sync as sync_module
 
     uid = await _user(session)
     start = datetime(2026, 8, 1, 9, 0, tzinfo=UTC)
     a = await _act(session, uid, "1", datetime(2026, 8, 1, 9, 0), start_at=start)
     await session.commit()
     days: set[date] = set()
-    hook = sync_module._make_fit_ingest_hook(session, uid, days)
+    hook = garmin_sync._make_fit_ingest_hook(session, uid, days)
 
     await hook("activity_list", RawPayloadEnvelope(window=WINDOW, payload=[]), 1, {})
 

@@ -14,8 +14,8 @@ from kairos.auth.deps import current_user
 from kairos.config import settings
 from kairos.db.rls import install_rls_listener
 from kairos.db.session import async_session_factory
+from kairos.ingestion.garmin_sync import GARMIN_COOLDOWN_SECONDS, _build_garmin_client
 from kairos.ingestion.job_registry import SyncJob, SyncJobRegistry, get_registry
-from kairos.routers.sync import _GARMIN_BACKFILL_COOLDOWN_SECONDS, _build_garmin_client
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ async def trigger_reprocess(
         raise HTTPException(status_code=409, detail="Garmin-Aktivitäten werden bereits verarbeitet")
 
     cooldown_remaining = registry.seconds_until_trigger_allowed(
-        user_id, "garmin", _GARMIN_BACKFILL_COOLDOWN_SECONDS
+        user_id, "garmin", GARMIN_COOLDOWN_SECONDS
     )
     if cooldown_remaining > 0:
         raise HTTPException(

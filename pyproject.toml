@@ -20,6 +20,7 @@ dependencies = [
     "simpleeval>=1.0",
     "litellm>=1.50",
     "openai>=1.0",
+    "tzdata>=2024.1",
 ]
 
 [project.optional-dependencies]

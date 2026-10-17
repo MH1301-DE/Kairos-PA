@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     # unlike Garmin/Google Calendar. Each user can still pick their own model
     # (user_setting.llm_model) as long as it works with this one key/provider.
     llm_api_key: str | None = None
+    # the in-process scheduler assumes exactly one API process (ADR-0007)
+    scheduler_enabled: bool = True
+    scheduler_tick_seconds: float = 30.0
+    scheduler_max_parallel_runs: int = 2
+    scheduler_agent_runs_per_day: int = 12
 
     @property
     def is_dev(self) -> bool:
