@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from kairos.activities.derive import service as service_module
 from kairos.activities.derive.common import ACTIVITY_DERIVED_ALGO_VERSION
-from kairos.activities.derive.service import derive_activity, derive_pending
+from kairos.activities.derive.service import derive_activity, derive_pending, rederive_all
 from kairos.activities.reconcile import reconcile_deleted_activities
 from kairos.activities.reprocess import reprocess_activities
 from kairos.activities.stream_repository import STREAM_ALGO_VERSION, replace_streams
@@ -442,3 +442,29 @@ async def test_fit_ingest_hook_derives_touched_activities(
     ).scalar_one()
     assert stats.hr_max == 150
     assert stats.quality == "ok"
+
+
+@pytest.mark.asyncio
+async def test_rederive_all_picks_up_hr_max_entered_after_sync(
+    session: AsyncSession, app_session: AsyncSession, fixture_messages: ActivityFixture
+) -> None:
+    # spec A.6: syncing first and entering HRmax later must not leave zones empty
+    uid = await _user(session, hr_max=None)
+    activity_id = await _fixture_activity(session, uid, fixture_messages, "late")
+    install_rls_listener(app_session, uid)
+    await derive_activity(app_session, user_id=uid, activity_id=activity_id)
+    await app_session.commit()
+    stats = await app_session.get(ActivityStats, activity_id)
+    assert stats is not None and stats.hr_zone_s is None and stats.trimp_edwards is None
+
+    await session.execute(
+        text("UPDATE user_setting SET hr_max_override = 190 WHERE user_id = :u"), {"u": str(uid)}
+    )
+    await session.commit()
+    outcomes = await rederive_all(app_session, user_id=uid)
+    await app_session.commit()
+
+    assert [o.status for o in outcomes] == ["derived"]
+    app_session.expire_all()
+    stats = await app_session.get(ActivityStats, activity_id)
+    assert stats is not None and stats.hr_zone_s and stats.trimp_edwards

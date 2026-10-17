@@ -13,6 +13,7 @@ from kairos.api import app
 from kairos.auth.deps import current_user
 from kairos.db.session import get_session
 from kairos.metrics.hr_zones import resolve_hr_max
+from kairos.routers import settings_profile
 
 
 async def _insert_user(session: AsyncSession, user_id: uuid.UUID) -> None:
@@ -228,3 +229,25 @@ async def test_profile_is_isolated_per_user(
             assert (await c.get("/api/settings/profile")).json() == _EMPTY
     finally:
         app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_hr_max_change_triggers_history_rederive(
+    client: AsyncClient, user_id: uuid.UUID, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[uuid.UUID] = []
+
+    async def _record(uid: uuid.UUID) -> None:
+        calls.append(uid)
+
+    monkeypatch.setattr(settings_profile, "_rederive_history", _record)
+    body = {"birth_date": None, "hr_max_override": 190, "resting_hr_override": None}
+    await client.put("/api/settings/profile", json=body)
+    assert calls == [user_id]
+
+    await client.put("/api/settings/profile", json=body)
+    await client.put("/api/settings/profile", json={**body, "resting_hr_override": 50})
+    assert calls == [user_id]
+
+    await client.put("/api/settings/profile", json={**body, "birth_date": "1990-05-01"})
+    assert calls == [user_id, user_id]

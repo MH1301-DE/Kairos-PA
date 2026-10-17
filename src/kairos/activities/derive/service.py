@@ -67,6 +67,20 @@ async def derive_pending(
     return [await _derive_safe(session, user_id, i, hr_settings) for i in ids]
 
 
+async def rederive_all(session: AsyncSession, *, user_id: UUID) -> list[DeriveOutcome]:
+    # zones and TRIMP depend on HRmax, so a settings change touches every activity
+    ids = list(
+        (
+            await session.execute(
+                select(Activity.id).where(
+                    Activity.user_id == user_id, Activity.deleted_at.is_(None)
+                )
+            )
+        ).scalars()
+    )
+    return await derive_pending(session, user_id=user_id, activity_ids=ids)
+
+
 async def _derive_safe(
     session: AsyncSession, user_id: UUID, activity_id: int, hr_settings: _HrSettings
 ) -> DeriveOutcome:
