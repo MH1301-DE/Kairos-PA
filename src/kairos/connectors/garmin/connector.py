@@ -9,7 +9,13 @@ from uuid import UUID
 
 from kairos.connectors.garmin.fit_decoder import decode_fit_zip, records_to_json
 from kairos.connectors.garmin.normalize import normalize_payload
-from kairos.connectors.types import CanonicalRecord, JSONValue, RawPayloadEnvelope, Window, WriteResult
+from kairos.connectors.types import (
+    CanonicalRecord,
+    JSONValue,
+    RawPayloadEnvelope,
+    Window,
+    WriteResult,
+)
 
 
 class GarminConnector:
