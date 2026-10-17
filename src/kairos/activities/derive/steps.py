@@ -142,6 +142,9 @@ def _target(
             scale = 1000 if kind == "speed" else 1
             low, high = raw_low / scale, raw_high / scale
         pair = _sorted_pair(low, high)
+        if pair is not None and kind == "cadence" and sport_profile == "running":
+            # FIT running cadence is per leg; the measured channel is already doubled to spm
+            pair = (pair[0] * 2, pair[1] * 2)
         return _Target(out, None, None, "unclear") if pair is None else _Target(out, *pair, "fit")
     if kind in _POWER_TARGETS:
         pair = _sorted_pair(raw_low, raw_high)

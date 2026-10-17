@@ -67,16 +67,20 @@ def _synthetic(
     pace_s_km: float = 300.0,
     hr: list[float | None] | None = None,
     hr_targets: dict[int, tuple[float, float]] | None = None,
+    cadence: float | None = None,
 ) -> StepResultRow:
     n = seconds + 1
     speed = 1000 / pace_s_km
+    channels: dict[str, list[float | None]] = {
+        "distance_m": [speed * i for i in range(n)],
+        "hr": hr if hr is not None else [140.0] * n,
+    }
+    if cadence is not None:
+        channels["cadence"] = [cadence] * n
     stream = LoadedStream(
         start_at=START,
         t_offset_s=list(range(n)),
-        channels={
-            "distance_m": [speed * i for i in range(n)],
-            "hr": hr if hr is not None else [140.0] * n,
-        },
+        channels=channels,
         source="fit_zip",
     )
     prep = prepare(stream, sport_profile="running", events=[])
@@ -372,3 +376,19 @@ def test_note_uses_fit_string_chunk_zero(
 ) -> None:
     step = {**_hr_step(2), "notes": notes, "wkt_step_name": name}
     assert _synthetic(60, step).step_note == expected
+
+
+def test_running_cadence_target_is_compared_in_steps_per_minute() -> None:
+    # FIT stores running cadence targets per leg, like the cadence channel itself
+    step = {
+        "message_index": 1,
+        "duration_type": "open",
+        "target_type": "cadence",
+        "custom_target_cadence_low": 81,
+        "custom_target_cadence_high": 85,
+        "intensity": "interval",
+    }
+    row = _synthetic(120, step, cadence=83.0)
+    assert (row.target_low, row.target_high) == (162.0, 170.0)
+    assert row.avg_cadence == pytest.approx(166.0)
+    assert row.hit is True
