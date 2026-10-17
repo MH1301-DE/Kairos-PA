@@ -360,3 +360,28 @@ async def test_activity_with_fit_payload_is_not_downloaded_again(
 
     assert garmin.calls == []
     assert result.fetched == 0 and result.aborted_reason is None
+
+
+@pytest.mark.asyncio
+async def test_reprocess_keeps_activities_deleted_in_garmin_deleted(
+    session: AsyncSession, app_session: AsyncSession
+) -> None:
+    # older archived lists still contain the activity; only a fresh sync may revive it
+    uid = await _user(session)
+    await _seed_list(session, uid)
+    await session.commit()
+    await _run(app_session, uid, FakeGarmin())
+    await session.execute(
+        text(
+            "UPDATE activity SET deleted_at = now(), deleted_reason = 'garmin_sync' "
+            "WHERE user_id = :u AND external_id = '1002'"
+        ),
+        {"u": str(uid)},
+    )
+    await session.commit()
+
+    await _run(app_session, uid, FakeGarmin())
+
+    app_session.expire_all()
+    gone = (await _activities(app_session, uid))["1002"]
+    assert gone.deleted_at is not None and gone.deleted_reason == "garmin_sync"

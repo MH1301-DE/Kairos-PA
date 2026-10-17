@@ -20,8 +20,10 @@ from kairos.db.models import (
 
 
 class SqlCanonicalRepository:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, *, revive_deleted: bool = True) -> None:
         self._session = session
+        # only a fresh Garmin list may clear deleted_at (spec A.3), not archived payloads
+        self._revive_deleted = revive_deleted
         # code → id, loaded lazily and cached for the session lifetime
         self._metric_cache: dict[str, int] = {}
 
@@ -133,7 +135,11 @@ class SqlCanonicalRepository:
             .values(user_id=user_id, external_id=record.external_id, **fields)
             .on_conflict_do_update(
                 constraint="uq_activity",
-                set_={**fields, "deleted_at": None, "deleted_reason": None},
+                set_=(
+                    {**fields, "deleted_at": None, "deleted_reason": None}
+                    if self._revive_deleted
+                    else fields
+                ),
             )
         )
         await self._session.execute(stmt)

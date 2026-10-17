@@ -158,7 +158,7 @@ async def _renormalize_activity_list(
         stmt = stmt.where(RawPayload.window_start < upper + _LIST_WINDOW_SLACK)
     # ascending, so the newest payload of an activity is written last and wins
     stmt = stmt.order_by(RawPayload.fetched_at, RawPayload.id)
-    canonical = SqlCanonicalRepository(session)
+    canonical = SqlCanonicalRepository(session, revive_deleted=False)
     for payload_id, blob in (await session.execute(stmt)).all():
         if blob is None:
             continue
