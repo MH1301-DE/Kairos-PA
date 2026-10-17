@@ -7,8 +7,6 @@ calling a service function (CalDAV spec 7, scheduler spec 5).
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal
 
@@ -36,6 +34,7 @@ from kairos.scheduler.types import (
     ActionContext,
     ActionFailed,
     ActionSkipped,
+    ActionSpec,
     StepOutcome,
 )
 
@@ -53,17 +52,6 @@ GarminKind = Literal[
     "activity_list",
     "activity_fit",
 ]
-
-
-@dataclass(frozen=True)
-class ActionSpec:
-    name: str
-    label: str
-    description: str
-    params: type[BaseModel]
-    timeout_s: float
-    min_interval_s: int
-    run: Callable[[ActionContext, Any], Awaitable[StepOutcome]] = field(repr=False)
 
 
 # --- parameter schemas --------------------------------------------------------------

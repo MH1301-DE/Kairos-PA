@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, TypedDict
 from uuid import UUID
@@ -55,6 +56,17 @@ class ActionContext:
     now: datetime
     previous: list[StepRecord]
     registry: SyncJobRegistry
+
+
+@dataclass(frozen=True)
+class ActionSpec:
+    name: str
+    label: str
+    description: str
+    params: type[BaseModel]
+    timeout_s: float
+    min_interval_s: int
+    run: Callable[[ActionContext, Any], Awaitable[StepOutcome]] = field(repr=False)
 
 
 STEP_LABELS = {

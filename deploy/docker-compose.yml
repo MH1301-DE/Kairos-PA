@@ -50,6 +50,7 @@ services:
   # --------------------------------------------------------------- API
   api:
     <<: *app-base
+    # one worker only -- the scheduler runs in-process (ADR-0007)
     command: uvicorn kairos.api:app --host 0.0.0.0 --port 8000
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]

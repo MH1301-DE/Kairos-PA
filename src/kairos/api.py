@@ -1,6 +1,11 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
 from kairos.auth.google import router as auth_router
+from kairos.config import settings
+from kairos.ingestion.job_registry import get_registry
 from kairos.routers.agent import router as agent_router
 from kairos.routers.calendar import router as calendar_router
 from kairos.routers.connections import router as connections_router
@@ -12,8 +17,26 @@ from kairos.routers.health import router as health_router
 from kairos.routers.memory import router as memory_router
 from kairos.routers.metrics import router as metrics_router
 from kairos.routers.sync import router as sync_router
+from kairos.scheduler.loop import SchedulerLoop, set_scheduler
 
-app = FastAPI(title="Kairos", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    # tests use ASGITransport, which skips the lifespan, so the loop never starts there
+    loop: SchedulerLoop | None = None
+    if settings.scheduler_enabled:
+        loop = SchedulerLoop(registry=get_registry())
+        set_scheduler(loop)
+        await loop.start()
+    try:
+        yield
+    finally:
+        if loop is not None:
+            await loop.stop()
+            set_scheduler(None)
+
+
+app = FastAPI(title="Kairos", version="0.1.0", lifespan=lifespan)
 app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(sync_router)
