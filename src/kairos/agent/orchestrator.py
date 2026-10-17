@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections import Counter
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -17,7 +18,7 @@ from kairos.agent.dispatcher import Proposal, ToolCall, dispatch, needs_confirma
 from kairos.agent.events import AgentEvent
 from kairos.agent.history import (
     HISTORY_BUDGET_TOKENS,
-    NOT_CONFIRMED,
+    close_open_proposals,
     repair_history,
     split_turns,
     tool_result,
@@ -49,6 +50,14 @@ class OrchestratorResult:
 
 class AgentTurnError(RuntimeError):
     pass
+
+
+# conversations with a turn in progress in this process; a scheduled agent step skips them
+_active_conversations: Counter[UUID] = Counter()
+
+
+def is_conversation_active(conversation_id: UUID) -> bool:
+    return _active_conversations[conversation_id] > 0
 
 
 def stream_turn(
@@ -100,6 +109,21 @@ async def run_turn(
 
 
 async def _run_loop(
+    session: AsyncSession, *, user_id: UUID, conversation_id: UUID, user_message: str | None
+) -> AsyncIterator[AgentEvent]:
+    _active_conversations[conversation_id] += 1
+    try:
+        async for event in _run_loop_inner(
+            session, user_id=user_id, conversation_id=conversation_id, user_message=user_message
+        ):
+            yield event
+    finally:
+        _active_conversations[conversation_id] -= 1
+        if _active_conversations[conversation_id] <= 0:
+            del _active_conversations[conversation_id]
+
+
+async def _run_loop_inner(
     session: AsyncSession, *, user_id: UUID, conversation_id: UUID, user_message: str | None
 ) -> AsyncIterator[AgentEvent]:
     conv_repo = ConversationRepository(session=session)
@@ -278,21 +302,9 @@ async def _load_llm_messages(
         conversation_id=conversation_id, user_id=user_id, after_seq=after_seq
     )
 
-    # an unanswered proposal leaves tool calls without results; close them in the DB
-    # (the closing row lands at the end; repair_history moves it next to its call)
-    answered = {m.tool_call_id for m in history if m.role == "tool"}
-    closed_any = False
-    for m in history:
-        for open_call in (m.tool_calls or []) if m.role == "assistant" else []:
-            if open_call["id"] not in answered:
-                answered.add(open_call["id"])
-                closed_any = True
-                await conv_repo.append_message(
-                    conversation_id=conversation_id, user_id=user_id, role="tool",
-                    content=tool_result_json(NOT_CONFIRMED),
-                    tool_call_id=open_call["id"],
-                )
-    if closed_any:
+    if await close_open_proposals(
+        conv_repo, user_id=user_id, conversation_id=conversation_id, history=history
+    ):
         history = await conv_repo.list_messages_after(
             conversation_id=conversation_id, user_id=user_id, after_seq=after_seq
         )
