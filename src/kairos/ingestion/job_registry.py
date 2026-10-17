@@ -6,8 +6,20 @@ import asyncio
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
+
+_PRUNE_AFTER = timedelta(hours=24)
+
+
+class SyncCooldown(Exception):
+    def __init__(self, retry_after_s: int) -> None:
+        super().__init__(f"cooldown, retry after {retry_after_s}s")
+        self.retry_after_s = retry_after_s
+
+
+class SyncBusy(Exception):
+    pass
 
 
 @dataclass
@@ -66,6 +78,7 @@ class SyncJobRegistry:
         to_date: str,
         windows_total: int | None = None,
     ) -> list[SyncJob]:
+        self.prune()
         jobs = []
         for kind in kinds:
             job = SyncJob(
@@ -80,6 +93,12 @@ class SyncJobRegistry:
             self._jobs[job.job_id] = job
             jobs.append(job)
         return jobs
+
+    def prune(self, older_than: timedelta = _PRUNE_AFTER) -> None:
+        cutoff = datetime.now(UTC) - older_than
+        for job_id, job in list(self._jobs.items()):
+            if job.finished_at is not None and datetime.fromisoformat(job.finished_at) < cutoff:
+                del self._jobs[job_id]
 
     def get_jobs_for_user(self, user_id: UUID) -> list[SyncJob]:
         return [j for j in self._jobs.values() if j.user_id == user_id]
@@ -106,6 +125,16 @@ class SyncJobRegistry:
 
     def record_trigger(self, user_id: UUID, connector: str) -> None:
         self._last_triggered_monotonic[(user_id, connector)] = time.monotonic()
+
+
+def acquire_trigger(
+    registry: SyncJobRegistry, user_id: UUID, connector: str, cooldown_s: float
+) -> None:
+    # check and record in one step, so button and scheduler share one cooldown
+    remaining = registry.seconds_until_trigger_allowed(user_id, connector, cooldown_s)
+    if remaining > 0:
+        raise SyncCooldown(int(remaining) + 1)
+    registry.record_trigger(user_id, connector)
 
 
 _registry = SyncJobRegistry()
