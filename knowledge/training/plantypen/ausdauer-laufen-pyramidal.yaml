@@ -1,0 +1,50 @@
+id: ausdauer-laufen-pyramidal
+version: 1
+titel: Wettkampfvorbereitung Laufen, pyramidale Verteilung
+hauptsport: laufen
+ziele: [wettkampf]
+bezugswerte:
+  pflicht: [vdot]
+  optional: [lthr_laufen, hf_max]
+parameter:
+  # pyramidal in Basis und Aufbau, polarisiert in der Spitze (Spec 1.3, Frage 3)
+  verteilung: pyramidal
+  verteilung_spitze: polarisiert
+  verteilungen:
+    pyramidal: {z1: 0.80, z2: 0.15, z3: 0.05}
+    polarisiert: {z1: 0.80, z2: 0.05, z3: 0.15}
+  entlastung_zyklus: 4
+  entlastung_umfang: -0.30
+  qualitaet_pro_woche: 2
+  kraft_pro_woche: {basis: 2, aufbau: 2, spitze: 1, taper: 1}
+  # nach Zieldistanz; Marathon laut Praxis bis drei Wochen
+  taper_tage: {marathon: 21, halbmarathon: 10, kurz: 8}
+  taper_umfang: -0.45
+  ruhetage_min: 1
+  detail_wochen: 2
+regeln:
+  - lauf.intensitaet.z1-anteil
+  - lauf.progression.einzellauf
+  - lauf.progression.wochenzuwachs
+  - lauf.progression.entlastung
+  - lauf.haeufigkeit.qualitaet
+  - lauf.einheit.long-run
+  - lauf.einheit.schwelle
+  - lauf.einheit.intervall
+  - lauf.einheit.wiederholung
+  - lauf.einheit.marathontempo
+  - alle.taper.standard
+  - kraft.abstand
+  - kraft.schwere-last
+phasen: lauf.phase.klassisch
+zonen: [lauf.zonen.vdot, lauf.zonen.lthr, lauf.zonen.hfmax]
+tests: [lauf.test.vdot]
+einheiten:
+  - lauf.einheit.locker
+  - lauf.einheit.long-run
+  - lauf.einheit.schwelle
+  - lauf.einheit.intervall
+  - lauf.einheit.wiederholung
+  - lauf.einheit.marathontempo
+  - lauf.einheit.test-10km
+  - kraft.schwere-last

@@ -20,7 +20,7 @@ dependencies = [
     "simpleeval>=1.0",
     "litellm>=1.50",
     "openai>=1.0",
-    "tzdata>=2024.1",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -30,6 +30,7 @@ dev = [
     "testcontainers[postgres]>=4",
     "ruff>=0.4",
     "mypy>=1.10",
+    "hypothesis>=6.100",
 ]
 
 [build-system]
