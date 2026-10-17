@@ -284,3 +284,18 @@ Ausführungen mit Abweichung > 1 s:
 **Erklärung der 3 Dauer-Ausreißer außerhalb der Kernstichprobe.** In 100 (Auslaufen), 156 und 160 (Ein-Schritt-Workouts „Basis“ über den ganzen Lauf) liegen Timer-Stopps in der Ausführung (21,9 s / 21,1 s / 89,1 s Pause). Kairos ist 1,1–2,9 s kürzer — dieselbe Ursache wie in V1: Die Ereignisse sind nur sekundengenau, und es kommt der Distanzversatz der ersten Runde hinzu. Bei 156 und 160 steckt darin auch die V1-Abweichung von km 1 (1,19 bzw. 1,76 s).
 
 Workouts mit nur einem Schritt in einer Wiederholung (aufeinanderfolgende gleiche Indizes) kommen in den Daten nicht vor. Atem-Workouts (54, 140, `breathwork`) sind keine Läufe und hier nicht enthalten.
+
+## Nachtrag 2026-10-17
+
+**Entscheidungen 2026-10-17** (Max hat sie delegiert: „Führe die Schritte alle selbst durch“; jeweils eine der im Bericht genannten Optionen):
+
+- **V7:** Die vorgeschlagene Zählregel gilt: „Ausführungen = Schritte × Wiederholungen“ zählt nur gelaufene Ausführungen. Damit ist V7 erfüllt (272, 402, 250; alle Workout-Läufe 40/43).
+- **Laufband:** keine Skalierung der Stream-Distanz auf die bearbeitete Garmin-Distanz in Stufe 1.
+- **V2:** Die Timer-Zeit bleibt (B.4). Der Sprungfilter liegt jetzt bei **12 m/s** statt 8,5 m/s: Er verwirft nur noch echte GPS-Sprünge, nicht mehr Sprints und GPS-Zittern in Intervall-Läufen. Neu gemessen: 5 km 75/86 = 87,2 %, 1 km 92/95 = 96,8 %; die 11 verbleibenden Ausreißer bei 5 km sind alle Timer- gegen Gesamtzeit (mit Gesamtzeit 100 %). V2 für 5 km bleibt damit strikt knapp unter 90 %, als Folge der Timer-Zeit-Regel.
+- **V4:** Option 1. `activity_stats.elev_gain_m`/`elev_loss_m` kommen aus `session.total_ascent`/`total_descent` der Uhr (barometrisch, = Garmins `elevationGain`), die eigene B.1-Regel nur noch, wenn die Uhr keinen Wert liefert, sowie für Splits und Kurven. Die Summe der Split-Höhenmeter ist deshalb nicht mehr exakt gleich dem Gesamtwert. Neu gemessen: 121/121 = 100 %.
+- `ACTIVITY_DERIVED_ALGO_VERSION` = 4; Dev-DB neu abgeleitet (139/139).
+
+Neu erzeugt mit `scripts/validate_activity_derivations.py` nach der Neuableitung (Version 4):
+V1, V3, V5, V6 unverändert erfüllt; V4 121/121; V2 wie oben. Seit dem Abschluss-Review
+gelten außerdem Kadenz-Ziele beim Laufen in spm (alle 17 Kadenz-Schritte jetzt bewertbar
+getroffen, vorher 0/17).

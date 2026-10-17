@@ -1456,9 +1456,9 @@ FIT keine gültigen Zeitstempel hat (praktisch ausgeschlossen).
    Fälle 1–16 gegen den Seed ebenfalls neu laufen lassen (Regression).
    Ersatzweise geprüft: 982 direkte Tool-Aufrufe gegen die echten 139 Aktivitäten,
    keine Abstürze, keine Obergrenze überschritten.
-2. **Entscheidungen aus dem Bericht V1–V7** (Spec §12.3, Nachtrag 2026-10-15): V7-Zählregel,
-   V2 Sprungfilter/Timer- vs. Gesamtzeit, V4 Höhenmeter (Wert der Uhr übernehmen?),
-   Laufband-Distanz nicht skalieren.
+2. ~~Entscheidungen aus dem Bericht V1–V7~~ — am 2026-10-17 getroffen (Spec §12.3,
+   „Entscheidungen 2026-10-17“): V7-Zählregel wie vorgeschlagen, Laufband nicht skalieren,
+   Sprungfilter 12 m/s, Höhenmeter-Summe von der Uhr. `ACTIVITY_DERIVED_ALGO_VERSION` = 4.
 3. **Push und Merge** nach `main`. `origin/main` (`3910b46`, inkl. Scheduler #9) ist in
    `stufe1-datenbasis` gemergt; der Branch ist nicht gepusht.
 

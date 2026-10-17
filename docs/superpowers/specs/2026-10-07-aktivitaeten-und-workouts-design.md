@@ -4,7 +4,7 @@
 |---|---|
 | **Datum** | 2026-10-07 |
 | **Status** | Design abgestimmt. **AP 0 (Verifikation) abgeschlossen am 2026-10-13**, Ergebnisse in §2.1; Fixtures unter `tests/fixtures/garmin/`. **Überarbeitet am 2026-10-13 nach dem Brainstorming** (Entscheidungen D1–D34, Prüfaufträge P1–P3): Diese Spec ist jetzt **Stufe 1**. |
-| **Umsetzung** | **AP 1a–3 umgesetzt** auf Branch `stufe1-datenbasis` (2026-10-14 bis 2026-10-17), Plan `docs/superpowers/plans/2026-10-13-stufe1-datenbasis-und-lese-tools.md`. Offen: Live-Eval 17–21/26 (LLM-Key), Entscheidungen zu V2, V4, V7 und Laufband (§12.3). |
+| **Umsetzung** | **AP 1a–3 umgesetzt** auf Branch `stufe1-datenbasis` (2026-10-14 bis 2026-10-17), Plan `docs/superpowers/plans/2026-10-13-stufe1-datenbasis-und-lese-tools.md`. Offen: Live-Eval 17–21/26 (LLM-Key). Entscheidungen zu V2, V4, V7 und Laufband am 2026-10-17 getroffen (§12.3). |
 | **Baut auf** | `03-agent-design.md` §4.2 · Agent-Harness v2 (`2026-10-05-agent-harness-v2-design.md`) · Phase 5 Planning (`2026-09-12-phase-5-planning-design.md`) |
 | **Ist-Stand** | Code- und DB-Prüfung vom 2026-10-07 (26 Fragen, inkl. Live-Abruf von `get_personal_record` und `get_activity_splits`); Prüfaufträge P1–P3 vom 2026-10-13 (§2.2) |
 | **Entscheidungen** | [`2026-10-13-brainstorming-entscheidungen.md`](2026-10-13-brainstorming-entscheidungen.md) (D1–D34, Stufenplan) |
@@ -502,7 +502,7 @@ CREATE TABLE activity_best_effort (
 - **Wann berechnet wird:** `sport_profile='running'`, `distance_source='gps'`, nicht gelöscht, und die Aktivität ist mindestens so lang wie die Zieldistanz. Laufband- und Indoor-Läufe werden nicht berechnet.
 - **Algorithmus:** Ein Zwei-Zeiger-Fenster über (Timer-Zeit, Distanz); die exakte Zieldistanz wird interpoliert. Aufwand O(n) je Distanz.
 - **Plausibilität:**
-  - Fenster mit einem Schritt über `BEST_EFFORT_MAX_STEP_SPEED_MPS` (Default 8,5 m/s) gelten als GPS-Sprung und werden verworfen.
+  - Fenster mit einem Schritt über `BEST_EFFORT_MAX_STEP_SPEED_MPS` (Default 12 m/s; bis 2026-10-17 8,5 m/s, siehe §12.3) gelten als GPS-Sprung und werden verworfen.
   - Fenster mit Lücken über 10 s, die nicht als Pause erkannt wurden, bekommen `quality='partial'`.
 - **Validierung:** Abschnitt 12.3 (V2, V3).
 
@@ -1587,7 +1587,16 @@ Die Validierung ergibt einen einmaligen Bericht in AP 2 und danach Regressionste
 - **V7, Zählregel (vorläufig, zur Bestätigung durch Max):** Vorschlag: „Ausführungen = Schritte × Wiederholungen“ zählt nur gelaufene Ausführungen. Ein geplanter Schritt, der nicht gelaufen wurde, ist keine Ausführung, z. B. die letzte Trabpause in 272: Auf das letzte Intervall folgt dort direkt das Auslaufen.
 - **V2, Timer- gegen Gesamtzeit:** B.4 bleibt bei der Timer-Zeit. Garmins `fastestSplit_*` misst die Gesamtzeit; Läufe mit Timer-Stopp im Fenster weichen deshalb ab. Strikt erreicht 5 km 81,4 %, mit Gesamtzeit 94,2 %. Offen (Entscheidung): Der Sprungfilter aus B.4 (ein 1-s-Schritt > 8,5 m/s verwirft das Fenster) trifft GPS-Zittern in Intervall-Läufen und echte Sprints. Ohne Filter erreichen beide Distanzen 100 %.
 - **V4:** Die Hysterese in B.1 gilt für Extremwerte. Hoch- und Tiefpunkte zählen voll, sobald die Gegenbewegung 2 m übersteigt; das ist kein Zähler in 2-m-Stufen (korrigiert am 2026-10-15). Auch damit verfehlt V4 das Kriterium: 58,7 %, Median 102 % von Garmin. Garmins Wert ist das `total_ascent`, das die Uhr selbst berechnet; mit Sekunden-Höhendaten in 0,2-m-Auflösung ist er nicht auf ±10 % nachzubauen. Offen (Entscheidung): Wert der Uhr übernehmen, Kriterium ändern oder V4 als nicht erreichbar festhalten.
-- **Laufband (vorläufig, zur Bestätigung durch Max):** keine Skalierung der Stream-Distanz auf die (bearbeitete) Garmin-Distanz in Stufe 1. Betroffen ist Aktivität 22 (5,3 statt 7,3 km); Splits und Pace je Schritt bleiben im Stream-Maßstab.
+- **Laufband (entschieden 2026-10-17, s. u.):** keine Skalierung der Stream-Distanz auf die (bearbeitete) Garmin-Distanz in Stufe 1. Betroffen ist Aktivität 22 (5,3 statt 7,3 km); Splits und Pace je Schritt bleiben im Stream-Maßstab.
+
+
+**Entscheidungen 2026-10-17** (Max hat sie delegiert: „Führe die Schritte alle selbst durch“; jeweils eine der im Bericht genannten Optionen):
+
+- **V7:** Die vorgeschlagene Zählregel gilt: „Ausführungen = Schritte × Wiederholungen“ zählt nur gelaufene Ausführungen. Damit ist V7 erfüllt (272, 402, 250; alle Workout-Läufe 40/43).
+- **Laufband:** keine Skalierung der Stream-Distanz auf die bearbeitete Garmin-Distanz in Stufe 1.
+- **V2:** Die Timer-Zeit bleibt (B.4). Der Sprungfilter liegt jetzt bei **12 m/s** statt 8,5 m/s: Er verwirft nur noch echte GPS-Sprünge, nicht mehr Sprints und GPS-Zittern in Intervall-Läufen. Neu gemessen: 5 km 75/86 = 87,2 %, 1 km 92/95 = 96,8 %; die 11 verbleibenden Ausreißer bei 5 km sind alle Timer- gegen Gesamtzeit (mit Gesamtzeit 100 %). V2 für 5 km bleibt damit strikt knapp unter 90 %, als Folge der Timer-Zeit-Regel.
+- **V4:** Option 1. `activity_stats.elev_gain_m`/`elev_loss_m` kommen aus `session.total_ascent`/`total_descent` der Uhr (barometrisch, = Garmins `elevationGain`), die eigene B.1-Regel nur noch, wenn die Uhr keinen Wert liefert, sowie für Splits und Kurven. Die Summe der Split-Höhenmeter ist deshalb nicht mehr exakt gleich dem Gesamtwert. Neu gemessen: 121/121 = 100 %.
+- `ACTIVITY_DERIVED_ALGO_VERSION` = 4; Dev-DB neu abgeleitet (139/139).
 
 ---
 
