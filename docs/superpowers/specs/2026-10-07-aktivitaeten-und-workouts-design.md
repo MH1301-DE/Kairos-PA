@@ -4,6 +4,7 @@
 |---|---|
 | **Datum** | 2026-10-07 |
 | **Status** | Design abgestimmt. **AP 0 (Verifikation) abgeschlossen am 2026-10-13**, Ergebnisse in §2.1; Fixtures unter `tests/fixtures/garmin/`. **Überarbeitet am 2026-10-13 nach dem Brainstorming** (Entscheidungen D1–D34, Prüfaufträge P1–P3): Diese Spec ist jetzt **Stufe 1**. |
+| **Umsetzung** | **AP 1a–3 umgesetzt** auf Branch `stufe1-datenbasis` (2026-10-14 bis 2026-10-17), Plan `docs/superpowers/plans/2026-10-13-stufe1-datenbasis-und-lese-tools.md`. Offen: Live-Eval 17–21/26 (LLM-Key), Entscheidungen zu V2, V4, V7 und Laufband (§12.3). |
 | **Baut auf** | `03-agent-design.md` §4.2 · Agent-Harness v2 (`2026-10-05-agent-harness-v2-design.md`) · Phase 5 Planning (`2026-09-12-phase-5-planning-design.md`) |
 | **Ist-Stand** | Code- und DB-Prüfung vom 2026-10-07 (26 Fragen, inkl. Live-Abruf von `get_personal_record` und `get_activity_splits`); Prüfaufträge P1–P3 vom 2026-10-13 (§2.2) |
 | **Entscheidungen** | [`2026-10-13-brainstorming-entscheidungen.md`](2026-10-13-brainstorming-entscheidungen.md) (D1–D34, Stufenplan) |
@@ -891,6 +892,15 @@ Effizienz ist hier Geschwindigkeit in m/min geteilt durch die Ø-HF, also Meter 
 ```
 
 Damit wird Referenzfrage 7 („beste 5-km-Zeit dieses Jahr“) mit `best_efforts(distances=["5k"], period="ytd")` beantwortet.
+
+**Nachtrag 2026-10-17 (Umsetzung AP 3).** Lücken in C.1–C.5, beim Umsetzen so entschieden:
+
+- `activity_splits(kind="lap")`, Spalte `typ`: Workout-Phase (Aufwärmen, Intervall, Erholung, Pause, Auslaufen) nur bei Runden mit `wkt_step_index`; sonst der Auslöser („Auto-Runde (Distanz)“, „manuell“, „Ende“), weil die Uhr auch normale Auto-Runden als `interval` markiert. `schritt` = `wkt_step_index + 1`.
+- `kind="steps"`: `wdh` „2/4“ nimmt als Gesamtzahl den höchsten gelaufenen Durchgang des Wiederholungsblocks (die geplante Zahl ist nicht gespeichert). `hf_med` ist hier der zeitgewichtete Mittelwert, `activity_step_result` hat keinen Median. HF-Ziele ohne bpm-Werte (Q3) erscheinen als „HF-Bereich (Ziel unbekannt)“ mit `getroffen` „–“.
+- Schwimmen, `kind="distance"`: Spalte `m` zeigt die aufsummierten Meter (100, 200, …). Blöcke à 5 Splits haben `unit` „5 km“ (Rad 25 km, Schwimmen 500 m).
+- `activity_analyze(compare)` hat zusätzlich die Zeile `zeit`; bei Schwimmen entfallen `hm_auf` und `effizienz`. `hr_drift` rechnet mit derselben Funktion wie `activity_stats.decoupling_pct` und liest dafür die Pausen-Ereignisse aus dem FIT-Archiv. `curve` liefert nur Daten; `render(TimeSeriesChart)` mit Minutenachse ist G.2 (AP 4).
+- `best_efforts`: Datum steht auch in `summary` („5 km 22:05 (20.09.2026)“), damit Eval 19 die Zahlen prüfen kann; ab `top_n > 1` kommt eine Spalte `rang` dazu. Fehlende Distanzen: „kein GPS-Lauf ≥ 21,1 km im Zeitraum“.
+- Tool-Smoke-Test gegen die echten 139 Aktivitäten (982 Aufrufe aller fünf Tools): keine Abstürze, keine Obergrenze überschritten.
 
 ---
 
