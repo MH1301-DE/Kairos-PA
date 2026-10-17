@@ -21,6 +21,7 @@ Nutzer über zwei Wochen stabil läuft, kommen weitere dazu.
 | 5 — Planung | ✅ `plan_propose`/`plan_commit`/`plan_adjust`/`plan_progress` | Insight-Job + Web Push (Proaktivität) nicht gebaut |
 | Frontend-Modernisierung + Designsystem „Ruhe“ | ✅ | — |
 | **Aktivitäten & Workouts** | Spec abgestimmt, nicht begonnen | siehe Abschnitt unten |
+| **Scheduler** (Stufe 2, D29–D34) | ✅ umgesetzt (Branch `feat/scheduler`, 2026-10-17), ADR-0007 | Real-Data-Lauf eine Woche, iPhone-Test; Insight-Job, Web Push, automatische Reaktionen (D30, D32) nicht Teil |
 | 6 — Multi-User-Rollout | offen | — |
 
 Die Checklisten der Phasen unten sind der ursprüngliche Plan; wo die Umsetzung
@@ -137,7 +138,8 @@ Token-Telemetrie nicht gemessen.
 - [ ] Planungsalgorithmus: Constraint-Erfüllung über freie Blöcke, Erholungszustand,
       Mindestabstände zwischen harten Einheiten
 - [ ] Agent-Tools: `plan_propose`, `plan_commit`, `plan_adjust`, `plan_progress`
-- [ ] Insight-Job (regelbasiert) + Web Push
+- [ ] Insight-Job (regelbasiert) + Web Push — der generische Scheduler (ADR-0007) ist
+      gebaut und kann den Agenten zu festen Zeiten fragen; Insight-Regeln und Push fehlen
 - [ ] Benachrichtigungseinstellungen je Nutzer
 
 **Abnahme:** Referenzfrage 13 und 15 werden vollständig und nachvollziehbar

@@ -35,4 +35,6 @@ COPY alembic.ini ./
 
 USER kairos
 EXPOSE 8000
+# exactly one worker: the in-process scheduler and its sync locks live in this process
+# (ADR-0007); never add --workers or WEB_CONCURRENCY > 1
 CMD ["uvicorn", "kairos.api:app", "--host", "0.0.0.0", "--port", "8000"]

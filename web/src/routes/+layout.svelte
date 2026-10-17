@@ -71,8 +71,14 @@
 		{ href: '/calendar', label: 'Kalender' },
 		{ href: '/goals', label: 'Ziele' },
 		{ href: '/memory', label: 'Gedächtnis' },
-		{ href: '/chat', label: 'Chat' }
+		{ href: '/chat', label: 'Chat' },
+		{ href: '/scheduler', label: 'Scheduler' }
 	] as const;
+
+	// a failed last run of an active job shows a dot on the "Scheduler" entry
+	function hasAlert(href: string): boolean {
+		return href === '/scheduler' && (data.schedulerFailed ?? 0) > 0;
+	}
 </script>
 
 {#snippet accountMenuContent()}
@@ -133,7 +139,12 @@
 				<a
 					href={resolve(item.href)}
 					class:active={isActive(item.href)}
-					aria-current={isActive(item.href) ? 'page' : undefined}>{item.label}</a
+					aria-current={isActive(item.href) ? 'page' : undefined}
+					>{item.label}{#if hasAlert(item.href)}<span
+							class="alert-dot"
+							title="Ein geplanter Lauf ist fehlgeschlagen"
+							aria-label="Ein geplanter Lauf ist fehlgeschlagen"
+						></span>{/if}</a
 				>
 			{/each}
 		</div>
@@ -186,7 +197,11 @@
 					<a
 						href={resolve(item.href)}
 						class:active={isActive(item.href)}
-						onclick={() => (mobileMenuOpen = false)}>{item.label}</a
+						onclick={() => (mobileMenuOpen = false)}
+						>{item.label}{#if hasAlert(item.href)}<span
+								class="alert-dot"
+								aria-label="Ein geplanter Lauf ist fehlgeschlagen"
+							></span>{/if}</a
 					>
 				{/each}
 			</div>
@@ -241,6 +256,17 @@
 	.nav-links a.active {
 		color: var(--accent);
 		background: var(--accent-subtle);
+	}
+	/* triangle mark like StatusPill's deviation tone: shape, not color alone */
+	.alert-dot {
+		display: inline-block;
+		width: 0;
+		height: 0;
+		margin-left: 6px;
+		vertical-align: middle;
+		border-left: 4px solid transparent;
+		border-right: 4px solid transparent;
+		border-bottom: 7px solid var(--status-deviation-mark);
 	}
 	.menu-root {
 		position: relative;

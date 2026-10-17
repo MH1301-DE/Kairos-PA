@@ -9,8 +9,10 @@ from uuid import uuid4
 
 import pytest
 
+from kairos.ingestion import garmin_sync
 from kairos.ingestion.job_registry import SyncJobRegistry
 from kairos.ingestion.service import BackfillResult
+from kairos.repositories import metrics_recompute
 from kairos.routers import sync as sync_module
 
 _FROM = datetime(2026, 8, 1, tzinfo=UTC)
@@ -40,12 +42,12 @@ def harness() -> Iterator[SimpleNamespace]:
     with (
         patch.object(sync_module, "async_session_factory", lambda: _FakeSessionCtx(session)),
         patch.object(sync_module, "install_rls_listener"),
-        patch.object(sync_module, "_build_garmin_client", AsyncMock(return_value=(object(), None))),
-        patch.object(sync_module, "GarminConnector"),
-        patch.object(sync_module, "SyncService", return_value=service),
-        patch.object(sync_module, "recompute_wellness_daily_stats", recompute.wellness),
-        patch.object(sync_module, "recompute_hr_bucket_seconds_daily", recompute.hr),
-        patch.object(sync_module, "recompute_metric_daily_values", recompute.metrics),
+        patch.object(garmin_sync, "_build_garmin_client", AsyncMock(return_value=(object(), None))),
+        patch.object(garmin_sync, "GarminConnector"),
+        patch.object(garmin_sync, "SyncService", return_value=service),
+        patch.object(metrics_recompute, "recompute_wellness_daily_stats", recompute.wellness),
+        patch.object(metrics_recompute, "recompute_hr_bucket_seconds_daily", recompute.hr),
+        patch.object(metrics_recompute, "recompute_metric_daily_values", recompute.metrics),
     ):
         yield SimpleNamespace(session=session, recompute=recompute, service=service)
 

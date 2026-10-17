@@ -101,7 +101,7 @@ ein Restrisiko, das bewusst akzeptiert wird.
 | Risiko | Wahrscheinlichkeit | Gegenmaßnahme |
 |---|---|---|
 | Garmin ändert API-Endpunkte oder Login | mittel (bereits zweimal eingetreten: garth 03/2026, mobile clientId 10/2026) | Connector-Abstraktion; Raw-Archiv bleibt erhalten; Login-Strategie konfigurierbar |
-| Garmin sperrt den Account | gering (bei konservativer Nutzung) | Drosselung, nur Token-Login, kein paralleles Abrufen desselben Kinds. Ein nächtliches Zeitfenster gibt es nicht (kein Scheduler) |
+| Garmin sperrt den Account | gering (bei konservativer Nutzung) | Drosselung, nur Token-Login, kein paralleles Abrufen desselben Kinds. Geplante Syncs laufen über den Scheduler (ADR-0007) mit Mindestabstand 60 min und demselben Cooldown wie der Button |
 | `python-garminconnect` wird nicht mehr gepflegt | gering | 500+ Forks; aktive Community |
 
 ### Geplante Schreibzugriffe (Workouts, Aktivitäten)

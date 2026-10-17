@@ -56,13 +56,13 @@ Der reale Nutzer liegt bei etwa 96 Aktivitäten im Jahr, also bei rund 40 % dies
 ## 2. `01-architektur.md`
 
 - [x] §2 Systemkontext: „LLM-API (Anthropic)“ → „LLM-API (über litellm, Anbieter wählbar)“; Apple CalDAV als Zielbild markieren
-- [x] §3 Containerdiagramm: Worker/Scheduler (arq) und Object Store als Zielbild markieren. Ist: FastAPI-BackgroundTasks, kein arq in den Dependencies, kein Object Store. „React/Svelte“ → SvelteKit
+- [x] §3 Containerdiagramm: Worker/Scheduler (arq) und Object Store als Zielbild markieren. Ist: FastAPI-BackgroundTasks, kein arq in den Dependencies, kein Object Store. „React/Svelte“ → SvelteKit *(historisch, Stand 2026-10-08; seit ADR-0007 gibt es den Scheduler im API-Prozess)*
 - [x] §4.1: Die Wiederholung über `sync_failure` ist nicht umgesetzt; die Tabelle existiert, wird aber nie geschrieben (`SyncService` ohne Repository, `sync.py:221`) → als offen markieren. Statt „Backfill mit niedrigerer Priorität“ gilt ein Lock je (Nutzer, Kind) plus 300 s Cooldown
 - [x] §4.2: Die Raw-Zone enthält keine FIT-Dateien, nur dekodiertes gzip-JSON (`record`, `session`, `lap`; laut neuer Spec zusätzlich `length`, `event`, `workout`, `workout_step`)
 - [x] §4.3: TRIMP ist kanonisch Edwards, Banister nur eine Variante. Derived-Tabellen sind `metric_daily_value`, `wellness_daily_stats`, `hr_bucket_seconds_daily`
 - [x] §4.4: „Memory Retrieval (pgvector)“ → Ist: `recall` per Substring über `agent_memory`, keine Embeddings. Tool Router, `search_tools`, `load_tools` → Zielbild
 - [x] §4.5: Die Modul-Registry steckt im Frontend (`web/src/lib/modules.ts`) plus Tabelle `user_dashboard_tile`; `module_registry`/`user_dashboard` existieren nicht
-- [x] §5.1 „Nächtlicher Sync 03:15 (garth)“ → Ist: kein Scheduler. Syncs manuell über UI/API; Recompute nach dem Backfill und per `POST /api/metrics/recompute`
+- [x] §5.1 „Nächtlicher Sync 03:15 (garth)“ → Ist: kein Scheduler. Syncs manuell über UI/API; Recompute nach dem Backfill und per `POST /api/metrics/recompute` *(historisch, Stand 2026-10-08; seit ADR-0007 gibt es den Scheduler im API-Prozess)*
 - [x] §5.2: Google-Watch-Channels/Push nicht gebaut, nur `syncToken`-Abruf (manuell ausgelöst); CalDAV nicht gebaut
 - [x] §5.3: `commit_proposal(proposal_id, idempotency_key)` → Bestätigung über `tool_call_id` (Harness v2), künftig über `proposal_snapshot` (neue Spec, G.1)
 - [x] §6 Tabelle:

@@ -12,14 +12,16 @@ export const load: PageServerLoad = async ({ fetch, url, depends }) => {
 			'/api/agent/conversations'
 		);
 		let messages: ChatMessage[] = [];
+		let compactedThroughSeq: number | null = null;
 		if (conversationId) {
-			const result = await apiGet<{ messages: ChatMessage[] }>(
-				fetch,
-				`/api/agent/conversations/${conversationId}/messages`
-			);
+			const result = await apiGet<{
+				messages: ChatMessage[];
+				compacted_through_seq?: number | null;
+			}>(fetch, `/api/agent/conversations/${conversationId}/messages`);
 			messages = result.messages;
+			compactedThroughSeq = result.compacted_through_seq ?? null;
 		}
-		return { conversations, messages, activeConversationId: conversationId };
+		return { conversations, messages, compactedThroughSeq, activeConversationId: conversationId };
 	} catch (err) {
 		if (err instanceof ApiError && err.status === 401) redirect(302, '/auth/login');
 		throw err;

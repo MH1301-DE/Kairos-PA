@@ -1,40 +1,38 @@
 from __future__ import annotations
 
-import asyncio
-import importlib
 import logging
-from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
-from typing import Any, cast
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from kairos.auth.crypto import decrypt, kek_from_settings, unwrap_dek
 from kairos.auth.deps import current_user
-from kairos.config import settings
-from kairos.connectors.garmin.connector import GarminConnector
-from kairos.connectors.google_calendar.client import GoogleCalendarClient
-from kairos.connectors.google_calendar.connector import GoogleCalendarConnector
+from kairos.calendar.sync import (
+    GOOGLE_CALENDAR_COOLDOWN_SECONDS,
+    CalendarNotConnected,
+    sync_google_calendar,
+)
 from kairos.connectors.types import Window
-from kairos.db.models import AppUser, Connection
 from kairos.db.rls import install_rls_listener
 from kairos.db.session import async_session_factory
-from kairos.ingestion.hash import payload_sha256
-from kairos.ingestion.job_registry import SyncJob, SyncJobRegistry, get_registry
-from kairos.ingestion.service import SyncService
-from kairos.repositories.calendar_event import CalendarEventRepository
-from kairos.repositories.canonical import SqlCanonicalRepository
-from kairos.repositories.metrics_recompute import (
-    recompute_hr_bucket_seconds_daily,
-    recompute_metric_daily_values,
-    recompute_wellness_daily_stats,
+from kairos.ingestion.garmin_sync import (
+    ALL_KINDS,
+    BUSY_MESSAGE,
+    GARMIN_COOLDOWN_SECONDS,
+    SYNC_FAILED_MESSAGE,
+    GarminSyncPlan,
+    sync_garmin,
 )
-from kairos.repositories.raw_payload import SqlRawPayloadRepository
-from kairos.repositories.sync_state import SqlSyncStateRepository
+from kairos.ingestion.job_registry import (
+    SyncBusy,
+    SyncCooldown,
+    SyncJob,
+    SyncJobRegistry,
+    acquire_trigger,
+    get_registry,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,20 +40,14 @@ router = APIRouter(prefix="/api/sync", tags=["sync"])
 
 _DEFAULT_BACKFILL_MONTHS = 24
 
-# minimum time between two backfill/sync triggers per (user, connector) -- guards
-# against rapid re-triggering causing repeated Garmin logins (a real incident once
-# tripped Garmin's Cloudflare bot-detection and locked the account out); a future
-# agent tool calls this same endpoint, so the cooldown protects it too
-_GARMIN_BACKFILL_COOLDOWN_SECONDS = 300.0
-_GOOGLE_CALENDAR_SYNC_COOLDOWN_SECONDS = 60.0
-
-# activity_fit must run after activity_list (FK dependency on activity.id)
-_ALL_KINDS: tuple[str, ...] = (
-    "hr_intraday", "sleep", "stress", "body_battery",
-    "hrv", "respiration", "spo2", "daily_summary",
-    "activity_list", "activity_fit",
-)
+# the scheduler and a future agent tool share these cooldowns (garmin_sync, calendar.sync)
+_ALL_KINDS = ALL_KINDS
 _VALID_KINDS = frozenset(_ALL_KINDS)
+
+_CALENDAR_ERRORS = {
+    "reauth_required": "Google-Kalender-Zugriff abgelaufen — bitte neu anmelden",
+    "unavailable": "Google Kalender nicht erreichbar",
+}
 
 
 class BackfillRequest(BaseModel):
@@ -74,15 +66,9 @@ async def trigger_garmin_backfill(
 ) -> dict[str, Any]:
     user_id = UUID(user["user_id"])
 
-    cooldown_remaining = registry.seconds_until_trigger_allowed(
-        user_id, "garmin", _GARMIN_BACKFILL_COOLDOWN_SECONDS
-    )
-    if cooldown_remaining > 0:
-        raise HTTPException(
-            status_code=429,
-            detail=f"Bitte {int(cooldown_remaining) + 1}s warten, bevor erneut synchronisiert wird",
-            headers={"Retry-After": str(int(cooldown_remaining) + 1)},
-        )
+    remaining = registry.seconds_until_trigger_allowed(user_id, "garmin", GARMIN_COOLDOWN_SECONDS)
+    if remaining > 0:
+        raise _cooldown_http(SyncCooldown(int(remaining) + 1))
 
     to_dt = _to_utc_midnight(req.to_date or date.today())
     from_dt = _to_utc_midnight(
@@ -97,7 +83,10 @@ async def trigger_garmin_backfill(
     if not queued:
         raise HTTPException(status_code=409, detail="All requested kinds are already running")
 
-    registry.record_trigger(user_id, "garmin")
+    try:
+        acquire_trigger(registry, user_id, "garmin", GARMIN_COOLDOWN_SECONDS)
+    except SyncCooldown as exc:
+        raise _cooldown_http(exc) from None
 
     # SyncService.run_backfill windows one calendar day at a time (its `step`
     # default) -- matches this count so the UI can show windows_processed as
@@ -125,6 +114,14 @@ async def trigger_garmin_backfill(
     return {"jobs": [j.to_dict() for j in jobs]}
 
 
+def _cooldown_http(exc: SyncCooldown) -> HTTPException:
+    return HTTPException(
+        status_code=429,
+        detail=f"Bitte {exc.retry_after_s}s warten, bevor erneut synchronisiert wird",
+        headers={"Retry-After": str(exc.retry_after_s)},
+    )
+
+
 @router.get("/status")
 async def sync_status(
     user: dict[str, Any] = Depends(current_user),
@@ -144,15 +141,10 @@ async def trigger_google_calendar_sync(
     if registry.is_locked(user_id, "google_calendar", "events"):
         raise HTTPException(status_code=409, detail="Sync already running")
 
-    cooldown_remaining = registry.seconds_until_trigger_allowed(
-        user_id, "google_calendar", _GOOGLE_CALENDAR_SYNC_COOLDOWN_SECONDS
-    )
-    if cooldown_remaining > 0:
-        raise HTTPException(
-            status_code=429,
-            detail=f"Bitte {int(cooldown_remaining) + 1}s warten, bevor erneut synchronisiert wird",
-            headers={"Retry-After": str(int(cooldown_remaining) + 1)},
-        )
+    try:
+        acquire_trigger(registry, user_id, "google_calendar", GOOGLE_CALENDAR_COOLDOWN_SECONDS)
+    except SyncCooldown as exc:
+        raise _cooldown_http(exc) from None
 
     from_dt = _to_utc_midnight(date.today() - timedelta(days=7))
     to_dt = _to_utc_midnight(date.today() + timedelta(days=83))
@@ -164,7 +156,6 @@ async def trigger_google_calendar_sync(
         from_date=from_dt.date().isoformat(),
         to_date=to_dt.date().isoformat(),
     )
-    registry.record_trigger(user_id, "google_calendar")
 
     background_tasks.add_task(
         _run_calendar_sync_task,
@@ -181,23 +172,6 @@ async def trigger_google_calendar_sync(
 # ── Background task ───────────────────────────────────────────────────────────
 
 
-def _make_on_progress(job: SyncJob) -> Callable[[int], None]:
-    # a plain lambda closing over the `for job in jobs` loop variable by
-    # reference triggered ruff's B023 (late-binding gotcha); binding `job` as
-    # this factory's parameter instead avoids that entirely, one call per job
-    def _on_progress(n: int) -> None:
-        job.windows_processed = n
-
-    return _on_progress
-
-
-def _make_on_windows_total(job: SyncJob) -> Callable[[int], None]:
-    def _on_windows_total(n: int) -> None:
-        job.windows_total = n
-
-    return _on_windows_total
-
-
 async def _run_backfill_task(
     *,
     user_id: UUID,
@@ -206,158 +180,14 @@ async def _run_backfill_task(
     jobs: list[SyncJob],
     registry: SyncJobRegistry,
 ) -> None:
+    plan = GarminSyncPlan(
+        kinds=[j.kind for j in jobs],
+        ranges={j.kind: (from_dt, to_dt) for j in jobs},
+        respect_coverage=True,
+    )
     async with async_session_factory() as session:
         install_rls_listener(session, user_id)
-
-        garmin, garmin_error = await _build_garmin_client(session, user_id)
-        if garmin is None:
-            for job in jobs:
-                job.status = "failed"
-                job.error = garmin_error or "No active Garmin connection or decryption failed"
-                job.finished_at = datetime.now(UTC).isoformat()
-            return
-
-        connector = GarminConnector(garmin)
-        service = SyncService(
-            raw_repo=SqlRawPayloadRepository(session=session),
-            canonical_repo=SqlCanonicalRepository(session=session),
-            sync_state_repo=SqlSyncStateRepository(session=session),
-            hash_payload=payload_sha256,
-        )
-
-        fetched_froms: list[datetime] = []
-        for job in jobs:
-            lock = registry.get_lock(user_id, "garmin", job.kind)
-            if lock.locked():
-                job.status = "skipped"
-                job.error = "Already running in another request"
-                job.finished_at = datetime.now(UTC).isoformat()
-                continue
-
-            async with lock:
-                job.status = "running"
-                job.started_at = datetime.now(UTC).isoformat()
-                try:
-                    result = await service.run_backfill(
-                        connector=connector,
-                        user_id=user_id,
-                        kind=job.kind,
-                        from_date=from_dt,
-                        to_date=to_dt,
-                        throttle_seconds=settings.garmin_backfill_throttle_seconds,
-                        # updates the in-memory job directly (no DB commit needed,
-                        # unlike the once-per-kind session.commit() below) so
-                        # GET /api/sync/status shows real progress mid-run instead
-                        # of 0 the entire time and then a jump to windows_total
-                        on_progress=_make_on_progress(job),
-                        # requested range is an upper bound; already-covered days are skipped
-                        on_windows_total=_make_on_windows_total(job),
-                    )
-                    await session.commit()
-                    job.status = "done"
-                    job.windows_processed = result.windows_processed
-                    if result.fetched_from is not None:
-                        fetched_froms.append(result.fetched_from)
-                except Exception as exc:
-                    await session.rollback()
-                    job.status = "failed"
-                    job.error = str(exc)
-                finally:
-                    job.finished_at = datetime.now(UTC).isoformat()
-
-        if fetched_froms:
-            await _recompute_after_sync(
-                session, user_id, start=min(fetched_froms).date(), end=date.today()
-            )
-
-
-async def _recompute_after_sync(
-    session: AsyncSession, user_id: UUID, *, start: date, end: date
-) -> None:
-    # derived tables are best-effort: a failure here must not flip the finished sync jobs
-    try:
-        await recompute_wellness_daily_stats(session, user_id=user_id, start=start, end=end)
-        await recompute_hr_bucket_seconds_daily(session, user_id=user_id, start=start, end=end)
-        await recompute_metric_daily_values(session, user_id=user_id, start=start, end=end)
-        await session.commit()
-    except Exception:
-        await session.rollback()
-        logger.exception("Metric recompute after backfill failed for user %s", user_id)
-
-
-async def _build_garmin_client(
-    session: AsyncSession, user_id: UUID
-) -> tuple[object | None, str | None]:
-    try:
-        # first() not scalar_one_or_none(): pre-existing duplicate rows must not raise here,
-        # the bare except below would turn that into an opaque "no connection" failure
-        conn_row = (await session.execute(
-            select(Connection).where(
-                Connection.user_id == user_id,
-                Connection.connector == "garmin",
-                Connection.status.in_(["active", "reauth_required"]),
-            ).order_by(Connection.connected_at.desc(), Connection.id.desc())
-        )).scalars().first()
-
-        if conn_row is None:
-            # info, not warning: the user simply has not connected Garmin yet
-            logger.info("No active Garmin connection for user %s", user_id)
-            return None, "No active Garmin connection or decryption failed"
-        if conn_row.credentials_enc is None:
-            logger.warning(
-                "Garmin connection %s for user %s has no stored credentials", conn_row.id, user_id
-            )
-            return None, "No active Garmin connection or decryption failed"
-
-        user_row = (await session.execute(
-            select(AppUser).where(AppUser.id == user_id)
-        )).scalar_one_or_none()
-
-        if user_row is None:
-            logger.warning("No app_user row for user %s while building Garmin client", user_id)
-            return None, "No active Garmin connection or decryption failed"
-        if user_row.dek_wrapped is None:
-            logger.warning("User %s has no wrapped DEK — cannot decrypt Garmin tokens", user_id)
-            return None, "No active Garmin connection or decryption failed"
-
-        kek = kek_from_settings(settings.kairos_kek)
-        dek = unwrap_dek(user_row.dek_wrapped, kek)
-        token_json = decrypt(conn_row.credentials_enc, dek).decode()
-
-        gc = importlib.import_module("garminconnect")
-        garmin = cast(Any, gc.Garmin())
-        try:
-            await asyncio.to_thread(garmin.login, token_json)
-        except gc.GarminConnectAuthenticationError as exc:
-            # Garmin rejected the stored token outright (expired/revoked session) --
-            # distinct from the generic except below, this needs the user to
-            # reconnect via POST /api/connections/garmin, not just a retry
-            _mark_reauth_required(conn_row, str(exc))
-            await session.commit()
-            logger.warning("Garmin token rejected for user %s: %s", user_id, exc)
-            return None, "Garmin-Sitzung abgelaufen — bitte unter Konto & Sync neu verbinden"
-
-        _mark_connection_healthy(conn_row)
-        await session.commit()
-        return garmin, None
-    except Exception as exc:
-        logger.warning("Garmin client build failed for user %s: %s", user_id, exc)
-        return None, "No active Garmin connection or decryption failed"
-
-
-def _mark_reauth_required(conn_row: Connection, error: str) -> None:
-    conn_row.status = "reauth_required"
-    conn_row.last_error = error
-    # set once, when the connection first breaks -- not bumped on every retry
-    if conn_row.reauth_since is None:
-        conn_row.reauth_since = datetime.now(UTC)
-
-
-def _mark_connection_healthy(conn_row: Connection) -> None:
-    conn_row.status = "active"
-    conn_row.last_error = None
-    conn_row.reauth_since = None
-    conn_row.last_ok_at = datetime.now(UTC)
+        await sync_garmin(session, user_id, plan, registry=registry, jobs=jobs)
 
 
 async def _run_calendar_sync_task(
@@ -368,81 +198,33 @@ async def _run_calendar_sync_task(
     jobs: list[SyncJob],
     registry: SyncJobRegistry,
 ) -> None:
+    del registry  # the core takes the shared lock itself
+    job = jobs[0]
     async with async_session_factory() as session:
         install_rls_listener(session, user_id)
-
-        client = await _build_google_calendar_client(session, user_id)
-        job = jobs[0]
-        if client is None:
+        job.status = "running"
+        job.started_at = datetime.now(UTC).isoformat()
+        try:
+            result = await sync_google_calendar(session, user_id, Window(start=from_dt, end=to_dt))
+        except SyncBusy:
+            job.status = "skipped"
+            job.error = BUSY_MESSAGE
+        except CalendarNotConnected:
             job.status = "failed"
             job.error = "No active Google Calendar connection or decryption failed"
-            job.finished_at = datetime.now(UTC).isoformat()
-            return
-
-        connector = GoogleCalendarConnector(client)
-        window = Window(start=from_dt, end=to_dt)
-
-        lock = registry.get_lock(user_id, "google_calendar", job.kind)
-        if lock.locked():
-            job.status = "skipped"
-            job.error = "Already running in another request"
-            job.finished_at = datetime.now(UTC).isoformat()
-            return
-
-        async with lock:
-            job.status = "running"
-            job.started_at = datetime.now(UTC).isoformat()
-            try:
-                envelope = await asyncio.to_thread(connector.fetch, user_id, job.kind, window)
-                records = connector.normalize(job.kind, envelope.payload)
-                repo = CalendarEventRepository(session)
-                written = await repo.upsert_from_records(user_id, "google_calendar", records)
-                await session.commit()
+        except Exception:
+            logger.exception("Calendar sync failed for user %s", user_id)
+            job.status = "failed"
+            job.error = SYNC_FAILED_MESSAGE
+        else:
+            if result["error_code"] is None:
                 job.status = "done"
-                job.windows_processed = written
-            except Exception as exc:
-                await session.rollback()
+                job.windows_processed = result["upserted"]
+            else:
                 job.status = "failed"
-                job.error = str(exc)
-            finally:
-                job.finished_at = datetime.now(UTC).isoformat()
-
-
-async def _build_google_calendar_client(
-    session: AsyncSession, user_id: UUID
-) -> GoogleCalendarClient | None:
-    try:
-        # first() not scalar_one_or_none(): pre-existing duplicate rows must not raise here,
-        # the bare except below would turn that into an opaque "no connection" failure
-        conn_row = (await session.execute(
-            select(Connection).where(
-                Connection.user_id == user_id,
-                Connection.connector == "google_calendar",
-                Connection.status.in_(["active", "reauth_required"]),
-            ).order_by(Connection.connected_at.desc(), Connection.id.desc())
-        )).scalars().first()
-
-        if conn_row is None or conn_row.credentials_enc is None:
-            return None
-
-        user_row = (await session.execute(
-            select(AppUser).where(AppUser.id == user_id)
-        )).scalar_one_or_none()
-
-        if user_row is None or user_row.dek_wrapped is None:
-            return None
-
-        kek = kek_from_settings(settings.kairos_kek)
-        dek = unwrap_dek(user_row.dek_wrapped, kek)
-        refresh_token = decrypt(conn_row.credentials_enc, dek).decode()
-
-        return GoogleCalendarClient(
-            refresh_token=refresh_token,
-            client_id=settings.google_client_id,
-            client_secret=settings.google_client_secret,
-        )
-    except Exception:
-        return None
+                job.error = _CALENDAR_ERRORS.get(result["error_code"], SYNC_FAILED_MESSAGE)
+        finally:
+            job.finished_at = datetime.now(UTC).isoformat()
 
 
 def _to_utc_midnight(d: date) -> datetime:

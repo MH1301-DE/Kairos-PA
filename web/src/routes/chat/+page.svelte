@@ -65,6 +65,7 @@
 							onclick={() => (mobileListOpen = false)}
 						>
 							{c.title ?? 'Neue Konversation'}
+							{#if c.scheduled_job_id}<span class="badge scheduler-badge">Scheduler</span>{/if}
 						</a>
 						<!-- eslint-enable svelte/no-navigation-without-resolve -->
 					</li>
@@ -103,6 +104,7 @@
 				<ChatThread
 					conversationId={data.activeConversationId}
 					messages={data.messages}
+					compactedThroughSeq={data.compactedThroughSeq}
 					initialDraft={question}
 				/>
 			{/key}

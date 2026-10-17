@@ -50,6 +50,7 @@ services:
   # --------------------------------------------------------------- API
   api:
     <<: *app-base
+    # one worker only -- the scheduler runs in-process (ADR-0007)
     command: uvicorn kairos.api:app --host 0.0.0.0 --port 8000
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]
@@ -98,8 +99,9 @@ services:
   # Zielbild laut docs/07-deployment-und-betrieb.md §1 -- noch nicht gebaut.
   # Siehe docs/superpowers/specs/2026-09-12-boot-lifecycle-design.md
   # "Bewusst nicht Teil dieser Spec" für die Begründung je Service:
-  #   - worker/scheduler: keine Jobqueue im Code (arq ist keine Dependency,
-  #     kairos.jobs/kairos.scheduler existieren nicht).
+  #   - worker/scheduler: erledigt durch ADR-0007 -- der Scheduler läuft im
+  #     api-Prozess (kairos.scheduler.loop), arq wird nicht eingeführt; die
+  #     Skizze unten bleibt nur als historischer Stand.
   #   - minio: kein Object-Storage-Code, FIT-Rohdaten werden nicht abgelegt.
   #   - backup: braucht erst eine Nutzerentscheidung zum Backup-Ziel
   #     (zweiter Standort/Anbieter, docs/07 §4.1).

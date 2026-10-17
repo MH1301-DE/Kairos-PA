@@ -441,6 +441,13 @@ einem eigenen Prozess, schützen sie nicht gegen einen parallelen Button-Klick (
 Postgres-Advisory-Lock je `(user_id, connector, kind)`). Scheduler-Läufe erscheinen nicht
 auf der `/sync`-Seite, solange Jobs nur im `SyncJobRegistry` stehen.
 
+**Erledigt (Scheduler-Spec, ADR-0007, 2026-10-17):** Der Scheduler läuft im API-Prozess,
+teilt also `SyncJobRegistry`, Sperren und Cooldowns mit den Buttons und legt dieselben
+`SyncJob`-Einträge an (sichtbar auf `/sync`). Bis AP 3 dieser Spec ruft die Aktion
+`calendar.sync` `calendar/sync.sync_google_calendar(session, user_id, window)` mit
+Signatur und `SyncResult` von `sync_calendar`, ohne `provider_id` und ohne Lösch-Abgleich;
+AP 3 ersetzt die Funktion dort. `calendar = "caldav"` lehnt der Scheduler bis dahin ab.
+
 ---
 
 ## 9. Arbeitspakete

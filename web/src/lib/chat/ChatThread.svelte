@@ -20,11 +20,17 @@
 	let {
 		conversationId,
 		messages,
+		compactedThroughSeq = null,
 		initialDraft = ''
-	}: { conversationId: string; messages: ChatMessage[]; initialDraft?: string } = $props();
+	}: {
+		conversationId: string;
+		messages: ChatMessage[];
+		compactedThroughSeq?: number | null;
+		initialDraft?: string;
+	} = $props();
 
 	// history is captured once; the parent remounts this component per conversation
-	let items = $state<Item[]>(untrack(() => historyToItems(messages)));
+	let items = $state<Item[]>(untrack(() => historyToItems(messages, compactedThroughSeq)));
 	let draft = $state(untrack(() => initialDraft));
 	let sending = $state(false);
 
@@ -181,6 +187,8 @@
 			</div>
 		{:else if item.kind === 'error'}
 			<p class="status-error">{item.text}</p>
+		{:else if item.kind === 'divider'}
+			<div class="context-divider" role="separator"><span>Ab hier neuer Kontext</span></div>
 		{/if}
 	{/each}
 </div>
@@ -200,6 +208,19 @@
 </form>
 
 <style>
+	.context-divider {
+		display: flex;
+		align-items: center;
+		gap: var(--space-3);
+		font: var(--type-caption);
+		color: var(--text-faint);
+	}
+	.context-divider::before,
+	.context-divider::after {
+		content: '';
+		flex: 1;
+		border-top: 1px solid var(--line-subtle);
+	}
 	.message-list {
 		display: flex;
 		flex-direction: column;

@@ -232,7 +232,9 @@ Throttle: 2 s Delay zwischen Fenstern beim Backfill
                            └─ f67b0560a2ad  user_setting
                                 └─ 339358b313ef  metrics_raw_tables
                                      └─ a3580dcb7b4a  calendar_event_and_calendar_prefs
-                                          └─ ad8779b9f2f5  wellness_quality_flag  ← HEAD
+                                          └─ ad8779b9f2f5  wellness_quality_flag
+                                               └─ … (Phase 4/5, Harness v2) 7a1c2e9d4b30  memory_expiry_and_compaction
+                                                    └─ 5c8e1d2f7a90  scheduler_tables  ← HEAD (Branch feat/scheduler)
 ```
 
 **Wichtig:** `6bf30be597a0` enthält **keine** Compression Policy mehr — TimescaleDB kann
@@ -955,6 +957,7 @@ anstoßen, dann `/calendar` gegen die echten Termine der nächsten zwei Wochen p
 | ADR-0004 | garminconnect statt garth | garth deprecated März 2026 (Cloudflare-Block) |
 | ADR-0005 | ECharts für Frontend | — |
 | ADR-0006 | Google OIDC | Kein eigenes Passwort-/MFA-Management |
+| ADR-0007 | Scheduler im API-Prozess | Teilt Locks/Cooldowns mit den Sync-Buttons; kein arq, kein cron; genau ein uvicorn-Worker |
 
 ---
 
@@ -1377,3 +1380,58 @@ auf den Ist-Stand bringt (ein Commit pro Datei, 2026-10-08).
   5 Nutzer × 5 Jahre ≈ 14 GB (reale Rate) bis ≈ 30 GB (Doku-Szenario) statt der früher
   dokumentierten 7–9 GB → VM mit ≥ 80 GB SSD empfohlen; welche VM gebucht wird, ist offen.
 - Das leere Verzeichnis `deploy/Caddyfile;C` wurde entfernt.
+
+---
+
+## Scheduler (2026-10-17, Branch `feat/scheduler`)
+
+Spec: `docs/superpowers/specs/2026-10-15-scheduler-design.md`, ADR-0007. Alle APs 1–8 umgesetzt,
+je AP ein Commit. Entscheidungen zu Spec §14 (Max, 2026-10-17): Kontext-Reset vor jedem Lauf mit
+Zitat; verpasste Läufe genau einmal nachholen, ohne Zeitgrenze; Fehlerpunkt am Nav-Eintrag;
+Garmin ≥ 60 min, ≤ 12 Agent-Läufe/Tag, ≤ 10 Jobs; Scheduler **vor** CalDAV (Google-Übergang).
+
+**Was jetzt gilt:**
+- **Service-Kerne:** `ingestion/garmin_sync.sync_garmin` (Button: `run_backfill`, Scheduler:
+  neues `SyncService.run_incremental` ab `backfill_complete_to − 1 Tag` bis morgen 00:00 UTC),
+  `calendar/sync.sync_google_calendar` (Signatur/`SyncResult` wie das spätere `sync_calendar`,
+  ohne `provider_id`, ohne Lösch-Abgleich), `metrics_recompute.recompute_daily_tables`.
+  Router sind dünne Hüllen. `SyncJobRegistry.prune` (24 h), `acquire_trigger` teilt den Cooldown
+  zwischen Button und Scheduler. Feste Fehlertexte statt `str(exc)` in `SyncJob.error`.
+- **Tabellen** `scheduled_job`, `scheduled_job_run` (RLS + FORCE), `SECURITY DEFINER`-Funktionen
+  `scheduler_due_jobs` / `scheduler_mark_interrupted` (nur IDs). Migration `5c8e1d2f7a90` auf
+  `7a1c2e9d4b30`. **Achtung beim Rebase auf `stufe1-datenbasis`:** dort ist der Head
+  `5d2f8a6c1e47`; `down_revision` dann umhängen, es darf nur ein Head bleiben.
+- **Loop** im FastAPI-`lifespan` (`SCHEDULER_ENABLED`, Tick 30 s, 2 parallele Läufe, 1 Lauf je
+  Nutzer). Beim Start werden laufende Läufe `interrupted`; überfällige Jobs laufen einmal als
+  `catch_up`. Warnung bei `WEB_CONCURRENCY > 1`. Lokal mit `--reload`: `SCHEDULER_ENABLED=false`.
+- **Agent-Schritt:** feste Konversation je Job, Prompt-Kopf mit Ortszeit und Schrittzahlen,
+  `reset_context` (schließt offene Proposals, extrahiert nur echte Nutzerzeilen, kein LLM-Call
+  ohne sie), `close_open_proposals` liegt jetzt in `agent/history.py`; der Orchestrator führt
+  aktive Konversationen (`is_conversation_active`).
+- **API** `/api/scheduler/*` (actions inkl. `default_timezone`, preview, jobs, run, runs, status);
+  `GET …/messages` liefert `seq` + `compacted_through_seq`, die Konversationsliste
+  `scheduled_job_id`.
+- **Frontend** `/scheduler`, `/scheduler/new`, `/scheduler/[id]`; Nav-Eintrag mit Dreieck bei
+  fehlgeschlagenem letzten Lauf; Chat-Trennlinie „Ab hier neuer Kontext“ und Badge.
+- **Abhängigkeiten:** `tzdata` neu (zoneinfo unter Windows/slim). `garminconnect` auf
+  `>=0.3.17,<0.3.18` gepinnt: `uv.lock` ist unvollständig (55 Pakete), CI löst bei jedem Lauf neu
+  auf und hätte 0.3.19 gezogen (bricht `test_garmin_workout_methods`). Lockfile neu erzeugen ist
+  ein offener Punkt.
+
+**Tests:** 530 passed, 0 skipped (Docker); Vitest 116 passed; `npm run check` 0/0.
+Lokal gegen Wegwerf-Postgres/Redis geprüft: Job anlegen → Loop-Lauf, Neustart → `interrupted` und
+genau ein `catch_up`, Seiten per SSR und auf iPhone-13-Viewport (Playwright).
+
+**Offen / manuell:** Real-Data-Lauf (eine Woche „Morgen-Briefing“ + „Garmin alle 2 h, 08–20 Uhr“),
+Test auf dem iPhone, Neustart-Test aus AP 5 gegen die echte Instanz. `ruff format --check` über das
+ganze Repo ist schon auf `main` rot (78 Dateien); neue Dateien sind formatiert.
+
+## CalDAV AP 0 (2026-10-17, Branch `feat/caldav-ap0`)
+
+`scripts/caldav_verify.py` prüft die 13 Punkte aus CalDAV-Spec §12 gegen iCloud (Aufruf im
+Skriptkopf; Zugangsdaten nur aus `ICLOUD_USERNAME`/`ICLOUD_APP_PASSWORD`). Gegen einen lokalen
+Radicale-Server durchgetestet (eigener und vorhandener Testkalender, fremder Termin bleibt
+byte-gleich, Fixtures ohne Fremddaten). Befunde in Spec §2/§12, `04` §4 und das Pinnen der
+Bibliotheksversion folgen, sobald Max die Ausgabe des echten Laufs liefert. Hinweis aus dem
+Testlauf: `caldav` 3.5 zieht `urllib3-future` nach, das den Importnamen `urllib3` überdeckt.
+

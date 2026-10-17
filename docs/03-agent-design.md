@@ -373,8 +373,14 @@ Im System-Prompt fest verankert:
 
 ## 7. Proaktivität
 
-> **Zielbild (nicht umgesetzt).** Es gibt keinen Insight-Job, keinen Scheduler und
-> kein Web Push. Der Agent antwortet heute nur auf Anfragen.
+> **Ist:** Der Scheduler (ADR-0007) kann den Agenten zu festen Zeiten mit einem festen
+> Prompt fragen (Aktion `agent.prompt`, z. B. „Morgen-Briefing“). Jeder Job hat eine
+> eigene Konversation; vor jedem Lauf wird der Kontext über `compacted_through_seq`
+> zurückgesetzt (Nutzeraussagen gehen vorher als Erinnerungen ins Gedächtnis, die letzte
+> Antwort wird zitiert). Höchstens 12 geplante Agent-Läufe je Nutzer und Tag,
+> Mindestabstand 60 min. Proposals bleiben offen, bis der Nutzer sie im Chat bestätigt.
+>
+> **Zielbild (nicht umgesetzt):** der regelbasierte Insight-Job und Web Push unten.
 
 Der Agent wird nicht nur gefragt, er meldet sich — aber kontrolliert:
 

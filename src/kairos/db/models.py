@@ -11,6 +11,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Identity,
+    Index,
     Integer,
     LargeBinary,
     SmallInteger,
@@ -19,9 +20,9 @@ from sqlalchemy import (
     Time,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy.sql import func
+from sqlalchemy.sql import func, text
 
 
 class Base(DeclarativeBase):
@@ -578,4 +579,87 @@ class AgentMemory(Base):
 
     __table_args__ = (
         CheckConstraint("source IN ('user', 'agent')", name="agent_memory_source_check"),
+    )
+
+
+class ScheduledJob(Base):
+    __tablename__ = "scheduled_job"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app_user.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    cron_exprs: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
+    timezone: Mapped[str] = mapped_column(Text, nullable=False, server_default="Europe/Berlin")
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    steps: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("conversation.id", ondelete="SET NULL")
+    )
+    context_reset_every: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, server_default="1"
+    )
+    agent_runs_since_reset: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, server_default="0"
+    )
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # set by the claim, cleared when the run ends
+    running_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    last_status: Mapped[str | None] = mapped_column(Text)
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    consecutive_failures: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, server_default="0"
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("char_length(name) BETWEEN 1 AND 80", name="scheduled_job_name_check"),
+        CheckConstraint(
+            "cardinality(cron_exprs) BETWEEN 1 AND 6", name="scheduled_job_cron_exprs_check"
+        ),
+        CheckConstraint(
+            "context_reset_every BETWEEN 0 AND 30", name="scheduled_job_context_reset_check"
+        ),
+        Index(
+            "ix_scheduled_job_due",
+            "next_run_at",
+            postgresql_where=text("enabled AND running_since IS NULL"),
+        ),
+    )
+
+
+class ScheduledJobRun(Base):
+    __tablename__ = "scheduled_job_run"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("scheduled_job.id", ondelete="CASCADE"), nullable=False
+    )
+    # redundant to scheduled_job.user_id so the RLS policy needs no join
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app_user.id", ondelete="CASCADE"), nullable=False
+    )
+    trigger: Mapped[str] = mapped_column(Text, nullable=False)
+    scheduled_for: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    skip_reason: Mapped[str | None] = mapped_column(Text)
+    steps: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, server_default="[]"
+    )
+    prompt_message_seq: Mapped[int | None] = mapped_column(BigInteger)
+
+    __table_args__ = (
+        CheckConstraint(
+            "trigger IN ('schedule', 'catch_up', 'manual')", name="scheduled_job_run_trigger_check"
+        ),
+        CheckConstraint(
+            "status IN ('running', 'ok', 'failed', 'skipped', 'interrupted')",
+            name="scheduled_job_run_status_check",
+        ),
+        Index("ix_scheduled_job_run_job_started", "job_id", text("started_at DESC")),
     )
