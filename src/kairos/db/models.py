@@ -696,9 +696,29 @@ class Plan(Base):
     status: Mapped[str] = mapped_column(Text, nullable=False, default="draft")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    goal_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("goal.id", ondelete="SET NULL")
+    )
+    # NULL = phase-5 plan from before the coach mode
+    plan_type: Mapped[str | None] = mapped_column(Text)
+    plan_type_version: Mapped[int | None] = mapped_column(Integer)
+    # plan-type parameters frozen when the plan was generated
+    parameters: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    # single sessions exist up to this day, phases beyond it (D21)
+    detail_until: Mapped[date | None] = mapped_column(Date)
 
     __table_args__ = (
-        CheckConstraint("status IN ('draft', 'committed', 'abandoned')", name="plan_status_check"),
+        CheckConstraint(
+            "status IN ('draft', 'committed', 'abandoned', 'completed')", name="plan_status_check"
+        ),
+        Index(
+            "uq_plan_active",
+            "user_id",
+            unique=True,
+            postgresql_where=text("status = 'committed'"),
+        ),
     )
 
 
@@ -719,13 +739,168 @@ class PlanBlock(Base):
         UUID(as_uuid=True), ForeignKey("calendar_event.id", ondelete="SET NULL")
     )
     status: Mapped[str] = mapped_column(Text, nullable=False, default="planned")
+    phase_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plan_phase.id", ondelete="SET NULL")
+    )
+    sport: Mapped[str | None] = mapped_column(Text)
+    # unit from the knowledge base, e.g. lauf.einheit.schwelle; workout_type stays the coarse class
+    unit_id: Mapped[str | None] = mapped_column(Text)
+    start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    planned_duration_s: Mapped[int | None] = mapped_column(Integer)
+    planned_distance_m: Mapped[int | None] = mapped_column(Integer)
+    steps: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    # id@version of the knowledge entries that produced this block (D24)
+    rule_refs: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), nullable=False, default=list, server_default=text("'{}'")
+    )
+    override_reason: Mapped[str | None] = mapped_column(Text)
+    activity_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("activity.id", ondelete="SET NULL")
+    )
 
     __table_args__ = (
         CheckConstraint(
-            "workout_type IN ('long_run', 'hard', 'easy', 'rest')",
+            "workout_type IN ('long_run', 'hard', 'easy', 'rest', 'quality', 'strength', 'cross',"
+            " 'test')",
             name="plan_block_workout_type_check",
         ),
-        CheckConstraint("status IN ('planned', 'done', 'skipped')", name="plan_block_status_check"),
+        CheckConstraint(
+            "status IN ('planned', 'done', 'skipped', 'partial', 'replaced')",
+            name="plan_block_status_check",
+        ),
+    )
+
+
+class PlanPhase(Base):
+    __tablename__ = "plan_phase"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    plan_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plan.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app_user.id", ondelete="CASCADE"), nullable=False
+    )
+    seq: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    focus: Mapped[str | None] = mapped_column(Text)
+    volume_min_km: Mapped[float | None] = mapped_column(Float)
+    volume_max_km: Mapped[float | None] = mapped_column(Float)
+    rule_refs: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), nullable=False, default=list, server_default=text("'{}'")
+    )
+
+    __table_args__ = (
+        UniqueConstraint("plan_id", "seq", name="uq_plan_phase_seq"),
+        CheckConstraint(
+            "kind IN ('basis', 'aufbau', 'spitze', 'taper', 'wettkampf', 'uebergang')",
+            name="plan_phase_kind_check",
+        ),
+        CheckConstraint("start_date <= end_date", name="plan_phase_dates_check"),
+    )
+
+
+class PlanReview(Base):
+    __tablename__ = "plan_review"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    plan_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plan.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app_user.id", ondelete="CASCADE"), nullable=False
+    )
+    week_start: Mapped[date] = mapped_column(Date, nullable=False)
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("conversation.id", ondelete="SET NULL")
+    )
+    facts: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text)
+    changes: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("plan_id", "week_start", name="uq_plan_review_week"),
+        CheckConstraint(
+            "summary IS NULL OR char_length(summary) <= 1000", name="plan_review_summary_check"
+        ),
+    )
+
+
+class CoachProfile(Base):
+    __tablename__ = "coach_profile"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app_user.id", ondelete="CASCADE"), primary_key=True
+    )
+    plan_type: Mapped[str] = mapped_column(Text, nullable=False)
+    main_sport: Mapped[str] = mapped_column(Text, nullable=False)
+    supplementary: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), nullable=False, default=list, server_default=text("'{}'")
+    )
+    # per weekday (mo..so): {"max_min": int, "quality": bool, "time": "HH:MM" optional}
+    availability: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    parameters: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    # 0 = Monday; default Sunday 19:00 (D21, coach spec 1.3)
+    review_weekday: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, default=6, server_default=text("6")
+    )
+    review_time: Mapped[time] = mapped_column(
+        Time, nullable=False, default=time(19, 0), server_default=text("'19:00'")
+    )
+    onboarded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "main_sport IN ('laufen', 'rad', 'triathlon')", name="coach_profile_main_sport_check"
+        ),
+        CheckConstraint(
+            "review_weekday BETWEEN 0 AND 6", name="coach_profile_review_weekday_check"
+        ),
+    )
+
+
+class AthleteReferenceValue(Base):
+    __tablename__ = "athlete_reference_value"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=False), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app_user.id", ondelete="CASCADE"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    value: Mapped[float] = mapped_column(Float, nullable=False)
+    measured_on: Mapped[date] = mapped_column(Date, nullable=False)
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    activity_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("activity.id", ondelete="SET NULL")
+    )
+    note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('vdot', 'lthr_laufen', 'lthr_rad', 'ftp', 'css', 'critical_speed')",
+            name="athlete_reference_value_kind_check",
+        ),
+        CheckConstraint(
+            "source IN ('test', 'wettkampf', 'manuell', 'bestleistung')",
+            name="athlete_reference_value_source_check",
+        ),
+        CheckConstraint("value > 0", name="athlete_reference_value_positive_check"),
+        Index("ix_reference_value_current", "user_id", "kind", text("measured_on DESC")),
     )
 
 
