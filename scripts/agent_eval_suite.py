@@ -575,8 +575,9 @@ def _print_result(result: EvalResult) -> None:
     )
     if result.error:
         print(f"       Fehler: {result.error[:300]}")
-    for problem in result.numbers_match()[1]:
-        print(f"       Zahlen: {problem}")
+    elif result.tool_selection_ok:
+        for problem in result.numbers_match()[1]:
+            print(f"       Zahlen: {problem}")
     if result.proposal:
         print(f"       Proposal: {result.proposal}")
     if result.reply:
