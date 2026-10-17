@@ -184,7 +184,8 @@ def _normalize_respiration(payload: JSONValue) -> list[CanonicalRecord]:
 def _normalize_spo2(payload: JSONValue) -> list[CanonicalRecord]:
     # get_pulse_ox_data — two possible shapes:
     # a) continuous: {"continuousReadingDTOList": [{"startGMT": "...", "value": 97}]}
-    # b) hourly:     {"spO2HourlyAverages": {"spO2HourlyAverages": [{"startGMT": "...", "spO2Value": 97}]}}
+    # b) hourly:     {"spO2HourlyAverages": {"spO2HourlyAverages":
+    #                    [{"startGMT": "...", "spO2Value": 97}]}}
     if not isinstance(payload, dict):
         return []
     records: list[CanonicalRecord] = []
@@ -249,8 +250,10 @@ def _normalize_daily_summary(payload: JSONValue) -> list[CanonicalRecord]:
         record_type="daily_summary",
         external_id=f"daily:{date_str[:10]}",
         occurred_at=day_dt,
-        data={"summary_type": "garmin_stats", **{k: v for k, v in payload.items()
-                                                  if isinstance(v, int | float | str | bool | type(None))}},
+        data={"summary_type": "garmin_stats", **{
+            k: v for k, v in payload.items()
+            if isinstance(v, int | float | str | bool | type(None))
+        }},
     )]
 
 
