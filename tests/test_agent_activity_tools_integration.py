@@ -14,10 +14,16 @@ from kairos.activities.derive import service as service_module
 from kairos.activities.derive.service import derive_activity
 from kairos.activities.stream_repository import STREAM_ALGO_VERSION, replace_streams
 from kairos.activities.streams import StreamSet
-from kairos.agent.activity_tools import activity_get_handler, activity_search_handler
-from kairos.agent.format import CHARS_PER_TOKEN
+from kairos.agent import activity_tools
+from kairos.agent.activity_tools import (
+    activity_analyze_handler,
+    activity_get_handler,
+    activity_search_handler,
+    activity_splits_handler,
+)
+from kairos.agent.format import CHARS_PER_TOKEN, MINUS, fmt_duration
 from kairos.agent.tools import TOOLS_BY_NAME
-from kairos.db.models import Activity, SyncState
+from kairos.db.models import Activity, ActivitySplit, SyncState
 from kairos.db.rls import install_rls_listener
 from tests.activity_fixtures import (
     AUTO_LAP_RUN,
@@ -59,6 +65,13 @@ class Seeded:
 
 def _tokens(env: dict[str, Any]) -> float:
     return len(json.dumps(env, ensure_ascii=False)) / CHARS_PER_TOKEN
+
+
+def _clock_s(text: str) -> int:
+    seconds = 0
+    for part in text.split(":"):
+        seconds = seconds * 60 + int(part)
+    return seconds
 
 
 async def _user(session: AsyncSession) -> uuid.UUID:
@@ -132,6 +145,7 @@ def fixtures(monkeypatch: pytest.MonkeyPatch) -> dict[str, ActivityFixture]:
         return None if fx is None else (fx.messages, "fit_zip")
 
     monkeypatch.setattr(service_module, "load_fit_messages", _load)
+    monkeypatch.setattr(activity_tools, "load_fit_messages", _load)
     return by_ext
 
 
@@ -329,6 +343,282 @@ async def test_token_caps_hold(
     assert get["meta"]["quality"] == "partial"
 
 
+@pytest.mark.asyncio
+async def test_splits_distance_table_and_range(
+    session: AsyncSession, app_session: AsyncSession, fixtures: dict[str, ActivityFixture]
+) -> None:
+    s = await _seed(session, app_session, fixtures)
+
+    env = await activity_splits_handler(app_session, user_id=s.uid, activity_id=s.autolap)
+    data = env["data"]
+    assert data["unit"] == "1 km"
+    assert data["cols"][:5] == ["km", "pace", "kum_zeit", "hm_auf", "hm_ab"]
+    assert {"hf_min", "hf_med", "hf_max", "kadenz"} <= set(data["cols"])
+    rows = data["rows"]
+    assert [r[0] for r in rows] == [str(i) for i in range(1, 10)]
+    assert all(":" in r[1] and "/" not in r[1] for r in rows)
+    # kum_zeit is the running total of the split times
+    assert _clock_s(rows[1][2]) == pytest.approx(_clock_s(rows[0][1]) + _clock_s(rows[1][1]), abs=1)
+    assert env["summary"].startswith("9 Kilometer-Splits. Schnellster km ")
+    assert env["meta"]["truncated"] is False and env["meta"]["quality"] == "ok"
+    assert _tokens(env) <= 1200
+
+    part = await activity_splits_handler(
+        app_session, user_id=s.uid, activity_id=s.autolap, from_idx=3, to_idx=5
+    )
+    assert [r[0] for r in part["data"]["rows"]] == ["3", "4", "5"]
+    assert part["data"]["rows"][0][2] == rows[2][2]
+
+    swim = await activity_splits_handler(app_session, user_id=s.uid, activity_id=s.swim)
+    assert swim["data"]["unit"] == "100 m"
+    assert swim["data"]["cols"][:3] == ["m", "pace_100m", "kum_zeit"]
+
+    with pytest.raises(ValueError, match="nicht gefunden"):
+        await activity_splits_handler(app_session, user_id=s.uid, activity_id=s.deleted)
+
+
+@pytest.mark.asyncio
+async def test_splits_100k_run_is_grouped_into_blocks(
+    session: AsyncSession, app_session: AsyncSession
+) -> None:
+    uid = await _user(session)
+    activity = Activity(
+        user_id=uid,
+        external_id="ultra",
+        name="100 km",
+        sport="running",
+        sport_profile="running",
+        start_at=datetime(2026, 9, 5, 5, 0, tzinfo=UTC),
+        start_local=datetime(2026, 9, 5, 7, 0),
+        distance_m=100_000.0,
+        duration_s=36_000.0,
+    )
+    session.add(activity)
+    await session.flush()
+    session.add_all(
+        ActivitySplit(
+            activity_id=activity.id,
+            kind="distance",
+            idx=i,
+            user_id=uid,
+            unit_m=1000.0,
+            distance_m=1000.0,
+            timer_s=300.0 + i,
+            pace_s_km=300.0 + i,
+            hr_min=120,
+            hr_median=140 + i % 5,
+            hr_max=150 + i % 7,
+            quality="ok",
+        )
+        for i in range(1, 101)
+    )
+    await session.commit()
+    install_rls_listener(app_session, uid)
+
+    env = await activity_splits_handler(app_session, user_id=uid, activity_id=activity.id)
+    rows = env["data"]["rows"]
+    assert len(rows) == 20 and rows[0][0] == "1–5" and rows[-1][0] == "96–100"
+    assert env["data"]["unit"] == "5 km"
+    # block pace = block time / block distance: (301 + … + 305) / 5 s
+    assert rows[0][1] == "5:03"
+    assert rows[-1][2] == fmt_duration(sum(300.0 + i for i in range(1, 101)))
+    assert env["meta"]["truncated"] is True
+    assert env["meta"]["next"] == (
+        f'Einzelwerte: activity_splits(activity_id={activity.id}, kind="distance", '
+        "from_idx=1, to_idx=50)"
+    )
+    assert _tokens(env) <= 1200
+
+    single = await activity_splits_handler(
+        app_session, user_id=uid, activity_id=activity.id, from_idx=51, to_idx=100
+    )
+    assert len(single["data"]["rows"]) == 50 and single["data"]["rows"][0][0] == "51"
+    assert _tokens(single) <= 1200
+
+
+@pytest.mark.asyncio
+async def test_splits_laps_and_workout_steps(
+    session: AsyncSession, app_session: AsyncSession, fixtures: dict[str, ActivityFixture]
+) -> None:
+    s = await _seed(session, app_session, fixtures)
+
+    laps = await activity_splits_handler(
+        app_session, user_id=s.uid, activity_id=s.workout, kind="lap"
+    )
+    cols = laps["data"]["cols"]
+    assert cols[:3] == ["runde", "typ", "schritt"]
+    types = {r[1] for r in laps["data"]["rows"]}
+    assert {"Aufwärmen", "Intervall", "Erholung", "Auslaufen"} <= types
+    assert all(r[cols.index("tempo")].endswith(" /km") for r in laps["data"]["rows"])
+    assert "kind=\"steps\"" in laps["summary"]
+
+    autolap = await activity_splits_handler(
+        app_session, user_id=s.uid, activity_id=s.autolap, kind="lap"
+    )
+    assert {r[1] for r in autolap["data"]["rows"]} <= {"Auto-Runde (Distanz)", "Ende"}
+    assert "schritt" not in autolap["data"]["cols"]
+
+    steps = await activity_splits_handler(
+        app_session, user_id=s.uid, activity_id=s.workout, kind="steps"
+    )
+    assert steps["data"]["cols"] == [
+        "nr", "schritt", "wdh", "ziel", "ist", "dauer", "distanz", "hf_med", "getroffen",
+    ]
+    rows = steps["data"]["rows"]
+    warmup, first_interval = rows[0], rows[1]
+    assert warmup[1] == "Einlaufen locker" and warmup[2] is None and warmup[8] == "–"
+    assert first_interval[1] == "SCHWELLE 4:50"
+    assert first_interval[2] == "1/4"
+    assert first_interval[3] == "4:35–4:45 /km"
+    assert first_interval[4].endswith(" /km") and first_interval[8] in ("ja", "nein")
+    assert [r[2] for r in rows if r[1] == "SCHWELLE 4:50"] == ["1/4", "2/4", "3/4", "4/4"]
+    assert steps["summary"].startswith("Workout „W3 Do Schwelle 4x6“: Intervalle ")
+    assert "(Ø " in steps["summary"]
+    assert _tokens(steps) <= 1200
+
+    with pytest.raises(ValueError, match="kein Workout"):
+        await activity_splits_handler(
+            app_session, user_id=s.uid, activity_id=s.autolap, kind="steps"
+        )
+
+
+@pytest.mark.asyncio
+async def test_analyze_segment_and_curve(
+    session: AsyncSession, app_session: AsyncSession, fixtures: dict[str, ActivityFixture]
+) -> None:
+    s = await _seed(session, app_session, fixtures)
+
+    seg = await activity_analyze_handler(
+        app_session, user_id=s.uid, activity_id=s.autolap, operation="segment",
+        from_km=2, to_km=5,
+    )
+    cols, row = seg["data"]["cols"], seg["data"]["rows"][0]
+    assert cols[:4] == ["bereich", "distanz", "dauer", "pace"]
+    assert row[0] == "km 2,00–5,00" and row[1] == "3,00 km"
+    assert seg["summary"].startswith("Abschnitt km 2,00–5,00: 3,00 km in ")
+
+    by_min = await activity_analyze_handler(
+        app_session, user_id=s.uid, activity_id=s.autolap, operation="segment",
+        from_min=10, to_min=20,
+    )
+    assert by_min["data"]["rows"][0][0] == "min 10–20"
+    assert by_min["data"]["rows"][0][2] == "10:00"
+
+    with pytest.raises(ValueError, match="km oder Minuten"):
+        await activity_analyze_handler(
+            app_session, user_id=s.uid, activity_id=s.autolap, operation="segment",
+            from_km=1, to_min=5,
+        )
+    with pytest.raises(ValueError, match="km oder Minuten"):
+        await activity_analyze_handler(
+            app_session, user_id=s.uid, activity_id=s.autolap, operation="segment"
+        )
+
+    curve = await activity_analyze_handler(
+        app_session, user_id=s.uid, activity_id=s.workout, operation="curve", metric="pace"
+    )
+    data = curve["data"]
+    assert len(data["x"]) == len(data["y"]) == 60
+    assert data["x_unit"] == "min" and data["y_unit"] == "s/km" and data["y_format"] == "pace"
+    assert data["x"] == sorted(data["x"])
+    hr = await activity_analyze_handler(
+        app_session, user_id=s.uid, activity_id=s.workout, operation="curve", points=10
+    )
+    assert len(hr["data"]["y"]) == 10 and hr["data"]["y_unit"] == "bpm"
+    assert all(isinstance(v, int) for v in hr["data"]["y"])
+    assert _tokens(curve) <= 800
+
+
+@pytest.mark.asyncio
+async def test_analyze_compare(
+    session: AsyncSession, app_session: AsyncSession, fixtures: dict[str, ActivityFixture]
+) -> None:
+    s = await _seed(session, app_session, fixtures)
+
+    env = await activity_analyze_handler(
+        app_session, user_id=s.uid, activity_id=s.autolap, operation="compare",
+        other_activity_id=s.workout,
+    )
+    cols = env["data"]["cols"]
+    assert cols[0] == "kennzahl" and cols[3] == "differenz a−b"
+    assert cols[1].startswith("a: 30.09. Abendlauf")
+    rows = {r[0]: r for r in env["data"]["rows"]}
+    assert rows["distanz"][1] == "9,01 km"
+    assert rows["distanz"][3].startswith(MINUS) and rows["distanz"][3].endswith(" km")
+    assert rows["pace"][3][0] in ("+", MINUS) and rows["pace"][3].endswith(" /km")
+    assert rows["effizienz"][1].endswith(" m/Herzschlag")
+    assert "„Abendlauf“ (30.09.) war " in env["summary"]
+    assert _tokens(env) <= 800
+
+    with pytest.raises(ValueError, match="Sportprofil"):
+        await activity_analyze_handler(
+            app_session, user_id=s.uid, activity_id=s.autolap, operation="compare",
+            other_activity_id=s.swim,
+        )
+    with pytest.raises(ValueError, match="other_activity_id"):
+        await activity_analyze_handler(
+            app_session, user_id=s.uid, activity_id=s.autolap, operation="compare"
+        )
+
+
+@pytest.mark.asyncio
+async def test_analyze_hr_drift(
+    session: AsyncSession, app_session: AsyncSession, fixtures: dict[str, ActivityFixture]
+) -> None:
+    s = await _seed(session, app_session, fixtures)
+
+    intervals = await activity_analyze_handler(
+        app_session, user_id=s.uid, activity_id=s.workout, operation="hr_drift"
+    )
+    assert intervals["data"]["entkopplung"] is None
+    assert intervals["data"]["hinweis"]
+    assert intervals["summary"].startswith("Entkopplung nicht berechenbar: ")
+
+    # steady 60 min at 3 m/s while HR climbs from 140 to 160
+    n = 3601
+    steady = Activity(
+        user_id=s.uid,
+        external_id="steady",
+        name="Langer Lauf",
+        sport="running",
+        sport_profile="running",
+        start_at=datetime(2026, 9, 20, 7, 0, tzinfo=UTC),
+        start_local=datetime(2026, 9, 20, 9, 0),
+        distance_m=3.0 * (n - 1),
+        duration_s=float(n - 1),
+    )
+    session.add(steady)
+    await session.flush()
+    await replace_streams(
+        session,
+        user_id=s.uid,
+        activity_id=steady.id,
+        streams=StreamSet(
+            start_at=steady.start_at,
+            t_offset_s=list(range(n)),
+            channels={
+                "distance_m": [3.0 * i for i in range(n)],
+                "hr": [140.0 + 20.0 * i / (n - 1) for i in range(n)],
+            },
+            source="fit_zip",
+        ),
+        algo_version=STREAM_ALGO_VERSION,
+    )
+    await session.commit()
+
+    env = await activity_analyze_handler(
+        app_session, user_id=s.uid, activity_id=steady.id, operation="hr_drift"
+    )
+    data = env["data"]
+    assert data["haelften"]["cols"] == ["haelfte", "zeitraum", "pace", "hf_avg", "effizienz"]
+    first, second = data["haelften"]["rows"]
+    assert first[2] == second[2] == "5:33 /km"
+    assert first[3] < second[3]
+    assert data["entkopplung"].endswith(" %") and data["einordnung"].startswith("moderat")
+    assert env["summary"].startswith("Aerobe Entkopplung ")
+    assert _tokens(env) <= 800
+
+
 def test_tools_are_registered_with_spec_schemas() -> None:
     search = TOOLS_BY_NAME["activity_search"]
     get = TOOLS_BY_NAME["activity_get"]
@@ -342,3 +632,14 @@ def test_tools_are_registered_with_spec_schemas() -> None:
     }
     assert get.description.startswith("Steckbrief einer Aktivität")
     assert set(get.json_schema["properties"]) == {"activity_id", "sport_profile"}
+    splits = TOOLS_BY_NAME["activity_splits"]
+    analyze = TOOLS_BY_NAME["activity_analyze"]
+    assert splits.risk_class == analyze.risk_class == "read"
+    assert splits.description.startswith("Split-Tabelle einer Aktivität")
+    assert splits.json_schema["required"] == ["activity_id"]
+    assert splits.json_schema["properties"]["kind"]["enum"] == ["distance", "lap", "steps"]
+    assert analyze.description.startswith("Serverseitige Auswertung einer Aktivität")
+    assert analyze.json_schema["required"] == ["activity_id", "operation"]
+    assert analyze.json_schema["properties"]["points"] == {
+        "type": "integer", "minimum": 10, "maximum": 60,
+    }

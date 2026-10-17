@@ -220,7 +220,7 @@ def _hr_buckets(prep: Prepared) -> dict[int, float]:
     return out
 
 
-def _efficiency(
+def efficiency(
     prep: Prepared, a: float, b: float, *, use_power: bool
 ) -> tuple[float | None, str | None]:
     idx = [i for i, tt in enumerate(prep.timer_t) if a <= tt < b and prep.weights[i] > 0]
@@ -238,7 +238,7 @@ def _efficiency(
     return output / hr, None
 
 
-def _decoupling(
+def decoupling(
     prep: Prepared, profile: str, cv_pct: float | None
 ) -> tuple[float | None, str | None]:
     if profile not in _DECOUPLING_PROFILES:
@@ -252,8 +252,8 @@ def _decoupling(
         return None, DECOUPLING_INTERVALS
     use_power = profile == "cycling" and any(p is not None for p in prep.power)
     mid = DECOUPLING_WARMUP_S + (end - DECOUPLING_WARMUP_S) / 2
-    ef1, note1 = _efficiency(prep, DECOUPLING_WARMUP_S, mid, use_power=use_power)
-    ef2, note2 = _efficiency(prep, mid, end, use_power=use_power)
+    ef1, note1 = efficiency(prep, DECOUPLING_WARMUP_S, mid, use_power=use_power)
+    ef2, note2 = efficiency(prep, mid, end, use_power=use_power)
     if ef1 is None or ef2 is None:
         return None, note1 or note2
     return (ef1 - ef2) / ef1 * 100, None
@@ -397,7 +397,7 @@ def compute_stats(
     extremes = fastest_and_slowest_split(splits)
     pace_key = "pace_s_100m" if profile == "swimming" else "pace_s_km"
     fastest, slowest = extremes if extremes else (None, None)
-    decoupling, note = _decoupling(prep, profile, cv)
+    decoupling_pct, note = decoupling(prep, profile, cv)
     max_speed = max_speed_10s(prep.timer_t, prep.distance) if profile == "cycling" else None
     first = sessions[0] if sessions else {}
     sub_sport = first.get("sub_sport")
@@ -427,7 +427,7 @@ def compute_stats(
         slowest_split_idx=None if slowest is None else slowest.idx,
         slowest_split_pace_s=None if slowest is None else getattr(slowest, pace_key),
         pace_cv_pct=cv,
-        decoupling_pct=decoupling,
+        decoupling_pct=decoupling_pct,
         decoupling_note=note,
         distance_source=distance_source(
             sport_profile=profile,

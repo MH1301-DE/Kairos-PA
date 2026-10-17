@@ -10,10 +10,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kairos.agent.activity_tools import (
+    ANALYZE_OPERATIONS,
+    CURVE_METRICS,
     SEARCH_SORTS,
+    SPLIT_KINDS,
     SPORT_PROFILES,
+    activity_analyze_handler,
     activity_get_handler,
     activity_search_handler,
+    activity_splits_handler,
 )
 from kairos.agent.expiry import _parse_expiry
 from kairos.agent.format import cap_envelope, drop_last_row
@@ -728,6 +733,53 @@ CORE_TOOLS: tuple[ToolSpec, ...] = (
             },
         },
         handler=activity_get_handler,
+    ),
+    ToolSpec(
+        name="activity_splits",
+        description=(
+            "Split-Tabelle einer Aktivität: eine Zeile pro km (Rad 5 km, Schwimmen 100 m), pro "
+            "Uhr-Runde oder pro Workout-Schritt mit Ziel und Treffer (Soll/Ist), jeweils mit "
+            "Pace, Höhenmetern und HF."
+        ),
+        risk_class="read", requires_confirmation=False,
+        json_schema={
+            "type": "object",
+            "properties": {
+                "activity_id": {"type": "integer"},
+                "kind": {"type": "string", "enum": list(SPLIT_KINDS)},
+                "from_idx": {"type": "integer", "minimum": 1},
+                "to_idx": {"type": "integer", "minimum": 1},
+            },
+            "required": ["activity_id"],
+        },
+        handler=activity_splits_handler,
+    ),
+    ToolSpec(
+        name="activity_analyze",
+        description=(
+            "Serverseitige Auswertung einer Aktivität: segment (Abschnitt nach km oder "
+            "Minuten), compare (Vergleich mit zweiter Aktivität), hr_drift (aerobe "
+            "Entkopplung), curve (Verlauf mit höchstens 60 Punkten für render)."
+        ),
+        risk_class="read", requires_confirmation=False,
+        json_schema={
+            "type": "object",
+            "properties": {
+                "activity_id": {"type": "integer"},
+                "operation": {"type": "string", "enum": list(ANALYZE_OPERATIONS)},
+                "other_activity_id": {"type": "integer", "description": "nur compare"},
+                "from_km": {"type": "number"},
+                "to_km": {"type": "number"},
+                "from_min": {"type": "number"},
+                "to_min": {"type": "number"},
+                "metric": {
+                    "type": "string", "enum": list(CURVE_METRICS), "description": "nur curve",
+                },
+                "points": {"type": "integer", "minimum": 10, "maximum": 60},
+            },
+            "required": ["activity_id", "operation"],
+        },
+        handler=activity_analyze_handler,
     ),
 )
 
