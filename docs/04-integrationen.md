@@ -218,8 +218,8 @@ Backfill(user_id, connector='garmin', kinds, from_date, to_date)
     └─ Fortschritt auf der Sync-Seite (Fenster erledigt / gesamt je Kind)
 ```
 
-Ein Zeitfenster „nur nachts“ gibt es nicht (kein Scheduler); der Backfill läuft
-sofort nach dem Auslösen. Eine Restzeit-Schätzung wird nicht angezeigt.
+Ein Zeitfenster „nur nachts“ gibt es für den Button-Backfill nicht; er läuft sofort
+nach dem Auslösen. Regelmäßige, inkrementelle Syncs übernimmt der Scheduler (§6). Eine Restzeit-Schätzung wird nicht angezeigt.
 
 **Volumen:** 24 Monate ≈ 730 Fenster × 10 Kinds ≈ 7.300 Fenster je Nutzer plus ein
 FIT-Download je Aktivität; bei 1,5 s Pause ≈ 3 h reine Wartezeit je Nutzer.
@@ -424,9 +424,15 @@ zu großem Kontext.
 
 ## 6. Zusammenfassung Sync-Architektur
 
-**Ist:** kein Scheduler. Garmin- und Kalender-Sync werden manuell ausgelöst und
-laufen als FastAPI-`BackgroundTasks`; nach einem Garmin-Backfill folgt das Recompute.
-Das folgende Diagramm ist das **Zielbild (nicht umgesetzt)**:
+**Ist:** Generischer Scheduler im API-Prozess (ADR-0007, Spec
+`2026-10-15-scheduler-design.md`). Ein Job besteht aus einem Zeitplan (Cron-Teilmenge +
+Zeitzone) und einer Kette fester Aktionen (`garmin.sync`, `calendar.sync`,
+`metrics.recompute`, `agent.prompt`). Die Aktionen rufen dieselben Service-Funktionen
+wie die Buttons, teilen deren Sperren und Cooldowns und laufen mit RLS des Job-Nutzers.
+Mindestabstände: Garmin und Agent 60 min, Kalender und Recompute 15 min. Verpasste Läufe
+werden genau einmal nachgeholt.
+
+Das folgende Diagramm ist das **alte Zielbild (historisch, durch ADR-0007 ersetzt)**:
 
 ```
               ┌─────────────────────────────────────┐

@@ -27,7 +27,7 @@ Alle Services laufen als Docker Compose Stack unter `deploy/docker-compose.yml`.
 |---|---|
 | Caddy, Web (SvelteKit), API (FastAPI), migrate, Postgres + TimescaleDB, Redis | **gebaut** (in Compose, lokal verifiziert) |
 | MinIO (Object Store) | Zielbild — kein Object-Storage-Code, in Compose auskommentiert |
-| arq Worker + Scheduler | Zielbild — kein Scheduler; Syncs laufen als BackgroundTasks in der API |
+| Scheduler | im API-Prozess (ADR-0007), kein eigener Container; uvicorn mit genau einem Worker |
 | Backup-Container (restic, täglich 02:00) | Zielbild — in Compose auskommentiert, Backup-Ziel nicht entschieden |
 | Uptime Kuma (Monitoring) | Zielbild — nicht in Compose |
 | `pgvector` | Zielbild — Extension nicht installiert |
@@ -47,7 +47,7 @@ Alle Services laufen als Docker Compose Stack unter `deploy/docker-compose.yml`.
 | Caddy | ~30 MB |
 | OS + Docker-Overhead | ~400 MB |
 | **Summe (Ist-Stack)** | **~1,5 GB** |
-| *zusätzlich bei Zielbild:* arq Worker + Scheduler, MinIO, Uptime Kuma | *~+410 MB* |
+| *zusätzlich bei Zielbild:* MinIO, Uptime Kuma (arq-Worker entfällt, ADR-0007) | *~+410 MB* |
 
 Die Werte sind Schätzungen, nicht gemessen.
 
@@ -274,6 +274,14 @@ Claude Sonnet 5 ($2/MTok in, $10/MTok out):
 ```
 
 **Realistisch: $20–45/Monat** bei normalem Betrieb, je nach Anzahl der Tool-Runden.
+
+**Geplante Agent-Läufe (Scheduler, ADR-0007):** Schätzung aus der Scheduler-Spec §3, nicht
+gemessen. Mit Kontext-Reset vor jedem Lauf ≈ 4,3 k statischer Kontext + Prompt, 3–5
+LLM-Runden mit wachsenden Tool-Ergebnissen → ≈ 30–40 k Input- und 1–2 k Output-Tokens
+je Lauf ≈ **$0,08–0,10 je Lauf**. Ein tägliches „Morgen-Briefing“ kostet damit
+≈ $2,5–3 je Nutzer und Monat, eine wöchentliche Analyse ≈ $0,4. Ohne Reset (volle
+12 k-Historie je Runde) etwa das Doppelte. Deckel: höchstens 12 geplante Agent-Läufe je
+Nutzer und Tag, Mindestabstand 60 min, ein Agent-Schritt je Job.
 Gemessen ist das nicht: Token-Telemetrie fehlt bisher (geplant, siehe
 [03 §8](03-agent-design.md#8-evaluierung)).
 
@@ -284,7 +292,8 @@ Kostenhebel in absteigender Wirkung:
    Zehntel des Input-Preises.
 2. **Modell-Routing** (nicht gebaut): einfache Abfragen auf ein kleineres Modell
    (Claude Haiku 5.5: $0,10 / $0,50 pro MTok bis 100K Prompt-Tokens).
-3. **Tageslimit** je Nutzer konfigurierbar (nicht gebaut; verhindert Kostenausreißer).
+3. **Tageslimit** je Nutzer: für geplante Agent-Läufe gebaut
+   (`SCHEDULER_AGENT_RUNS_PER_DAY`, Default 12); für den Chat nicht gebaut.
 
 ### 6.3 Gesamtkosten
 

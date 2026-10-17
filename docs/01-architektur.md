@@ -50,9 +50,10 @@ die als potenzielle Prompt-Injection behandelt werden ([06](06-sicherheit-und-da
 
 **Ist-Stand:** `deploy/docker-compose.yml` enthält Caddy, Web (SvelteKit), API
 (FastAPI), Postgres (TimescaleDB) und Redis. Syncs laufen als FastAPI-
-`BackgroundTasks` im API-Prozess. Mit `*` markierte Teile sind **Zielbild (nicht
-umgesetzt)**: kein Worker/Scheduler (kein `arq` in den Dependencies), kein Object
-Store, kein CalDAV-Connector, kein Rate-Limit in Caddy, kein `pgvector`.
+`BackgroundTasks` im API-Prozess; der Scheduler läuft als `asyncio`-Loop im selben
+Prozess (ADR-0007). Mit `*` markierte Teile sind **Zielbild (nicht umgesetzt)**: kein
+Worker-Container (kein `arq`; ersetzt durch ADR-0007), kein Object Store, kein
+CalDAV-Connector, kein Rate-Limit in Caddy, kein `pgvector`.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -77,10 +78,10 @@ Store, kein CalDAV-Connector, kein Rate-Limit in Caddy, kein `pgvector`.
 │  └───┬───────────────────────────────────────────────┬──────┘         │
 │      │  (Connector-Protocol, Import-Linter-Grenze)  │               │
 │  ┌───▼──────────────────────────────────────┐  ┌────▼───────┐       │
-│  │  kairos/connectors/                      │  │  Worker *  │       │
-│  │  ┌──────────┬───────────┬─────────────┐  │  │ Scheduler *│ arq * │
+│  │  kairos/connectors/                      │  │ Scheduler  │       │
+│  │  ┌──────────┬───────────┬─────────────┐  │  │ (im API-   │       │
 │  │  │  garmin  │  google   │   caldav *  │  │  └────┬───────┘       │
-│  │  └──────────┴───────────┴─────────────┘  │       │               │
+│  │  └──────────┴───────────┴─────────────┘  │  │  Prozess)  │       │
 │  └──────────────────────────────────────────┘       │               │
 │                                            │                        │
 │  ┌──────────────────────┐  ┌───────────────▼─────┐  ┌────────────┐  │
@@ -222,14 +223,24 @@ nur eine Liste von `module_id` mit Position.
 
 ### 5.1 Health-Sync
 
-**Ist-Stand:** Es gibt **keinen Scheduler**. Syncs werden manuell über die UI bzw.
-`POST /api/sync/garmin/backfill` ausgelöst und laufen als BackgroundTask. Nach jedem
-Garmin-Backfill werden `wellness_daily_stats`, `hr_bucket_seconds_daily` und
-`metric_daily_value` für den geholten Zeitraum neu berechnet
-(`routers/sync.py:269-285`); zusätzlich per `POST /api/metrics/recompute`.
-Login nur per gespeichertem Token über `garminconnect`.
+**Ist-Stand:** Syncs laufen auf zwei Wegen über denselben Kern
+`ingestion/garmin_sync.sync_garmin`:
 
-*Zielbild (nicht umgesetzt)* — nächtlicher Ablauf:
+- **Button** (`POST /api/sync/garmin/backfill`, BackgroundTask): Default-Fenster
+  24 × 30 Tage, `run_backfill` mit Abdeckungslogik.
+- **Scheduler** (Aktion `garmin.sync`, ADR-0007): je Datenart ab
+  `backfill_complete_to − 1 Tag` bis „morgen 00:00 UTC“ über `run_incremental`, also
+  inklusive heute und ohne Short-Circuit; nie synchronisierte Datenarten holen nur zwei
+  Tage. Button und Scheduler teilen Cooldown (300 s) und Sperren je Datenart.
+
+Danach werden `wellness_daily_stats`, `hr_bucket_seconds_daily` und
+`metric_daily_value` für den geholten Zeitraum neu berechnet
+(`repositories/metrics_recompute.recompute_daily_tables`); zusätzlich per
+`POST /api/metrics/recompute` oder Aktion `metrics.recompute`. Login nur per
+gespeichertem Token über `garminconnect`. Zeitpläne legt der Nutzer auf der Seite
+„Scheduler“ an (Spec `2026-10-15-scheduler-design.md`).
+
+*Altes Zielbild (historisch, durch ADR-0007 ersetzt)* — nächtlicher Ablauf:
 
 ```
 03:15  Scheduler emittiert SyncJob je Nutzer
@@ -245,11 +256,13 @@ Login nur per gespeichertem Token über `garminconnect`.
 
 ### 5.2 Kalendersynchronisation
 
-**Ist-Stand:** Google Calendar wird nur manuell abgerufen
-(`POST /api/sync/google_calendar/sync`, 60 s Cooldown). Jeder Abruf holt das Fenster
-heute −7 bis +83 Tage vollständig; ein `syncToken` wird nicht genutzt (der Connector
-übergibt immer `None`). Watch-Channels, Push und automatisches Polling sind nicht
-gebaut; CalDAV ebenfalls nicht.
+**Ist-Stand:** Google Calendar wird per Button (`POST /api/sync/google_calendar/sync`,
+60 s Cooldown) oder per Scheduler-Aktion `calendar.sync` abgerufen (Mindestabstand
+15 min); beide rufen `calendar/sync.sync_google_calendar`, das die Sperre je Nutzer hält
+und den Verbindungsstatus pflegt. Jeder Abruf holt das Fenster heute −7 bis +83 Tage
+vollständig; ein `syncToken` wird nicht genutzt. Watch-Channels und Push sind nicht
+gebaut; CalDAV ebenfalls nicht (die CalDAV-Spec ersetzt `sync_google_calendar` durch
+`sync_calendar`).
 
 *Zielbild (nicht umgesetzt):* Google **Push** über Watch-Channels (erfordert
 öffentliches HTTPS). Der Webhook trägt keine Nutzdaten, sondern triggert nur einen
@@ -286,7 +299,7 @@ passieren wird).
 | Sprache Backend | Python ≥ 3.12 (CI 3.12) | Ökosystem für Garmin/FIT/Analyse; Kompetenz vorhanden |
 | Web-Framework | FastAPI | Async, Pydantic-Schemas → direkt als Tool-Schemas nutzbar |
 | DB | Postgres 16 + TimescaleDB | Eine Engine für alles. Hypertables ja; Kompression und Continuous Aggregates sind mit Row-Level-Security **nicht nutzbar** (timescale/timescaledb#6827, #5787) und daher nicht im Einsatz. `pgvector`: Zielbild |
-| Queue | — (nicht eingesetzt) | Syncs laufen als FastAPI-`BackgroundTasks`; Redis + `arq` war geplant, ist aber nicht gebaut (Zielbild) |
+| Queue | — (nicht eingesetzt) | Syncs laufen als FastAPI-`BackgroundTasks`, geplante Läufe im In-Process-Scheduler (ADR-0007); `arq` war geplant und ist verworfen |
 | Migrationen | Alembic | Standard, plugin-fähig via Branch-Labels |
 | Frontend | SvelteKit | PWA; entschieden am 2026-08-10 (PWA-/Web-Push-Reife) |
 | Charts | ECharts | Einheitliche Bibliothek für Zeitreihen, Gauges, Scatter + Event-Overlays; deklarative JSON-Konfiguration; siehe [ADR-0005](adr/ADR-0005-echarts.md) |
@@ -313,6 +326,8 @@ passieren wird).
 | Garmin nicht erreichbar / Login abgelaufen | Lehnt Garmin den Token ab, wird die Verbindung `reauth_required`; der Nutzer verbindet unter Konto & Sync neu. Alte Daten bleiben nutzbar; das Lagebild zeigt den Datenstand je Quelle |
 | LLM-API nicht erreichbar | Dashboard und Datenabfragen funktionieren weiter; Chat zeigt Störung |
 | Postgres weg | Vollausfall — akzeptiert; abgesichert über Backup + Restore-Test |
+| API-Neustart während eines geplanten Laufs | Der Lauf endet als `interrupted`; beim Start holt der Scheduler jeden verpassten Job genau einmal nach (`catch_up`) |
+| Geplanter Schritt schlägt fehl | Die Kette bricht ab, restliche Schritte `not_run`. Cooldown, Sperre oder Tageslimit gelten als „übersprungen“, nicht als Fehler. Fehler zeigt die Scheduler-Seite und ein Dreieck am Navigationseintrag |
 | Kalender-Schreibfehler | Die Bestätigung schlägt mit Fehler fehl (z. B. 503 ohne aktive Google-Verbindung), nichts wird committet, der Nutzer kann erneut bestätigen. Einen Proposal-Status `failed` gibt es nicht |
 
 Leitregel: **Der Agent darf nie so tun, als wären Daten aktuell, wenn sie es nicht
