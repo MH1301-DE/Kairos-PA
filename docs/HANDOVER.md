@@ -1421,6 +1421,29 @@ Branch `stufe1-datenbasis`, **nur lokal, nicht gepusht**, zweigt vom lokalen `ma
   (`--cases`, `--user-id`, Prüfung `numbers_match`). Entscheidungen zu Lücken der Spec:
   Nachtrag 2026-10-17 unter Spec C.5.
 
+**Abschluss-Review (2026-10-17, frischer Reviewer, ganzer Branch `0b86196..d35154f`).**
+Verdict „with fixes“: 1 Critical + 3 Important, alle an Nahtstellen zwischen Tasks
+(zum sechsten Mal in Folge fand erst das Gesamt-Review solche Fehler). Alle behoben,
+je mit Regressionstest:
+
+- **Critical:** Kadenz-Ziele beim Laufen sind in FIT pro Bein, der Kadenz-Kanal ist
+  spm, also wurde jeder Kadenz-Schritt als verfehlt bewertet (Dev-DB: 0/17). Fix
+  `43ba1ea`, `ACTIVITY_DERIVED_ALGO_VERSION` = 3; Dev-DB neu abgeleitet, jetzt 17/17.
+- Reprocess hat in Garmin gelöschte Aktivitäten aus alten `activity_list`-Archiven
+  wiederbelebt (`4bcbdbb`, `SqlCanonicalRepository(revive_deleted=False)`).
+- Zonen und TRIMP je Aktivität wurden nach einer HFmax-Änderung nie neu gerechnet
+  (`83759a5`: PUT `/api/settings/profile` stößt bei geänderter HFmax bzw. Geburtsdatum
+  einen Hintergrundjob an, der alle Aktivitäten und `metric_daily_value` neu rechnet).
+- JSON-Rückfall: ISO-Zeitstempel in Runden/Events wurden ignoriert, Runden-Splits und
+  Soll/Ist fehlten (`56e6766`, gemeinsamer Helfer `message_offset`).
+
+Bewusst offen (Minor aus dem Review): Reprocess filtert `from_date`/`to_date` nach
+UTC-Tag statt `start_local`; Tools zeigen Uhrzeiten in `home_timezone` statt der
+Ortszeit der Aktivität (auf Reisen abweichend); `hf_med` in der Schritt-Tabelle ist ein
+Mittelwert; der HF-Bucket-Recompute entpackt bei jedem Sync die ganze HF-Historie (bei
+≈ 140 Aktivitäten unkritisch); `ingest_fit_files` lässt alte Streams stehen, wenn ein
+FIT keine gültigen Zeitstempel hat (praktisch ausgeschlossen).
+
 **Offen, braucht Max**
 
 1. **Live-Eval 17–21/26 blockiert:** Der `LLM_API_KEY` in `.env` ist an keinen
