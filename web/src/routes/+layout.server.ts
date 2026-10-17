@@ -9,16 +9,35 @@ export const load: LayoutServerLoad = async ({ cookies, fetch, depends }) => {
 	// frontend, backend owns session state) — just confirm presence for the nav.
 	const authenticated = cookies.get('session_id') !== undefined;
 	if (!authenticated) {
-		return { authenticated, connections: [] as ConnectionInfo[], jobs: [] as SyncJob[] };
+		return {
+			authenticated,
+			connections: [] as ConnectionInfo[],
+			jobs: [] as SyncJob[],
+			schedulerFailed: 0
+		};
 	}
 	try {
-		const [connections, syncStatus] = await Promise.all([
+		const [connections, syncStatus, scheduler] = await Promise.all([
 			apiGet<{ connections: ConnectionInfo[] }>(fetch, '/api/connections'),
-			apiGet<{ jobs: SyncJob[] }>(fetch, '/api/sync/status')
+			apiGet<{ jobs: SyncJob[] }>(fetch, '/api/sync/status'),
+			// the error dot is optional chrome, never a reason to fail the layout
+			apiGet<{ failed_jobs: number }>(fetch, '/api/scheduler/status').catch(() => ({
+				failed_jobs: 0
+			}))
 		]);
-		return { authenticated, connections: connections.connections, jobs: syncStatus.jobs };
+		return {
+			authenticated,
+			connections: connections.connections,
+			jobs: syncStatus.jobs,
+			schedulerFailed: scheduler.failed_jobs
+		};
 	} catch {
 		// menu degrades gracefully -- the page-level loads already handle 401s
-		return { authenticated, connections: [] as ConnectionInfo[], jobs: [] as SyncJob[] };
+		return {
+			authenticated,
+			connections: [] as ConnectionInfo[],
+			jobs: [] as SyncJob[],
+			schedulerFailed: 0
+		};
 	}
 };

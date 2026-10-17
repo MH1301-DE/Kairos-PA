@@ -80,6 +80,8 @@ export interface Conversation {
 	id: string;
 	title: string | null;
 	updated_at: string;
+	// set when the conversation belongs to a scheduler job
+	scheduled_job_id?: string | null;
 }
 
 // tool_calls mirrors ConversationRepository.append_message's tool_calls shape:
@@ -93,6 +95,7 @@ export interface ChatMessage {
 	// null for rows written before the column existed
 	tool_name: string | null;
 	created_at: string;
+	seq?: number;
 }
 
 export interface Proposal {

@@ -35,7 +35,9 @@ export type Item =
 			undone: boolean;
 	  }
 	| ProposalItem
-	| { kind: 'error'; key: string; text: string };
+	| { kind: 'error'; key: string; text: string }
+	// a scheduler context reset: the agent no longer sees what is above
+	| { kind: 'divider'; key: string };
 
 export const TOOL_LABELS: Record<string, string> = {
 	query_health: 'Kennzahl abfragen',
@@ -77,7 +79,10 @@ function parseRender(content: string | null): Block | null {
 	}
 }
 
-export function historyToItems(messages: ChatMessage[]): Item[] {
+export function historyToItems(
+	messages: ChatMessage[],
+	compactedThroughSeq: number | null = null
+): Item[] {
 	const items: Item[] = [];
 	const currentAssistant = (): AssistantItem => {
 		const last = items[items.length - 1];
@@ -86,7 +91,15 @@ export function historyToItems(messages: ChatMessage[]): Item[] {
 		items.push(created);
 		return created;
 	};
-	for (const m of messages) {
+	messages.forEach((m, index) => {
+		if (
+			compactedThroughSeq !== null &&
+			m.seq !== undefined &&
+			m.seq > compactedThroughSeq &&
+			(index === 0 || (messages[index - 1].seq ?? Infinity) <= compactedThroughSeq)
+		) {
+			items.push({ kind: 'divider', key: `divider-${compactedThroughSeq}` });
+		}
 		if (m.role === 'user') {
 			items.push({ kind: 'user', key: m.id, text: m.content ?? '' });
 		} else if (m.role === 'assistant' && m.content) {
@@ -95,7 +108,7 @@ export function historyToItems(messages: ChatMessage[]): Item[] {
 			const block = parseRender(m.content);
 			if (block) currentAssistant().blocks.push(block);
 		}
-	}
+	});
 	items.push(...pendingProposals(messages));
 	return items;
 }

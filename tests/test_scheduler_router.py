@@ -85,6 +85,7 @@ async def test_actions_expose_schemas(session: AsyncSession, client_for: Any) ->
     assert set(by_name) == {"garmin.sync", "calendar.sync", "metrics.recompute", "agent.prompt"}
     assert by_name["agent.prompt"]["schema"]["properties"]["prompt"]["maxLength"] == 2000
     assert by_name["garmin.sync"]["min_interval_s"] == 3600
+    assert body["default_timezone"] == "Europe/Vienna"
 
 
 @pytest.mark.asyncio

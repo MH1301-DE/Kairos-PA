@@ -60,9 +60,15 @@ class PreviewIn(BaseModel):
 
 
 @router.get("/actions")
-async def list_actions(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
-    del user
+async def list_actions(
+    user: dict[str, Any] = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    user_id = UUID(user["user_id"])
+    install_rls_listener(session, user_id)
     return {
+        # the editor preselects the user's home time zone
+        "default_timezone": await _home_timezone(session, user_id),
         "actions": [
             {
                 "name": spec.name,
@@ -72,7 +78,7 @@ async def list_actions(user: dict[str, Any] = Depends(current_user)) -> dict[str
                 "min_interval_s": spec.min_interval_s,
             }
             for spec in ACTIONS.values()
-        ]
+        ],
     }
 
 
