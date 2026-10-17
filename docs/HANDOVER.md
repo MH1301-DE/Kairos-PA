@@ -1469,6 +1469,11 @@ FIT keine gültigen Zeitstempel hat (praktisch ausgeschlossen).
   Recompute ab abgeglichenen Tagen) liegen in `ingestion/garmin_sync.sync_garmin` und
   laufen damit auch bei Scheduler-Syncs (`run_incremental`). Der Rundweg-Test der
   Scheduler-Migration geht nur noch bis `fed6d2d1311b` zurück (kein downgrade).
+- **DB, die Stufe 1 schon vor diesem Merge migriert hatte** (Dev-DB, Stand
+  `5d2f8a6c1e47`): Alembic hält `5c8e1d2f7a90` für angewendet, weil es jetzt darunter
+  liegt. Dev-DB am 2026-10-17 so nachgezogen:
+  `alembic upgrade 7a1c2e9d4b30:5c8e1d2f7a90 --sql`, die Zeile `UPDATE alembic_version`
+  entfernen, Rest per `psql -v ON_ERROR_STOP=1` einspielen. Frische DBs brauchen das nicht.
 - Testcontainer, CI und Dev laufen auf `postgres:16`.
 
 ---
