@@ -1401,8 +1401,8 @@ Hinweise: Tabellenrechte (GRANTs) auf `wellness_sample` werden nicht übernommen
 
 ## Stufe 1 — Datenbasis und Lese-Tools (AP 1a–3, 2026-10-14 bis 2026-10-17)
 
-Branch `stufe1-datenbasis`, **nur lokal, nicht gepusht**, zweigt vom lokalen `main`
-(`0b86196`) ab. Plan `docs/superpowers/plans/2026-10-13-stufe1-datenbasis-und-lese-tools.md`
+Branch `stufe1-datenbasis`, gepusht am 2026-10-17, Merge nach `main` per PR. Zweigt vom
+damaligen lokalen `main` (`0b86196`) ab und enthält `origin/main` bis `3910b46` (Scheduler). Plan `docs/superpowers/plans/2026-10-13-stufe1-datenbasis-und-lese-tools.md`
 (Tasks 1–28), Spec `docs/superpowers/specs/2026-10-07-aktivitaeten-und-workouts-design.md`.
 
 **Umgesetzt**
@@ -1459,8 +1459,7 @@ FIT keine gültigen Zeitstempel hat (praktisch ausgeschlossen).
 2. ~~Entscheidungen aus dem Bericht V1–V7~~ — am 2026-10-17 getroffen (Spec §12.3,
    „Entscheidungen 2026-10-17“): V7-Zählregel wie vorgeschlagen, Laufband nicht skalieren,
    Sprungfilter 12 m/s, Höhenmeter-Summe von der Uhr. `ACTIVITY_DERIVED_ALGO_VERSION` = 4.
-3. **Push und Merge** nach `main`. `origin/main` (`3910b46`, inkl. Scheduler #9) ist in
-   `stufe1-datenbasis` gemergt; der Branch ist nicht gepusht.
+3. ~~Push und Merge nach `main`~~ — Branch gepusht, Merge per PR `stufe1-datenbasis → main`.
 
 **Hinweise**
 
