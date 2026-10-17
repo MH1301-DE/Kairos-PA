@@ -238,6 +238,11 @@ async def test_search_sorts_filters_and_hides_deleted(
         app_session, user_id=s.uid, from_date="2026-09-01", to_date="2026-09-30"
     )
     assert _ids(window) == [s.autolap, s.workout]
+    assert "zwischen 01.09. und 30.09.2026" in window["summary"]
+    spanning = await activity_search_handler(
+        app_session, user_id=s.uid, from_date="2025-12-01", to_date="2026-12-31"
+    )
+    assert "zwischen 01.12.2025 und 31.12.2026" in spanning["summary"]
 
 
 @pytest.mark.asyncio

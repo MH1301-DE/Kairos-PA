@@ -196,7 +196,8 @@ def _search_summary(
     count: int, total_m: float | None, shown: int, sport_profile: str | None, start: date, end: date
 ) -> str:
     singular, plural = _NOUNS[sport_profile or "generic"]
-    span = f"zwischen {start:%d.%m.} und {end:%d.%m.%Y}"
+    begin = f"{start:%d.%m.}" if start.year == end.year else f"{start:%d.%m.%Y}"
+    span = f"zwischen {begin} und {end:%d.%m.%Y}"
     if count == 0:
         return f"Keine {plural} {span}."
     text = f"{count} {singular if count == 1 else plural} {span}"
