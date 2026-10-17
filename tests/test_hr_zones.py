@@ -31,7 +31,8 @@ def test_hr_max_override_wins_over_measured_and_age() -> None:
 
 
 def test_hr_max_from_birth_date_only() -> None:
-    assert resolve_hr_max(date(1990, 8, 10), None, as_of=date(2026, 8, 10)) == (184, "aus Alter")
+    # Tanaka: 208 - 0.7 x 36 = 182.8
+    assert resolve_hr_max(date(1990, 8, 10), None, as_of=date(2026, 8, 10)) == (183, "aus Alter")
 
 
 def test_hr_max_without_inputs_is_none() -> None:

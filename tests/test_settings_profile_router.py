@@ -87,7 +87,7 @@ def test_resolve_hr_max_prefers_override() -> None:
 
 def test_resolve_hr_max_falls_back_to_age() -> None:
     # birthday not yet reached in 2026 -> age 35
-    assert resolve_hr_max(date(1990, 12, 1), None, as_of=date(2026, 10, 14)) == (185, "aus Alter")
+    assert resolve_hr_max(date(1990, 12, 1), None, as_of=date(2026, 10, 14)) == (184, "aus Alter")
 
 
 def test_resolve_hr_max_without_inputs_is_none() -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import date
 from typing import Literal
@@ -66,7 +67,8 @@ def resolve_hr_max(
         - birth_date.year
         - ((as_of.month, as_of.day) < (birth_date.month, birth_date.day))
     )
-    return 220 - age, "aus Alter"
+    # Tanaka 2001: 208 - 0.7 x age, rounded half up (coach spec 1.3, question 1)
+    return math.floor(208 - 0.7 * age + 0.5), "aus Alter"
 
 
 def hr_max_warning(

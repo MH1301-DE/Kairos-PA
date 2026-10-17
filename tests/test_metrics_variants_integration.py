@@ -354,5 +354,5 @@ async def test_higher_measured_max_does_not_override_age_based_hr_max(
     registry = build_default_registry()
     result = await registry.get("trimp", "edwards").compute(session, user_id=user_id, as_of=today)
 
-    # 220 - 36 = 184: 150/184 = 81.5 % -> zone 4 (40); with 219 it would be zone 2 (20)
+    # Tanaka 208 - 0.7 x 36 = 183: 150/183 = 82 % -> zone 4 (40); with 219 it would be zone 2 (20)
     assert result.value == pytest.approx(40.0)
