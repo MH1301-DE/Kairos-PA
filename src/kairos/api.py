@@ -16,6 +16,7 @@ from kairos.routers.goals import router as goals_router
 from kairos.routers.health import router as health_router
 from kairos.routers.memory import router as memory_router
 from kairos.routers.metrics import router as metrics_router
+from kairos.routers.scheduler import router as scheduler_router
 from kairos.routers.sync import router as sync_router
 from kairos.scheduler.loop import SchedulerLoop, set_scheduler
 
@@ -52,3 +53,4 @@ app.include_router(goals_router)
 app.include_router(memory_router)
 app.include_router(agent_router)
 app.include_router(dashboard_router)
+app.include_router(scheduler_router)

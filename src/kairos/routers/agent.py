@@ -20,6 +20,7 @@ from kairos.auth.deps import current_user
 from kairos.db.rls import install_rls_listener
 from kairos.db.session import get_session
 from kairos.repositories.conversation import ConversationRepository
+from kairos.scheduler.repository import ScheduledJobRepository
 
 logger = logging.getLogger(__name__)
 
@@ -62,9 +63,13 @@ async def list_conversations(
     install_rls_listener(session, user_id)
     repo = ConversationRepository(session=session)
     conversations = await repo.list_for_user(user_id=user_id)
+    job_ids = await ScheduledJobRepository(session).job_ids_by_conversation()
     return {
         "conversations": [
-            {"id": str(c.id), "title": c.title, "updated_at": c.updated_at.isoformat()}
+            {
+                "id": str(c.id), "title": c.title, "updated_at": c.updated_at.isoformat(),
+                "scheduled_job_id": str(job_ids[c.id]) if c.id in job_ids else None,
+            }
             for c in conversations
         ]
     }
@@ -89,9 +94,11 @@ async def list_messages(
         if isinstance(call, dict) and "id" in call and "name" in call
     }
     return {
+        # the chat draws a "new context" divider after this seq (scheduler context reset)
+        "compacted_through_seq": conversation.compacted_through_seq,
         "messages": [
             {
-                "id": str(m.id), "role": m.role, "content": m.content,
+                "id": str(m.id), "seq": m.seq, "role": m.role, "content": m.content,
                 "tool_calls": m.tool_calls, "created_at": m.created_at.isoformat(),
                 "tool_call_id": m.tool_call_id,
                 "tool_name": tool_names.get(m.tool_call_id) if m.role == "tool" else None,

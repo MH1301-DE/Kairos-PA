@@ -232,3 +232,18 @@ class ScheduledJobRepository:
             )
         )
         return {conv: job for conv, job in rows.tuples() if conv is not None}
+
+    async def latest_runs(self, job_ids: list[UUID]) -> dict[UUID, ScheduledJobRun]:
+        if not job_ids:
+            return {}
+        result = await self._session.execute(
+            select(ScheduledJobRun)
+            .where(ScheduledJobRun.job_id.in_(job_ids))
+            .order_by(
+                ScheduledJobRun.job_id,
+                ScheduledJobRun.started_at.desc(),
+                ScheduledJobRun.id.desc(),
+            )
+            .distinct(ScheduledJobRun.job_id)
+        )
+        return {run.job_id: run for run in result.scalars()}
