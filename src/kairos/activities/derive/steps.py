@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 
-from kairos.activities.derive.common import Prepared, interp, weighted_mean
+from kairos.activities.derive.common import Prepared, interp, message_offset, weighted_mean
 
 MIN_LAP_S = 5.0
 MIN_RATED_S = 20.0
@@ -77,14 +77,6 @@ def _num(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, int | float):
         return None
     return float(value)
-
-
-def _offset(value: object, start_at: datetime) -> float | None:
-    if not isinstance(value, datetime):
-        return None
-    ts = value if value.tzinfo else value.replace(tzinfo=UTC)
-    ref = start_at if start_at.tzinfo else start_at.replace(tzinfo=UTC)
-    return (ts - ref).total_seconds()
 
 
 def _text(value: object) -> str | None:
@@ -215,7 +207,7 @@ def step_results(
     execs: list[_Exec] = []
     for lap in laps:
         index = lap.get("wkt_step_index")
-        a = _offset(lap.get("start_time"), start_at)
+        a = message_offset(lap.get("start_time"), start_at)
         elapsed = _num(lap.get("total_elapsed_time")) or 0.0
         if not isinstance(index, int) or index not in steps or a is None or elapsed < MIN_LAP_S:
             continue

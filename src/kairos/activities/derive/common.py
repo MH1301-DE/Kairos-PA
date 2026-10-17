@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from kairos.activities.stream_repository import LoadedStream
+from kairos.activities.streams import message_time
 
 ACTIVITY_DERIVED_ALGO_VERSION = 3
 
@@ -36,15 +37,22 @@ class Prepared:
     hr_coverage_pct: float
 
 
+def message_offset(value: object, start_at: datetime) -> float | None:
+    # the fit_json fallback archive keeps message times as ISO strings
+    ts = message_time(value)
+    if ts is None:
+        return None
+    ref = start_at if start_at.tzinfo else start_at.replace(tzinfo=UTC)
+    return (ts - ref).total_seconds()
+
+
 def _event_offset(value: object, start_at: datetime | None) -> float | None:
     if isinstance(value, bool):
         return None
     if isinstance(value, int | float):
         return float(value)
-    if isinstance(value, datetime) and start_at is not None:
-        ts = value if value.tzinfo else value.replace(tzinfo=UTC)
-        ref = start_at if start_at.tzinfo else start_at.replace(tzinfo=UTC)
-        return (ts - ref).total_seconds()
+    if start_at is not None:
+        return message_offset(value, start_at)
     return None
 
 

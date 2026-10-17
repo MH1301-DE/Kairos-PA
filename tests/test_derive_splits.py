@@ -13,6 +13,7 @@ from kairos.activities.derive.splits import (
     lap_splits,
     pace_cv_pct,
 )
+from kairos.activities.derive.steps import step_results
 from kairos.activities.stream_repository import LoadedStream
 from tests.activity_fixtures import AUTO_LAP_RUN, POOL_SWIM, WORKOUT_RUN, load_activity_fixture
 
@@ -302,3 +303,30 @@ def test_swim_fixture_100m_splits() -> None:
     assert fastest[0].timer_s >= fx.list_item["fastestSplit_100"]
     swolf = sum((r.swolf or 0) * (r.swim_lengths or 0) for r in rows) / 20
     assert swolf == pytest.approx(fx.list_item["averageSwolf"], abs=1.0)
+
+
+def test_json_fallback_iso_timestamps_give_the_same_laps_and_steps() -> None:
+    # the fit_json fallback archive stores message times as ISO strings
+    fx = load_activity_fixture(WORKOUT_RUN)
+
+    def iso(messages: list[dict[str, object]], key: str) -> list[dict[str, object]]:
+        return [
+            {**m, key: v.isoformat()} if isinstance(v := m.get(key), datetime) else m
+            for m in messages
+        ]
+
+    def derive(events: list[dict[str, object]], laps: list[dict[str, object]]) -> tuple:
+        prep = prepare(fx.stream, sport_profile="running", events=events)
+        rows = lap_splits(prep, sport_profile="running", laps=laps, start_at=fx.stream.start_at)
+        steps = step_results(
+            prep, sport_profile="running", workout_steps=fx.messages["workout_step_mesgs"],
+            laps=laps, start_at=fx.stream.start_at, hr_targets=None,
+        )
+        return rows, steps, prep.timer_t[-1]
+
+    native = derive(fx.messages["event_mesgs"], fx.messages["lap_mesgs"])
+    fallback = derive(
+        iso(fx.messages["event_mesgs"], "timestamp"), iso(fx.messages["lap_mesgs"], "start_time")
+    )
+    assert len(native[0]) == len(fx.messages["lap_mesgs"]) > 0
+    assert fallback == native

@@ -3,7 +3,7 @@ from __future__ import annotations
 import statistics
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import datetime
 
 from kairos.activities.derive.common import (
     MAX_WEIGHT_S,
@@ -11,6 +11,7 @@ from kairos.activities.derive.common import (
     elevation_gain_loss,
     interp,
     interpolate_time_at_distance,
+    message_offset,
     weighted_mean,
     weighted_median,
 )
@@ -46,14 +47,6 @@ class SplitRow:
     swim_lengths: int | None = None
     swolf: float | None = None
     quality: str = "ok"
-
-
-def _offset(value: object, start_at: datetime) -> float | None:
-    if not isinstance(value, datetime):
-        return None
-    ts = value if value.tzinfo else value.replace(tzinfo=UTC)
-    ref = start_at if start_at.tzinfo else start_at.replace(tzinfo=UTC)
-    return (ts - ref).total_seconds()
 
 
 def _num(value: object) -> float | None:
@@ -199,7 +192,7 @@ def _swim_splits(
         idx: list[int] = []
         starts: list[float] = []
         for ln, sec in zip(group, secs, strict=True):
-            a = _offset(ln.get("start_time"), start_at)
+            a = message_offset(ln.get("start_time"), start_at)
             if a is None:
                 continue
             starts.append(a)
@@ -243,7 +236,7 @@ def lap_splits(
     has_dist = any(d is not None for d in prep.distance)
     rows: list[SplitRow] = []
     for number, lap in enumerate(laps, start=1):
-        a = _offset(lap.get("start_time"), start_at)
+        a = message_offset(lap.get("start_time"), start_at)
         if a is None:
             continue
         b = a + (_num(lap.get("total_elapsed_time")) or 0.0)

@@ -43,7 +43,7 @@ class StreamSet:
     source: Literal["fit_zip", "fit_json"]
 
 
-def _timestamp(value: object) -> datetime | None:
+def message_time(value: object) -> datetime | None:
     if isinstance(value, str):
         try:
             value = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -96,7 +96,7 @@ def build_streams(
 ) -> StreamSet | None:
     parsed: list[tuple[datetime, Mapping[str, object]]] = []
     for rec in records:
-        ts = _timestamp(rec.get("timestamp"))
+        ts = message_time(rec.get("timestamp"))
         if ts is not None:
             parsed.append((ts, rec))
     if not parsed:
