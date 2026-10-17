@@ -272,13 +272,13 @@ def test_fixture_runs_match_garmin_hr_and_cadence(name: str) -> None:
     assert row.quality == "ok"
 
 
-@pytest.mark.parametrize(("name", "gain"), [(AUTO_LAP_RUN, 42.2), (WORKOUT_RUN, 34.0)])
-def test_fixture_elevation_gain_near_garmin(name: str, gain: float) -> None:
-    # V4 (spec §12.3): Garmin 40 m and 35 m; the 2 m step rule gave 28.2 m and 24.0 m
+@pytest.mark.parametrize("name", [AUTO_LAP_RUN, WORKOUT_RUN])
+def test_fixture_elevation_totals_come_from_the_watch(name: str) -> None:
+    # V4 decision 2026-10-17: barometric session totals, like Garmin's elevationGain
     row, fx = _fixture_stats(name)
-    assert row.elev_gain_m == pytest.approx(gain, abs=0.5)
-    garmin = fx.list_item["elevationGain"]
-    assert abs(row.elev_gain_m - garmin) <= 0.1 * garmin
+    session = fx.messages["session_mesgs"][0]
+    assert row.elev_gain_m == session["total_ascent"] == fx.list_item["elevationGain"]
+    assert row.elev_loss_m == session["total_descent"]
 
 
 def test_fixture_steady_run_has_decoupling() -> None:

@@ -70,6 +70,17 @@ def test_gps_jump_discards_windows() -> None:
     assert rows["800m"].duration_s == pytest.approx(800 / 3.0, abs=0.01)
 
 
+def test_real_sprint_steps_are_not_treated_as_jumps() -> None:
+    # V2 decision 2026-10-17: 8.5 m/s threw away sprint workouts and GPS jitter
+    speeds = [3.0] * 2000
+    for i in range(600, 604):
+        speeds[i] = 9.0
+    rows = _by_key(_run(speeds))
+    # the fastest 800 m contains the sprint; under the old filter it had to avoid it
+    start_m = rows["800m"].start_km * 1000
+    assert start_m <= 600 * 3.0 <= start_m + 800
+
+
 def test_jump_in_short_run_yields_no_row() -> None:
     prep = _run([5.0] * 100 + [60.0] + [5.0] * 100)
     rows = _by_key(prep)

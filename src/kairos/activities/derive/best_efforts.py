@@ -16,7 +16,8 @@ BEST_EFFORT_DISTANCES: dict[str, float] = {
     "50k": 50000.0,
     "100k": 100000.0,
 }
-BEST_EFFORT_MAX_STEP_SPEED_MPS = 8.5
+# above any human sprint; 8.5 m/s also dropped sprint workouts (V2, 2026-10-17)
+BEST_EFFORT_MAX_STEP_SPEED_MPS = 12.0
 
 
 @dataclass(frozen=True, kw_only=True)

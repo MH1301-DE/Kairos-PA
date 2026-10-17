@@ -44,6 +44,8 @@ MIN_LAP_S = 5.0
 
 Row = dict[str, Any]
 
+_limit = f"{be.BEST_EFFORT_MAX_STEP_SPEED_MPS:g}".replace(".", ",")
+
 
 def tol(reference: float) -> float:
     return max(2.0, 0.01 * reference)
@@ -323,7 +325,8 @@ def v2(
             elif el_raw is not None and abs(el_raw - garmin) <= tol(garmin):
                 all_ok += 1
                 cause = (
-                    f"Sprungfilter verwirft die schnellen Fenster ({fit.jumps} Schritte > 8,5 m/s)"
+                    "Sprungfilter verwirft die schnellen Fenster "
+                    f"({fit.jumps} Schritte > {_limit} m/s)"
                 )
             details.append(
                 [
@@ -362,7 +365,7 @@ def v2(
     )
     rep.add(
         f"Ausreißer ({len(details)}), Toleranz max(2 s, 1 %); „–“ bei Kairos = kein Fenster ohne "
-        "Schritt > 8,5 m/s:",
+        f"Schritt > {_limit} m/s:",
         "",
     )
     if details:
@@ -467,7 +470,8 @@ def v4(
         return lambda a, fit: elevation_gain_loss(_rolling_median(fit.raw_alt, window), hyst)[0]
 
     variants: list[tuple[str, Callable[[Activity, Fit], float]]] = [
-        ("B.1 gespeichert: Median 5, Hysterese 2 m (Extremwerte, ab 2026-10-15)", stored),
+        ("gespeichert (ab 2026-10-17: session.total_ascent der Uhr)", stored),
+        ("B.1 eigene Regel: Median 5, Hysterese 2 m (Extremwerte)", med(5, 2.0)),
         (
             "B.1 bis 2026-10-15: Median 5, 2-m-Stufen",
             lambda a, fit: step_rule_gain(_rolling_median(fit.raw_alt, 5)),

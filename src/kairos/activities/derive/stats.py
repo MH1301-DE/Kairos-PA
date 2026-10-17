@@ -391,6 +391,11 @@ def compute_stats(
 
     alt = [v for v in prep.altitude_smooth if v is not None]
     gain, loss = elevation_gain_loss(prep.altitude_smooth) if alt else (None, None)
+    # V4 decision 2026-10-17: the watch's barometric totals win; splits keep the own rule
+    session0 = sessions[0] if sessions else {}
+    watch_gain, watch_loss = _num(session0.get("total_ascent")), _num(session0.get("total_descent"))
+    if watch_gain is not None:
+        gain, loss = watch_gain, watch_loss if watch_loss is not None else loss
     power_active = [p for p, wi in zip(prep.power, w, strict=True) if p is not None and wi > 0]
 
     cv = pace_cv_pct(splits)
