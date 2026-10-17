@@ -9,6 +9,12 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from kairos.agent.activity_tools import (
+    SEARCH_SORTS,
+    SPORT_PROFILES,
+    activity_get_handler,
+    activity_search_handler,
+)
 from kairos.agent.expiry import _parse_expiry
 from kairos.agent.format import cap_envelope, drop_last_row
 from kairos.agent.render_schemas import RENDER_COMPONENTS, validate_render_config
@@ -681,6 +687,47 @@ CORE_TOOLS: tuple[ToolSpec, ...] = (
             },
         },
         handler=plan_progress_handler,
+    ),
+    ToolSpec(
+        name="activity_search",
+        description=(
+            "Sucht eigene Aktivitäten (Laufen, Rad, Schwimmen, Wandern …) und liefert eine "
+            "kompakte Liste mit IDs. Details danach mit activity_get."
+        ),
+        risk_class="read", requires_confirmation=False,
+        json_schema={
+            "type": "object",
+            "properties": {
+                "from_date": {
+                    "type": "string", "description": "YYYY-MM-DD, Default: heute − 30 Tage",
+                },
+                "to_date": {"type": "string", "description": "YYYY-MM-DD, Default: heute"},
+                "sport_profile": {"type": "string", "enum": list(SPORT_PROFILES)},
+                "name_contains": {"type": "string"},
+                "min_distance_km": {"type": "number"},
+                "max_distance_km": {"type": "number"},
+                "sort": {"type": "string", "enum": list(SEARCH_SORTS)},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+            },
+        },
+        handler=activity_search_handler,
+    ),
+    ToolSpec(
+        name="activity_get",
+        description=(
+            "Steckbrief einer Aktivität: Umfang, Pace/Tempo, Herzfrequenz, Zonen, Belastung, "
+            "schnellster und langsamster km. Ohne activity_id: die letzte Aktivität (optional "
+            "gefiltert nach sport_profile)."
+        ),
+        risk_class="read", requires_confirmation=False,
+        json_schema={
+            "type": "object",
+            "properties": {
+                "activity_id": {"type": "integer"},
+                "sport_profile": {"type": "string", "enum": list(SPORT_PROFILES)},
+            },
+        },
+        handler=activity_get_handler,
     ),
 )
 

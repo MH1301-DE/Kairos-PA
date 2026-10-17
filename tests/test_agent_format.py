@@ -12,6 +12,7 @@ from kairos.agent.format import (
     fmt_duration,
     fmt_pace_100m,
     fmt_pace_km,
+    fmt_percent,
     fmt_speed_kmh,
     table,
 )
@@ -72,3 +73,8 @@ def test_envelope_next_quality_and_cap() -> None:
     plain = _envelope("x", [1, 2])
     assert "next" not in plain["meta"]
     assert "quality" not in plain["meta"]
+
+
+def test_percent() -> None:
+    assert fmt_percent(3.04) == "3,0 %"
+    assert fmt_percent(12.346, 2) == "12,35 %"

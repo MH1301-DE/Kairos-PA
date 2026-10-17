@@ -50,7 +50,9 @@ def test_core_tools_have_the_expected_risk_classes() -> None:
     assert risk_by_name["plan_commit"] == ("write", True)
     assert risk_by_name["plan_adjust"] == ("write", True)
     assert risk_by_name["plan_progress"] == ("read", False)
-    assert len(CORE_TOOLS) == 12
+    assert risk_by_name["activity_search"] == ("read", False)
+    assert risk_by_name["activity_get"] == ("read", False)
+    assert len(CORE_TOOLS) == 14
     assert set(TOOLS_BY_NAME) == {t.name for t in CORE_TOOLS}
 
 

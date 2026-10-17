@@ -44,6 +44,10 @@ def fmt_speed_kmh(kmh: float) -> str:
     return f"{_de(kmh, 1)} km/h"
 
 
+def fmt_percent(value: float, decimals: int = 1) -> str:
+    return f"{_de(value, decimals)} %"
+
+
 def fmt_datetime_local(dt: datetime, tz: str) -> str:
     local = dt.astimezone(ZoneInfo(tz))
     return f"{_WEEKDAYS[local.weekday()]} {local:%d.%m.%Y %H:%M}"
