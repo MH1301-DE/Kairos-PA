@@ -61,4 +61,9 @@ def _summarize(tool_name: str, arguments: dict[str, Any]) -> str:
         )
     if tool_name == "delete_calendar_event":
         return f"Termin {arguments.get('event_id')} löschen"
+    if tool_name == "reference_value_set":
+        kind = str(arguments.get("kind", "")).upper()
+        if arguments.get("activity_id") is not None:
+            return f"{kind} aus Aktivität {arguments['activity_id']} berechnen und speichern"
+        return f"{kind} = {arguments.get('value')} speichern"
     return f"{tool_name} ausführen mit {arguments}"

@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from kairos.activities.stream_repository import LoadedStream
 from kairos.activities.streams import message_time
 
-ACTIVITY_DERIVED_ALGO_VERSION = 4
+ACTIVITY_DERIVED_ALGO_VERSION = 5
 
 MAX_WEIGHT_S = 10.0
 PAUSE_MIN_GAP_S = 10.0

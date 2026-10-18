@@ -19,7 +19,7 @@ _TABLES = {"scheduled_job", "scheduled_job_run"}
 
 def test_single_alembic_head() -> None:
     heads = ScriptDirectory.from_config(Config("alembic.ini")).get_heads()
-    assert heads == ["5d2f8a6c1e47"]
+    assert heads == ["9b3e7c1a4d20"]
 
 
 def _touches_scheduler(diff: Any) -> bool:
@@ -58,7 +58,8 @@ async def test_orm_matches_migration_and_downgrade_round_trips(
         await conn.execute(
             text(
                 "GRANT SELECT, INSERT, UPDATE, DELETE ON activity_stats, activity_split, "
-                "activity_best_effort, activity_step_result TO kairos_app"
+                "activity_best_effort, activity_step_result, coach_profile, "
+                "athlete_reference_value, plan_phase, plan_review TO kairos_app"
             )
         )
         forced = await conn.execute(

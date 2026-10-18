@@ -32,6 +32,8 @@ WORKDIR /app
 COPY src ./src
 COPY alembic ./alembic
 COPY alembic.ini ./
+# training knowledge base for the coach (read at start, coach spec 3.5)
+COPY knowledge ./knowledge
 
 USER kairos
 EXPOSE 8000

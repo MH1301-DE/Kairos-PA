@@ -27,10 +27,10 @@ from kairos.agent.expiry import _parse_expiry
 from kairos.agent.format import cap_envelope, drop_last_row
 from kairos.agent.render_schemas import RENDER_COMPONENTS, validate_render_config
 from kairos.calendar.free_time import BusyBlock, CalendarPrefs, FreeBlock, compute_free_blocks
+from kairos.coach import service as coach_service
+from kairos.coach.knowledge import get_knowledge
 from kairos.db.models import MetricDailyValue
 from kairos.metrics.bootstrap import build_default_registry
-from kairos.metrics.variants.edwards_trimp_variant import edwards_daily_load_series
-from kairos.planning.algorithm import generate_plan_blocks
 from kairos.repositories.calendar_event import CalendarEventRepository
 from kairos.repositories.memory import SqlMemoryRepository
 from kairos.repositories.plan import PlanRepository
@@ -43,7 +43,13 @@ from kairos.routers.calendar import (
 
 _WORKOUT_LABELS: dict[str, str] = {
     "long_run": "Long Run", "hard": "Intervalle/Tempo", "easy": "Lockerer Lauf", "rest": "Ruhetag",
+    "quality": "Qualitätseinheit", "strength": "Krafttraining", "cross": "Ausgleich",
+    "test": "Test",
 }
+_PROGRESS_SCOPES = ("heute", "woche", "plan")
+_REFERENCE_KINDS = ("vdot", "lthr_laufen")
+_REFERENCE_SOURCES = ("test", "wettkampf", "manuell", "bestleistung")
+_KNOWLEDGE_TEXT_CHARS = 1500
 _STRESS_KEYWORDS = ("stress", "krank", "müde", "muede", "erkält", "erkaeltet")
 
 # Hardcap per docs/03-agent-design.md §4.5 -- a tool result never dumps a raw
@@ -340,34 +346,58 @@ async def _current_ctl(session: AsyncSession, user_id: UUID, as_of: date) -> flo
 
 
 async def plan_propose_handler(
-    session: AsyncSession, *, user_id: UUID, weeks: int, goal_date: str | None = None
+    session: AsyncSession,
+    *,
+    user_id: UUID,
+    goal_id: str | None = None,
+    start: str | None = None,
+    overrides: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    start = date.today()
-    end = start + timedelta(weeks=weeks) - timedelta(days=1)
-    goal = date.fromisoformat(goal_date) if goal_date else None
-
-    free_blocks = await _free_blocks_by_day(session, user_id, start, end)
-    current_ctl = await _current_ctl(session, user_id, start)
-    planned = generate_plan_blocks(
-        start=start, end=end, goal_date=goal, free_blocks_by_day=free_blocks,
-        current_ctl=current_ctl,
-    )
-
-    repo = PlanRepository(session=session)
-    plan = await repo.create_draft(
-        user_id=user_id, title=f"Trainingsplan ab {start.isoformat()}", start_date=start,
-        end_date=end, goal_date=goal, blocks=planned,
-    )
-
-    lines = [
-        f"{b.day.isoformat()}: {_WORKOUT_LABELS[b.workout_type]}"
-        + (f" (TRIMP ~{b.target_trimp:.0f})" if b.target_trimp else "")
-        for b in planned
+    today = date.today()
+    try:
+        plan, out, goal = await coach_service.propose(
+            session, user_id, today=today,
+            goal_id=UUID(goal_id) if goal_id else None,
+            start=date.fromisoformat(start) if start else None,
+            overrides=overrides,
+        )
+    except coach_service.CoachNotReady as exc:
+        return _envelope(str(exc), {"plan_id": None})
+    kb = get_knowledge()
+    phases = [
+        f"{p.kind}: {p.start:%d.%m.}–{p.end:%d.%m.%Y}, {p.volume_min_km:.0f}–"
+        f"{p.volume_max_km:.0f} km/Woche – {p.focus}"
+        for p in out.phases
     ]
+    blocks = []
+    for b in out.blocks:
+        entry = kb.entries.get(b.unit_id)
+        title = entry.head.titel if entry else b.unit_id
+        line = f"{b.day:%a %d.%m.}: {title}, {b.duration_s / 60:.0f} min"
+        if b.distance_m:
+            line += f", {b.distance_m / 1000:.1f} km"
+        blocks.append(line)
+    warnings = [
+        f"{w.message} ({w.detail}{', ' + w.rule_ref if w.rule_ref else ''})" for w in out.warnings
+    ]
+    summary = (
+        f"Entwurf „{plan.title}“: {len(out.phases)} Phasen bis "
+        f"{(goal.target_date if goal and goal.target_date else out.weeks[-1].start):%d.%m.%Y}, "
+        f"{len(out.blocks)} Einheiten bis {out.detail_until:%d.%m.}. Noch nichts im Kalender "
+        "oder bei Garmin – zum Übernehmen plan_commit mit plan_id."
+        if out.detail_until else f"Entwurf „{plan.title}“ ohne Einheiten."
+    )
     return _envelope(
-        f"Entwurf für {weeks} Wochen erstellt ({len(planned)} Tage). Noch nicht im Kalender --"
-        " zum Bestätigen plan_commit aufrufen.",
-        {"plan_id": str(plan.id), "blocks": lines},
+        summary,
+        {
+            "plan_id": str(plan.id),
+            "phasen": phases,
+            "einheiten": blocks,
+            "wochen_km": [w.volume_km for w in out.weeks[:8]],
+            "warnungen": warnings,
+            "begruendung": out.explain,
+        },
+        max_tokens=2500,
     )
 
 
@@ -382,14 +412,18 @@ async def plan_commit_handler(
     for block in blocks:
         if block.workout_type == "rest" or block.calendar_event_id is not None:
             continue
-        summary = _WORKOUT_LABELS[block.workout_type]
+        entry = get_knowledge().entries.get(block.unit_id or "")
+        summary = entry.head.titel if entry else _WORKOUT_LABELS.get(
+            block.workout_type, block.workout_type
+        )
         if block.target_trimp:
             summary += f" (TRIMP ~{block.target_trimp:.0f})"
-        req = CreateEventRequest(
-            summary=summary,
-            start_at=datetime(block.day.year, block.day.month, block.day.day, 7, 0, tzinfo=UTC),
-            end_at=datetime(block.day.year, block.day.month, block.day.day, 8, 0, tzinfo=UTC),
+        # coach blocks carry a local start time; phase-5 blocks keep 07:00 UTC until AP 5
+        start_at = block.start_at or datetime(
+            block.day.year, block.day.month, block.day.day, 7, 0, tzinfo=UTC
         )
+        end_at = start_at + timedelta(seconds=block.planned_duration_s or 3600)
+        req = CreateEventRequest(summary=summary, start_at=start_at, end_at=end_at)
         created = await _create_calendar_event(session, user_id, req)
         event_ids_by_block_id[block.id] = created["id"]
 
@@ -431,42 +465,100 @@ async def plan_adjust_handler(
 
 
 async def plan_progress_handler(
-    session: AsyncSession, *, user_id: UUID, plan_id: str | None = None
+    session: AsyncSession,
+    *,
+    user_id: UUID,
+    scope: str = "woche",
+    week_start: str | None = None,
 ) -> dict[str, Any]:
-    repo = PlanRepository(session=session)
-    plan = (
-        await repo.get(user_id=user_id, plan_id=UUID(plan_id))
-        if plan_id
-        else await repo.get_active_for_user(user_id=user_id)
-    )
-    if plan is None:
-        return _envelope("Kein aktiver Plan gefunden.", {"plan_id": None})
-
+    if scope not in _PROGRESS_SCOPES:
+        raise ValueError(f"scope muss eines von {', '.join(_PROGRESS_SCOPES)} sein")
     today = date.today()
-    week_start = today - timedelta(days=today.weekday())
-    week_end = week_start + timedelta(days=6)
-
-    blocks = await repo.list_blocks(user_id=user_id, plan_id=plan.id)
-    week_blocks = [b for b in blocks if week_start <= b.day <= week_end]
-    planned_total = sum(b.target_trimp or 0.0 for b in week_blocks)
-
-    load = await edwards_daily_load_series(
-        session, user_id=user_id, end_day=min(today, week_end),
-        days=(min(today, week_end) - week_start).days + 1,
+    await coach_service.match_activities(session, user_id, today)
+    data = await coach_service.progress(
+        session, user_id, today=today, scope=scope,
+        week=date.fromisoformat(week_start) if week_start else None,
     )
-    actual_total = sum(load.series.values())
+    if data.get("plan") is None and "plan_id" not in data:
+        return _envelope("Kein Coach-Plan vorhanden – zuerst plan_propose.", {"plan_id": None})
+    if scope == "woche":
+        km = data["umfang_km"]
+        summary = (
+            f"Woche ab {data['woche']}: Soll {km['soll']} km, Ist {km['ist']} km, "
+            f"{len(data['einheiten'])} Einheiten."
+        )
+    elif scope == "heute":
+        summary = "Heute: " + (
+            data["heute"] if isinstance(data["heute"], str)
+            else "; ".join(e["einheit"] for e in data["heute"])
+        )
+    else:
+        summary = f"Plan „{data['titel']}“, aktuelle Phase: {data['phase'] or '–'}."
+    return _envelope(summary, data, max_tokens=2500)
 
-    days = [
-        {
-            "day": b.day.isoformat(), "workout_type": b.workout_type,
-            "planned_trimp": b.target_trimp, "actual_trimp": load.series.get(b.day),
-        }
-        for b in week_blocks
-    ]
+
+async def knowledge_lookup_handler(
+    session: AsyncSession,
+    *,
+    user_id: UUID,
+    rule_id: str | None = None,
+    query: str | None = None,
+    sport: str | None = None,
+) -> dict[str, Any]:
+    del session, user_id
+    kb = get_knowledge()
+    if rule_id:
+        found = kb.entry(rule_id)
+        entries = [found] if found else []
+    elif query:
+        entries = kb.search(query, sport=sport, limit=3)
+    else:
+        raise ValueError("rule_id oder query angeben")
+    if not entries:
+        return _envelope("Kein passender Eintrag in der Wissensbank.", [])
+    rows = []
+    for e in entries:
+        text = "\n\n".join(f"{k}: {v}" for k, v in e.sections.items())
+        rows.append({
+            "regel": e.ref, "titel": e.head.titel, "art": e.head.art, "evidenz": e.head.evidenz,
+            "erklaerung": text[:_KNOWLEDGE_TEXT_CHARS],
+            "quellen": [
+                f"{kb.sources[q].get('autoren')} ({kb.sources[q].get('jahr')})"
+                for q in e.head.quellen if q in kb.sources
+            ],
+        })
     return _envelope(
-        f"Diese Woche: geplant {planned_total:.0f} TRIMP, tatsächlich {actual_total:.0f} TRIMP.",
-        {"plan_id": str(plan.id), "planned_total": planned_total, "actual_total": actual_total,
-         "days": days},
+        f"{len(rows)} Eintrag/Einträge: " + ", ".join(e.ref for e in entries), rows,
+        max_tokens=1500,
+    )
+
+
+async def reference_value_set_handler(
+    session: AsyncSession,
+    *,
+    user_id: UUID,
+    kind: str,
+    value: float | None = None,
+    activity_id: int | None = None,
+    measured_on: str | None = None,
+    source: str = "manuell",
+) -> dict[str, Any]:
+    if kind not in _REFERENCE_KINDS:
+        raise ValueError(f"kind muss eines von {', '.join(_REFERENCE_KINDS)} sein")
+    if source not in _REFERENCE_SOURCES:
+        raise ValueError(f"source muss eines von {', '.join(_REFERENCE_SOURCES)} sein")
+    proposal = await coach_service.compute_reference(
+        session, user_id, kind=kind, value=value, activity_id=activity_id,
+        measured_on=date.fromisoformat(measured_on) if measured_on else None,
+        source=source, today=date.today(),
+    )
+    await coach_service.save_reference(session, user_id, proposal)
+    return _envelope(
+        f"{kind.upper()} {proposal.value} gespeichert ({proposal.calculation}). Übertragene "
+        "Einheiten ändern sich erst in der nächsten Wochenbesprechung; ein Entwurf wird mit "
+        "plan_propose neu berechnet.",
+        {"kind": kind, "wert": proposal.value, "datum": proposal.measured_on.isoformat(),
+         "rechnung": proposal.calculation, "bereiche": proposal.ranges},
     )
 
 
@@ -636,17 +728,22 @@ CORE_TOOLS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="plan_propose",
         description=(
-            "Erstellt einen Trainingsplan-Entwurf für weeks Wochen auf Basis freier "
-            "Kalenderzeit und aktueller Belastung, optional bis goal_date."
+            "Erstellt einen Trainingsplan-Entwurf aus Plantyp, Ziel, Verfügbarkeit und "
+            "Bezugswerten (Coach-Profil). Ohne goal_id für das nächste aktive Ziel mit Datum. "
+            "Schreibt nichts nach Garmin oder in den Kalender."
         ),
         risk_class="read", requires_confirmation=False,
         json_schema={
             "type": "object",
             "properties": {
-                "weeks": {"type": "integer", "description": "Planungsdauer in Wochen"},
-                "goal_date": {"type": "string", "description": "ISO-Datum, optional (Renntag)"},
+                "goal_id": {"type": "string"},
+                "start": {"type": "string", "description": "ISO-Datum, Default nächster Montag"},
+                "overrides": {
+                    "type": "object",
+                    "description": "Plantyp-Parameter nur für diesen Entwurf, z. B. "
+                    "{\"verteilung\": \"polarisiert\"}",
+                },
             },
-            "required": ["weeks"],
         },
         handler=plan_propose_handler,
     ),
@@ -684,17 +781,56 @@ CORE_TOOLS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="plan_progress",
         description=(
-            "Soll/Ist-Vergleich des aktiven (oder angegebenen) Trainingsplans für die "
-            "laufende Woche."
+            "Soll/Ist des Coach-Plans: heute (Einheit mit Zielbereichen), woche (je Einheit "
+            "Soll/Ist, Trefferquote, Umfang, Leitplanken) oder plan (Phasen, Umfang, "
+            "Bezugswerte)."
         ),
         risk_class="read", requires_confirmation=False,
         json_schema={
             "type": "object",
             "properties": {
-                "plan_id": {"type": "string", "description": "optional, sonst aktiver Plan"},
+                "scope": {"type": "string", "enum": list(_PROGRESS_SCOPES)},
+                "week_start": {"type": "string", "description": "ISO-Datum eines Montags"},
             },
         },
         handler=plan_progress_handler,
+    ),
+    ToolSpec(
+        name="knowledge_lookup",
+        description=(
+            "Liest eine Regel der Trainings-Wissensbank (Begründung, Evidenz, Quellen), per "
+            "rule_id (z. B. lauf.progression.einzellauf) oder Suchtext."
+        ),
+        risk_class="read", requires_confirmation=False,
+        json_schema={
+            "type": "object",
+            "properties": {
+                "rule_id": {"type": "string"},
+                "query": {"type": "string"},
+                "sport": {"type": "string", "enum": ["laufen", "rad", "schwimmen", "kraft"]},
+            },
+        },
+        handler=knowledge_lookup_handler,
+    ),
+    ToolSpec(
+        name="reference_value_set",
+        description=(
+            "Speichert einen Bezugswert (VDOT oder LTHR Laufen), manuell oder berechnet aus "
+            "einem Test/Wettkampf (activity_id); wird erst nach Bestätigung ausgeführt."
+        ),
+        risk_class="write", requires_confirmation=True,
+        json_schema={
+            "type": "object",
+            "properties": {
+                "kind": {"type": "string", "enum": list(_REFERENCE_KINDS)},
+                "value": {"type": "number"},
+                "activity_id": {"type": "integer"},
+                "measured_on": {"type": "string", "description": "ISO-Datum"},
+                "source": {"type": "string", "enum": list(_REFERENCE_SOURCES)},
+            },
+            "required": ["kind"],
+        },
+        handler=reference_value_set_handler,
     ),
     ToolSpec(
         name="activity_search",

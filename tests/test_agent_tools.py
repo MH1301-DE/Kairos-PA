@@ -56,7 +56,9 @@ def test_core_tools_have_the_expected_risk_classes() -> None:
     assert risk_by_name["activity_splits"] == ("read", False)
     assert risk_by_name["activity_analyze"] == ("read", False)
     assert risk_by_name["best_efforts"] == ("read", False)
-    assert len(CORE_TOOLS) == 17
+    assert risk_by_name["knowledge_lookup"] == ("read", False)
+    assert risk_by_name["reference_value_set"] == ("write", True)
+    assert len(CORE_TOOLS) == 19
     assert set(TOOLS_BY_NAME) == {t.name for t in CORE_TOOLS}
 
 

@@ -22,9 +22,14 @@ gesperrt, die Eval-Konversationen werden am Ende gelöscht. Zusätzlich prüft
 numbers_match, ob die Kennzahlen aus der summary des erwarteten Tools wörtlich in der
 Antwort stehen.
 
+Fälle 27, 28, 31 und 32 (Coach-Modus, Spec 2026-10-17 §13) laufen im Seed-Modus; der
+Seed legt dafür Coach-Profil, Marathon-Ziel im April und einen 10-km-Test von gestern an;
+den aktiven Plan für Fall 28 erst direkt vor diesem Fall.
+
 Verwendung:
     .venv/Scripts/python scripts/agent_eval_suite.py
     .venv/Scripts/python scripts/agent_eval_suite.py --cases 17,18,19,20,21,26 --user-id <uuid>
+    .venv/Scripts/python scripts/agent_eval_suite.py --cases 27,28,31,32
 
 Voraussetzung: LLM_API_KEY in .env gesetzt (ein Key pro Deployment, siehe
 Settings.llm_api_key) -- ohne den bricht der Lauf mit
@@ -57,15 +62,19 @@ from kairos.agent.dispatcher import Proposal, ToolCall, dispatch
 from kairos.agent.events import AgentEvent
 from kairos.agent.history import tool_result
 from kairos.agent.orchestrator import stream_continuation, stream_turn
+from kairos.coach import service as coach_service
+from kairos.coach.model import week_start
 from kairos.config import settings
 from kairos.db.rls import install_rls_listener
 from kairos.db.session import async_session_factory
+from kairos.repositories.coach import CoachProfileRepository
 from kairos.repositories.conversation import ConversationRepository
 from kairos.repositories.metrics_recompute import (
     recompute_hr_bucket_seconds_daily,
     recompute_metric_daily_values,
     recompute_wellness_daily_stats,
 )
+from kairos.repositories.plan import PlanRepository
 
 
 @dataclass(frozen=True)
@@ -241,6 +250,21 @@ ACTIVITY_CASES: tuple[EvalCase, ...] = (
     ),
 )
 
+# spec 2026-10-17 §13; 29 and 30 need plan_commit/plan_adjust from AP 5
+COACH_CASES: tuple[EvalCase, ...] = (
+    EvalCase(
+        27, "Plan mir den Marathon im April.", ("plan_propose",),
+        NumberCheck("plan_propose", (r"Phasen bis (\d{2}\.\d{2}\.\d{4})",)),
+    ),
+    EvalCase(28, "Was steht heute an?", ("plan_progress",)),
+    EvalCase(
+        31, "Warum nur 80 % locker?", ("knowledge_lookup",),
+        NumberCheck("knowledge_lookup", (), note_any=("Evidenz", "belegt", "Studien")),
+    ),
+    EvalCase(32, "Mein 10-km-Test von gestern war 44:20.", ("reference_value_set",)),
+)
+
+_ACTIVE_PLAN_CASE = 28
 _CREATE_EVENT_ATTR = "_create_calendar_event"  # patched in tools' namespace
 FOLLOW_UP_QUESTION = "Danke, und wie erholt bin ich?"
 PROPOSAL_CASE = EvalCase(
@@ -361,6 +385,67 @@ async def seed_test_data(session: AsyncSession, user_id: UUID) -> None:
     await recompute_wellness_daily_stats(session, user_id=user_id, start=start, end=today)
     await session.commit()
     await recompute_metric_daily_values(session, user_id=user_id, start=start, end=today)
+    await session.commit()
+    await _seed_coach(session, user_id, today)
+
+
+async def _seed_coach(session: AsyncSession, user_id: UUID, today: date) -> None:
+    await CoachProfileRepository(session).upsert(
+        user_id,
+        plan_type="ausdauer-laufen-pyramidal",
+        main_sport="laufen",
+        availability={
+            "di": {"max_min": 75, "quality": True},
+            "do": {"max_min": 75, "quality": True},
+            "sa": {"max_min": 60},
+            "so": {"max_min": 150},
+        },
+    )
+    race = date(today.year + (today.month >= 4), 4, 25)
+    await session.execute(
+        text(
+            "INSERT INTO goal (id, user_id, title, target_date) "
+            "VALUES (:id, :uid, 'Marathon im April', :race)"
+        ),
+        {"id": str(uuid.uuid4()), "uid": str(user_id), "race": race},
+    )
+    # the 10 km test from yesterday that case 32 refers to
+    yesterday = today - timedelta(days=1)
+    activity_id = (
+        await session.execute(
+            text(
+                "INSERT INTO activity (user_id, external_id, name, sport, sport_profile, "
+                "start_at, start_local, distance_m, duration_s) VALUES (:uid, 'eval-10k-test', "
+                "'10 km Test', 'running', 'running', :at, :local, 10000, 2660) RETURNING id"
+            ),
+            {
+                "uid": str(user_id),
+                "at": datetime(yesterday.year, yesterday.month, yesterday.day, 16, tzinfo=UTC),
+                "local": datetime(yesterday.year, yesterday.month, yesterday.day, 18),
+            },
+        )
+    ).scalar_one()
+    await session.execute(
+        text(
+            "INSERT INTO activity_stats (activity_id, user_id, sport_profile, algo_version, "
+            "distance_m, timer_s, moving_s, hr_avg, quality) "
+            "VALUES (:id, :uid, 'running', 1, 10000, 2660, 2660, 172, 'ok')"
+        ),
+        {"id": activity_id, "uid": str(user_id)},
+    )
+    await session.commit()
+
+
+async def _ensure_active_plan(session: AsyncSession, user_id: UUID) -> None:
+    # only case 28 gets a running plan; with one in place case 27 rightly reports it instead
+    repo = PlanRepository(session=session)
+    if await repo.get_active_for_user(user_id=user_id) is not None:
+        return
+    today = date.today()
+    plan, _, _ = await coach_service.propose(
+        session, user_id, today=today, start=week_start(today)
+    )
+    await repo.commit(user_id=user_id, plan_id=plan.id, event_ids_by_block_id={})
     await session.commit()
 
     # calendar event tomorrow, and a goal, so query_calendar/recall have something real
@@ -599,13 +684,17 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _select_cases(args: argparse.Namespace) -> tuple[EvalCase, ...]:
-    pool = ACTIVITY_CASES if args.user_id else (*CASES, PROPOSAL_CASE)
+    pool = ACTIVITY_CASES if args.user_id else (*CASES, PROPOSAL_CASE, *COACH_CASES)
     if not args.cases:
         return pool
     wanted = {int(n) for n in args.cases.split(",")}
     unknown = wanted - {c.number for c in pool}
     if unknown:
-        mode = "mit --user-id nur 17-21, 26" if args.user_id else "ohne --user-id nur 1-16"
+        mode = (
+            "mit --user-id nur 17-21, 26"
+            if args.user_id
+            else "ohne --user-id nur 1-16, 27, 28, 31, 32"
+        )
         sys.exit(f"Fälle {sorted(unknown)} nicht verfügbar ({mode}).")
     return tuple(c for c in pool if c.number in wanted)
 
@@ -629,7 +718,10 @@ async def main() -> None:
                 print(f"Nutzer {real_user}: echte Daten, ohne Seed, Schreib-Tools gesperrt.")
                 install_rls_listener(session, real_user)
             else:
-                print("Seede Testdatensatz (60 Tage Trainings-, Schlaf- und Wellnessdaten) ...")
+                print(
+                    "Seede Testdatensatz (60 Tage Trainings-, Schlaf- und Wellnessdaten, "
+                    "Coach-Plan) ..."
+                )
                 await seed_test_data(session, user_id)
 
             conv_repo = ConversationRepository(session=session)
@@ -639,6 +731,8 @@ async def main() -> None:
                 conversation_ids.append(conversation.id)
                 await session.commit()
                 print(f"[{case.number}] ({i}/{len(all_cases)}) {case.question}")
+                if case.number == _ACTIVE_PLAN_CASE and not real_user:
+                    await _ensure_active_plan(session, user_id)
                 runner = run_proposal_case if case is PROPOSAL_CASE else run_eval_case
                 result = await runner(session, user_id, conversation.id, case)
                 results.append(result)
