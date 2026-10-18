@@ -23,8 +23,8 @@ numbers_match, ob die Kennzahlen aus der summary des erwarteten Tools wörtlich 
 Antwort stehen.
 
 Fälle 27, 28, 31 und 32 (Coach-Modus, Spec 2026-10-17 §13) laufen im Seed-Modus; der
-Seed legt dafür Coach-Profil, Marathon-Ziel im April, einen aktiven Plan und einen
-10-km-Test von gestern an.
+Seed legt dafür Coach-Profil, Marathon-Ziel im April und einen 10-km-Test von gestern an;
+den aktiven Plan für Fall 28 erst direkt vor diesem Fall.
 
 Verwendung:
     .venv/Scripts/python scripts/agent_eval_suite.py
@@ -264,6 +264,7 @@ COACH_CASES: tuple[EvalCase, ...] = (
     EvalCase(32, "Mein 10-km-Test von gestern war 44:20.", ("reference_value_set",)),
 )
 
+_ACTIVE_PLAN_CASE = 28
 _CREATE_EVENT_ATTR = "_create_calendar_event"  # patched in tools' namespace
 FOLLOW_UP_QUESTION = "Danke, und wie erholt bin ich?"
 PROPOSAL_CASE = EvalCase(
@@ -432,12 +433,19 @@ async def _seed_coach(session: AsyncSession, user_id: UUID, today: date) -> None
         ),
         {"id": activity_id, "uid": str(user_id)},
     )
+    await session.commit()
+
+
+async def _ensure_active_plan(session: AsyncSession, user_id: UUID) -> None:
+    # only case 28 gets a running plan; with one in place case 27 rightly reports it instead
+    repo = PlanRepository(session=session)
+    if await repo.get_active_for_user(user_id=user_id) is not None:
+        return
+    today = date.today()
     plan, _, _ = await coach_service.propose(
         session, user_id, today=today, start=week_start(today)
     )
-    await PlanRepository(session=session).commit(
-        user_id=user_id, plan_id=plan.id, event_ids_by_block_id={}
-    )
+    await repo.commit(user_id=user_id, plan_id=plan.id, event_ids_by_block_id={})
     await session.commit()
 
     # calendar event tomorrow, and a goal, so query_calendar/recall have something real
@@ -723,6 +731,8 @@ async def main() -> None:
                 conversation_ids.append(conversation.id)
                 await session.commit()
                 print(f"[{case.number}] ({i}/{len(all_cases)}) {case.question}")
+                if case.number == _ACTIVE_PLAN_CASE and not real_user:
+                    await _ensure_active_plan(session, user_id)
                 runner = run_proposal_case if case is PROPOSAL_CASE else run_eval_case
                 result = await runner(session, user_id, conversation.id, case)
                 results.append(result)
