@@ -45,3 +45,5 @@ def test_system_prompt_names_the_activity_read_tools() -> None:
         "Aktivität. Kilometerwerte kommen über activity_splits, Bestzeiten über best_efforts."
     ) in flat
     assert 'Ob ein Workout getroffen wurde, kommt aus activity_splits(kind="steps").' in flat
+    # eval 20: without this the model compared two activity_get results by hand
+    assert 'activity_analyze(operation="compare")' in flat

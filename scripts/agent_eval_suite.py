@@ -95,6 +95,8 @@ class EvalResult:
     seconds: float = 0.0
     ttft: float | None = None
     tool_summaries: dict[str, list[str]] = field(default_factory=dict)
+    # text of every round; tables often come before a closing render call
+    full_reply: str = ""
 
     @property
     def tool_selection_ok(self) -> bool:
@@ -106,7 +108,7 @@ class EvalResult:
             return True, []
         problems: list[str] = []
         summaries = self.tool_summaries.get(check.tool, [])
-        reply = self.reply or ""
+        reply = self.full_reply or self.reply or ""
         for pattern in check.patterns:
             token = next(
                 (m.group(1) for text in reversed(summaries) if (m := re.search(pattern, text))),
@@ -150,7 +152,8 @@ CASES: tuple[EvalCase, ...] = (
         ("query_health", "analyze_records"),
     ),
     EvalCase(6, "Wie viel habe ich in den letzten 4 Wochen trainiert?", ("analyze_records",)),
-    EvalCase(7, "Was war meine bisher beste 5-km-Zeit dieses Jahr?", ("analyze_records",)),
+    # 7 and 10 = cases 19 and 20 on real data (spec 2026-10-07 §12.1)
+    EvalCase(7, "Was war meine bisher beste 5-km-Zeit dieses Jahr?", ("best_efforts",)),
     EvalCase(
         8, "Wann sollte ich die nächste harte Einheit machen, ohne mich zu überlasten?",
         ("query_health", "query_calendar"),
@@ -158,8 +161,9 @@ CASES: tuple[EvalCase, ...] = (
     EvalCase(
         9, "Wie entwickelt sich meine Fitness dieses Jahr?", ("analyze_records", "query_health")
     ),
+    # the seed has no runs with distance, so 10 can only pass against real data (case 20)
     EvalCase(
-        10, "Vergleich meinen Lauf von gestern mit dem letzten Tempolauf.", ("analyze_records",)
+        10, "Vergleich meinen Lauf von gestern mit dem letzten Tempolauf.", ("activity_analyze",)
     ),
     EvalCase(
         11, "Plane eine Lauf-Einheit für morgen -- wann passt es in meinen Tag?",
@@ -398,6 +402,7 @@ async def _drain(
             if result.ttft is None:
                 result.ttft = time.monotonic() - started
             parts.append(event.data["text"])
+            result.full_reply += event.data["text"]
         elif event.type == "tool_start":
             result.tools_called.append(event.data["name"])
             parts = []

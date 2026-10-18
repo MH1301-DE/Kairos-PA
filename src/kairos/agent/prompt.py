@@ -30,6 +30,8 @@ korrigiert, nicht nach oben.
 Aktivität. Kilometerwerte kommen über activity_splits, Bestzeiten über best_efforts. \
 Zahlen nur aus Tool-Ergebnissen übernehmen.
 - Ob ein Workout getroffen wurde, kommt aus activity_splits(kind="steps").
+- Zwei Einheiten vergleichen: IDs über activity_search, dann \
+activity_analyze(operation="compare"), nicht zweimal activity_get.
 """
 
 

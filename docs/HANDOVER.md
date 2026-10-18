@@ -1448,14 +1448,18 @@ FIT keine gültigen Zeitstempel hat (praktisch ausgeschlossen).
 
 **Offen, braucht Max**
 
-1. **Live-Eval 17–21/26 blockiert:** Der `LLM_API_KEY` in `.env` ist an keinen
-   Anthropic-Workspace gebunden; die API verlangt dann den Header
-   `anthropic-workspace-id`. Mit einem Workspace-Key:
-   `.venv/Scripts/python scripts/agent_eval_suite.py --cases 17,18,19,20,21,26 --user-id 7af1776a-f222-45de-ab89-13d02a170afe`
-   (Schreib-Tools sind in diesem Modus gesperrt, Eval-Konversationen werden gelöscht).
-   Fälle 1–16 gegen den Seed ebenfalls neu laufen lassen (Regression).
-   Ersatzweise geprüft: 982 direkte Tool-Aufrufe gegen die echten 139 Aktivitäten,
-   keine Abstürze, keine Obergrenze überschritten.
+1. ~~Live-Eval 17–21/26~~ — gelaufen am 2026-10-18 mit einem Workspace-Key
+   (`sk-ant-api…`; der vorherige `sk-ant-usr…`-Key wurde von der API abgelehnt).
+   Gegen Max' echte Daten: **17, 18, 19, 21, 26 in allen Läufen grün** (Tool und Zahlen
+   exakt), Median TTFT ≈ 3 s, Gesamtzeit ≈ 7 s. **Fall 20** („Lauf von gestern“) hängt an
+   den Daten: am 17.10. gab es keinen Lauf, das Modell fragt dann teils zurück (korrekt),
+   teils vergleicht es den letzten Lauf — dann seit `679d96e` mit
+   `activity_analyze(compare)` und exakten Differenzen. Regression 1–16 gegen den Seed:
+   13/16, Fall 14 ist modellseitig schwankend (zwei Wiederholungen grün); 7 und 10
+   erwarten jetzt `best_efforts` bzw. `activity_analyze` (10 kann auf dem Seed nicht
+   grün werden, dort gibt es keine Läufe mit Distanz — echte Prüfung ist Fall 20).
+   `numbers_match` prüft jetzt den Text aller Runden eines Turns (Tabellen stehen oft vor
+   einem abschließenden `render`).
 2. ~~Entscheidungen aus dem Bericht V1–V7~~ — am 2026-10-17 getroffen (Spec §12.3,
    „Entscheidungen 2026-10-17“): V7-Zählregel wie vorgeschlagen, Laufband nicht skalieren,
    Sprungfilter 12 m/s, Höhenmeter-Summe von der Uhr. `ACTIVITY_DERIVED_ALGO_VERSION` = 4.
