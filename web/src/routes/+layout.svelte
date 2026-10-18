@@ -114,6 +114,11 @@
 			class="btn btn-secondary menu-action"
 			onclick={() => (mobileMenuOpen = false)}>Einstellungen (HFmax, Ruhepuls)</a
 		>
+		<a
+			href={resolve('/coach')}
+			class="btn btn-secondary menu-action"
+			onclick={() => (mobileMenuOpen = false)}>Coach-Profil</a
+		>
 	</div>
 
 	<div class="menu-section">
