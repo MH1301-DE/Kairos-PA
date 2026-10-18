@@ -9,6 +9,7 @@ from kairos.ingestion.job_registry import get_registry
 from kairos.routers.activities import router as activities_router
 from kairos.routers.agent import router as agent_router
 from kairos.routers.calendar import router as calendar_router
+from kairos.routers.coach import router as coach_router
 from kairos.routers.connections import router as connections_router
 from kairos.routers.custom_metrics import router as custom_metrics_router
 from kairos.routers.dashboard import router as dashboard_router
@@ -58,3 +59,4 @@ app.include_router(agent_router)
 app.include_router(dashboard_router)
 app.include_router(settings_profile_router)
 app.include_router(scheduler_router)
+app.include_router(coach_router)
