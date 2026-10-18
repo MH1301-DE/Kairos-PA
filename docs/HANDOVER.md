@@ -239,11 +239,12 @@ Linear, ältere zuerst (`alembic history` ist maßgeblich):
 → d01f4413837f llm_model_setting → 1d9489995959 conversation_message_tool_call_id
 → c409728c466e user_dashboard_tile → 27d8fcfada03 plan_tables
 → 7a1c2e9d4b30 memory_expiry_and_compaction
-→ 5c8e1d2f7a90 scheduler_tables                                  ← HEAD auf main (Scheduler)
+→ 5c8e1d2f7a90 scheduler_tables
 → 8c6af9fb1361 activity_stream_and_fit_archive                    (Stufe 1, AP 1a)
 → fed6d2d1311b drop_timescaledb                                   (AP 1b, kein downgrade)
 → 3b9e5c7a1d24 activity_profile_and_soft_delete                   (AP 1c)
-→ 5d2f8a6c1e47 activity_derived_tables                            ← HEAD auf stufe1-datenbasis
+→ 5d2f8a6c1e47 activity_derived_tables                            ← HEAD auf main
+→ 9b3e7c1a4d20 coach_tables                                       ← HEAD auf feat/coach
 ```
 
 **Kein TimescaleDB mehr** (seit `fed6d2d1311b`): `wellness_sample` ist eine normale
@@ -261,7 +262,7 @@ Stufe 1 `down_revision = "5d2f8a6c1e47"`.
 # Alle Tests — Windows-venv: .venv/Scripts/python (nicht .venv/bin/)
 .venv/Scripts/python -m pytest -q
 
-# Stand stufe1-datenbasis (2026-10-17): alle grün, 0 skipped (Zahl in CLAUDE.md).
+# Stand feat/coach (2026-10-18): alle grün, 0 skipped (Zahl in CLAUDE.md).
 # 0 skipped nur mit laufendem Docker; ohne Docker werden die testcontainers-Tests
 # übersprungen. POSTGRES_IMAGE in tests/conftest.py ist postgres:16 (seit Stufe 1).
 
@@ -296,6 +297,30 @@ tests/test_metrics_*.py                # Phase-2 Metrics-Backend (siehe unten)
 | Phase 4 — Agent MVP | ✅ alle 11 Tasks umgesetzt, LLM-Key-Architektur nachträglich auf deployment-weit korrigiert — siehe unten |
 | Frontend-Modernisierung | ✅ alle 5 Tasks umgesetzt (Personalisierung, Mobile/iPhone, Dark-Cockpit beibehalten) — siehe unten |
 | Phase 5 — Planung | ✅ alle 4 Tasks umgesetzt (`plan_propose`/`plan_commit`/`plan_adjust`/`plan_progress`) — siehe unten |
+| Stufe 3 — Coach-Modus | AP 0–4 auf `feat/coach` (siehe unten); AP 5/6 warten auf Stufe 1 AP 4/5, AP 7 (Frontend) offen |
+
+### Stufe 3 — Coach-Modus (Stand 2026-10-18, Branch `feat/coach`)
+
+Spec: `docs/superpowers/specs/2026-10-17-coach-modus-design.md` (§1.3 Antworten auf §15).
+
+- **Wissensbank** `knowledge/training/`: YAML-Front-Matter (Regel) + Markdown (Erklärung),
+  Referenz `id@version`, Plantyp `plantypen/ausdauer-laufen-pyramidal.yaml`. Geladen von
+  `kairos.coach.knowledge` (gecacht; Pfad über `COACH_KNOWLEDGE_DIR`, sonst Repo-Ordner).
+  Neue Regeln brauchen einen Eintrag in `knowledge/training/` und laufen durch
+  `tests/test_knowledge_base.py`.
+- **Generator/Prüfer** `kairos.coach.generator`/`validator`: rein, ohne DB; Leitplanken
+  (`art: leitplanke`) sind blockierend, der Generator kürzt statt zu verletzen.
+  Hypothesis-Tests in `tests/test_coach_generator.py`.
+- **Service** `kairos.coach.service`: `propose`, `progress`, `match_activities` (läuft auch
+  nach jedem Garmin-Sync), `compute_reference` (VDOT aus 3–15-km-Lauf, LTHR aus den
+  km-Splits der letzten 20 min), `brief_line` fürs Lagebild.
+- **Tools**: `plan_propose`/`plan_progress` laufen jetzt über den Coach (brauchen ein
+  `coach_profile`), neu `knowledge_lookup` und `reference_value_set` (Bestätigung).
+  `plan_commit`/`plan_adjust` sind noch die Phase-5-Version (Garmin-Workouts kommen mit AP 5).
+- Ein Nutzer hat höchstens einen `committed` Plan (`uq_plan_active`); `plan_commit` beendet
+  den vorherigen. HFmax-Fallback ist Tanaka (208 − 0,7 × Alter).
+- Eval-Fälle 27, 28, 31, 32 in `scripts/agent_eval_suite.py` (Seed-Modus), noch nicht live
+  gelaufen.
 
 ### Was für Phase-1-Abnahme noch fehlt
 
