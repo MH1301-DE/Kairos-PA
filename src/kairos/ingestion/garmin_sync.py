@@ -18,6 +18,7 @@ from kairos.activities.derive.service import derive_pending
 from kairos.activities.fit_archive import ingest_fit_files
 from kairos.activities.reconcile import local_days_of_activities, reconcile_deleted_activities
 from kairos.auth.crypto import decrypt, kek_from_settings, unwrap_dek
+from kairos.coach.service import match_activities
 from kairos.config import settings
 from kairos.connectors.garmin.connector import GarminConnector
 from kairos.connectors.types import RawPayloadEnvelope
@@ -194,7 +195,18 @@ async def sync_garmin(
         start = min([f.date() for f in fetched_froms] + list(reconciled_days))
         if await recompute_after_sync(session, user_id, start=start, end=date.today()):
             result["recomputed_from"] = start
+    await _match_plan_after_sync(session, user_id)
     return result
+
+
+async def _match_plan_after_sync(session: AsyncSession, user_id: UUID) -> None:
+    # coach spec 7.3: new activities fill the active plan's blocks; best effort like recompute
+    try:
+        await match_activities(session, user_id, date.today())
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        logger.exception("Plan matching after sync failed for user %s", user_id)
 
 
 def _make_fit_ingest_hook(

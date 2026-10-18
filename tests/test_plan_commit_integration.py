@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from kairos.agent.tools import plan_commit_handler, plan_propose_handler
 from kairos.repositories.calendar_event import CalendarEventRepository
+from kairos.repositories.coach import CoachProfileRepository
 from kairos.repositories.plan import PlanRepository
 
 
@@ -28,15 +29,21 @@ async def test_propose_then_commit_creates_kairos_calendar_events(
 ) -> None:
     user_id = uuid4()
     await _insert_user(session, user_id)
+    await CoachProfileRepository(session).upsert(
+        user_id,
+        plan_type="ausdauer-laufen-pyramidal",
+        main_sport="laufen",
+        availability={"di": {"max_min": 60, "quality": True}, "so": {"max_min": 90}},
+    )
     await session.commit()
 
-    proposed = await plan_propose_handler(session, user_id=user_id, weeks=1)
+    proposed = await plan_propose_handler(session, user_id=user_id)
     plan_id = UUID(proposed["data"]["plan_id"])
 
     repo = PlanRepository(session=session)
     blocks_before = await repo.list_blocks(user_id=user_id, plan_id=plan_id)
     non_rest_before = [b for b in blocks_before if b.workout_type != "rest"]
-    assert non_rest_before  # a 1-week plan always has at least one non-rest day
+    assert non_rest_before  # two detail weeks always hold at least one session
 
     mock_client = MagicMock()
     mock_client.create_event.side_effect = [

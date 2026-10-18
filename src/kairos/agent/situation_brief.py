@@ -6,6 +6,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from kairos.coach import service as coach_service
 from kairos.db.models import AppUser, Connection
 from kairos.metrics.bootstrap import build_default_registry
 from kairos.metrics.hr_zones import hr_max_warning, resolve_hr_max
@@ -38,6 +39,9 @@ async def build_situation_brief(session: AsyncSession, *, user_id: UUID, now: da
     lines.extend(await _kalender_lines(session, user_id, now))
     lines.append("")
     lines.append(await _ziele_line(session, user_id))
+    coach_line = await coach_service.brief_line(session, user_id, today)
+    if coach_line:
+        lines.append(coach_line)
     hr_max_line = await _hr_max_line(session, user_id, today)
     if hr_max_line:
         lines.append(hr_max_line)

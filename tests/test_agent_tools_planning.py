@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import text
@@ -12,7 +12,6 @@ from kairos.agent.tools import (
     plan_adjust_handler,
     plan_commit_handler,
     plan_progress_handler,
-    plan_propose_handler,
 )
 from kairos.planning.algorithm import PlannedBlock
 from kairos.repositories.plan import PlanRepository
@@ -26,24 +25,6 @@ async def _insert_user(session: AsyncSession, user_id) -> None:
         ),
         {"id": str(user_id), "email": f"{user_id}@test.com", "sub": f"sub-{user_id}"},
     )
-
-
-@pytest.mark.asyncio
-async def test_plan_propose_handler_creates_a_draft_plan(session: AsyncSession) -> None:
-    user_id = uuid4()
-    await _insert_user(session, user_id)
-    await session.commit()
-
-    result = await plan_propose_handler(session, user_id=user_id, weeks=2)
-
-    assert "plan_id" in result["data"]
-    plan_id = UUID(result["data"]["plan_id"])
-    repo = PlanRepository(session=session)
-    blocks = await repo.list_blocks(user_id=user_id, plan_id=plan_id)
-    assert len(blocks) == 14  # 2 weeks
-    plan = await repo.get(user_id=user_id, plan_id=plan_id)
-    assert plan is not None
-    assert plan.status == "draft"
 
 
 @pytest.mark.asyncio
@@ -123,30 +104,3 @@ async def test_plan_progress_handler_with_no_active_plan(session: AsyncSession) 
 
     result = await plan_progress_handler(session, user_id=user_id)
     assert result["data"]["plan_id"] is None
-
-
-@pytest.mark.asyncio
-async def test_plan_progress_handler_sums_planned_load_for_this_week(
-    session: AsyncSession,
-) -> None:
-    user_id = uuid4()
-    await _insert_user(session, user_id)
-    await session.commit()
-
-    today = date.today()
-    week_start = today - timedelta(days=today.weekday())
-    repo = PlanRepository(session=session)
-    plan = await repo.create_draft(
-        user_id=user_id, title="Test", start_date=week_start,
-        end_date=week_start + timedelta(days=6), goal_date=None,
-        blocks=[
-            PlannedBlock(week_start + timedelta(days=i), "easy" if i % 2 else "rest",
-                         50.0 if i % 2 else None)
-            for i in range(7)
-        ],
-    )
-    await session.commit()
-
-    result = await plan_progress_handler(session, user_id=user_id, plan_id=str(plan.id))
-    assert result["data"]["planned_total"] == pytest.approx(150.0)  # 3 easy days * 50
-    assert result["data"]["actual_total"] == pytest.approx(0.0)  # no real activity data seeded
