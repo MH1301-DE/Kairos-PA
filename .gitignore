@@ -11,3 +11,4 @@ dist/
 .venv/
 garmin_tokens*.json
 .claude/
+.run/
